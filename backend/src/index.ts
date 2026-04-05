@@ -2,8 +2,7 @@ import { Context, APIGatewayProxyResult, APIGatewayEvent } from 'aws-lambda';
 import { getUserRepository } from '@housef4/db';
 
 export const handler = async (event: APIGatewayEvent, context: Context): Promise<APIGatewayProxyResult> => {
-    console.log(`Event: ${JSON.stringify(event, null, 2)}`);
-    console.log(`Context: ${JSON.stringify(context, null, 2)}`);
+    console.log(`Request started: ${event.httpMethod} ${event.path} - RequestId: ${context.awsRequestId}`);
     
     // Example of using the db layer
     const repo = getUserRepository();
