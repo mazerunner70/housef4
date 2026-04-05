@@ -89,18 +89,24 @@ async function batchWriteAll(
   items: Record<string, unknown>[],
 ): Promise<void> {
   const chunkSize = 25;
+  const maxAttempts = 8;
   for (let i = 0; i < items.length; i += chunkSize) {
     const chunk = items.slice(i, i + chunkSize);
     let requestItems: PutBatch = {
       [table]: chunk.map((Item) => ({ PutRequest: { Item } })),
     };
-    for (let attempt = 0; attempt < 8; attempt++) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const res = await client.send(
         new BatchWriteCommand({ RequestItems: requestItems }),
       );
       const unprocessed = res.UnprocessedItems?.[table];
       if (!unprocessed?.length) break;
       requestItems = { [table]: unprocessed } as PutBatch;
+      if (attempt === maxAttempts - 1) {
+        throw new Error(
+          `DynamoDB BatchWrite: ${unprocessed.length} item(s) still unprocessed after ${maxAttempts} attempts (table ${table})`,
+        );
+      }
       await new Promise((r) => setTimeout(r, 2 ** attempt * 50));
     }
   }

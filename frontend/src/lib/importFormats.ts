@@ -25,8 +25,8 @@ export function detectImportFormat(file: File): ImportSourceFormat {
   if (name.endsWith('.qif')) return 'qif'
 
   const t = file.type.toLowerCase()
-  if (t.includes('qfx') || t === 'application/x-ofx' || t === 'application/ofx')
-    return 'ofx'
+  if (t.includes('qfx')) return 'qfx'
+  if (t === 'application/x-ofx' || t === 'application/ofx') return 'ofx'
   if (t.includes('qif')) return 'qif'
   if (t.includes('csv') || t === 'text/plain') return 'csv'
 

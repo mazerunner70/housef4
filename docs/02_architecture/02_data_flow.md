@@ -6,9 +6,9 @@ phase: High-Level Architecture
 
 # Data Flow: Ingestion & Active Learning
 
-This diagram illustrates the core MVP workflow: how a user uploads data, how the system parses it and attempts automated mapping, and how the "User Review Queue" facilitates Active Learning.
+This diagram illustrates the core MVP workflow: how a user uploads data, how the system parses it and attempts automated mapping, and how the review queue supports active learning. **HTTP paths, methods, and JSON field names follow [`docs/03_detailed_design/api_contract.md`](../03_detailed_design/api_contract.md)** (dates in JSON are **epoch milliseconds UTC**, not ISO strings).
 
-It also highlights the off-line ML environment (as decided by the Transaction Analysis expertise) to avoid expensive cloud iterations.
+The off-line ML environment (per transaction-analysis design) stays out of the hot request path to avoid expensive cloud iteration loops.
 
 ```mermaid
 sequenceDiagram
@@ -20,31 +20,37 @@ sequenceDiagram
     participant LocalML as Local ML (Jupyter)
 
     Note over User, DB: 1. Data Ingestion
-    User->>UI: Uploads Bank CSV Export
-    UI->>API: POST /import (with Auth Token)
-    API->>API: Assert user_id & Parse CSV native formatting
-    
-    Note over API, DB: 2. Categorization Rules Engine
-    API->>DB: Query User's existing Rules & Clusters
-    
-    alt Known/Confident Match
-        API->>DB: Save Txn (Status: CLASSIFIED, Category: 'Food & Groceries')
-    else Ambiguous/Unknown Merchant
-        API->>DB: Save Txn (Status: PENDING)
-        API->>DB: Upsert to User Review Queue Index
+    User->>UI: Uploads bank export (CSV / OFX / QFX / QIF)
+    UI->>API: POST /api/imports (multipart field file, Authorization JWT)
+    API->>API: Resolve user from JWT (e.g. Cognito sub) Parse & normalize rows
+    Note right of API: No default user; unauthenticated requests are rejected.
+
+    Note over API, DB: 2. Categorization & persistence
+    API->>DB: Query user's clusters / rules as needed
+    alt Known / confident match
+        API->>DB: Put txn (status CLASSIFIED, category set)
+    else Ambiguous / new merchant
+        API->>DB: Put txn (status PENDING_REVIEW)
+        API->>DB: Upsert cluster; surface in review queue
     end
-    API-->>UI: Return Import Summary Metrics
-    
-    Note over User, API: 3. Active Learning (Review Queue)
-    UI->>API: GET /review-queue
-    API-->>UI: Return PENDING Clusters
-    User->>UI: Tag cluster as 'Discretionary'
-    UI->>API: POST /rules
-    API->>DB: Save User Rule
-    API->>DB: Batch update all historical Txns in Cluster
-    
-    Note over DB, LocalML: 4. Offline ML Optimization (Non-MVP runtime)
+    API-->>UI: ImportParseResult (rowCount, knownMerchants, unknownMerchants, sourceFormat?)
+
+    Note over UI, API: 3. Dashboard & lists (reflect new data)
+    UI->>API: GET /api/metrics
+    API-->>UI: Metrics payload (monthly_cashflow, net_worth, spending_by_category)
+    UI->>API: GET /api/transactions
+    API-->>UI: transactions[] (date as epoch ms, status CLASSIFIED | PENDING_REVIEW)
+
+    Note over User, API: 4. Active Learning (review queue)
+    UI->>API: GET /api/review-queue
+    API-->>UI: pending_clusters[]
+    User->>UI: Assign category to cluster
+    UI->>API: POST /api/rules/tag (cluster_id, assigned_category)
+    API->>DB: Persist rule; update matching txns in cluster
+    API-->>UI: TagRuleResponse (success, updated_transactions)
+
+    Note over DB, LocalML: 5. Offline ML (non-MVP runtime)
     LocalML->>DB: Sync raw text data locally
-    LocalML->>LocalML: Tune TF-IDF / DBSCAN algorithms
-    LocalML->>DB: Upload improved heuristic rules
+    LocalML->>LocalML: Tune TF-IDF / DBSCAN (example)
+    LocalML->>DB: Upload improved heuristics / rules
 ```

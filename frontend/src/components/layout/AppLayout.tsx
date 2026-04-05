@@ -172,15 +172,12 @@ export function AppLayout() {
                 <span className="ui-notify-dot absolute right-2 top-2 size-2 rounded-full bg-red-500" />
               </button>
               <div className="ui-surface-input flex items-center gap-2 rounded-full py-1 pl-1 pr-3">
-                <img
-                  src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=64&h=64&fit=crop&crop=face"
-                  alt=""
-                  className="size-8 rounded-full object-cover"
-                  width={32}
-                  height={32}
-                  loading="lazy"
-                  referrerPolicy="no-referrer"
-                />
+                <div
+                  className="flex size-8 items-center justify-center rounded-full bg-teal-500/15 text-xs font-semibold uppercase tracking-wide text-teal-200"
+                  aria-label="Alex R. avatar"
+                >
+                  AR
+                </div>
                 <span className="hidden text-sm font-medium text-zinc-200 sm:inline">
                   Alex R.
                 </span>
