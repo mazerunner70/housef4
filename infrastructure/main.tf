@@ -62,7 +62,7 @@ resource "aws_s3_bucket_versioning" "frontend_bucket_versioning" {
   }
 }
 
-# DynamoDB Table for application data
+# Single-table design: PK/SK for user-scoped entities; GSI1 for cluster → transactions (tag updates).
 resource "aws_dynamodb_table" "app_table" {
   name         = "${var.project_id}-${var.environment}-table"
   billing_mode = "PAY_PER_REQUEST"
@@ -77,6 +77,27 @@ resource "aws_dynamodb_table" "app_table" {
   attribute {
     name = "SK"
     type = "S"
+  }
+
+  attribute {
+    name = "GSI1PK"
+    type = "S"
+  }
+
+  attribute {
+    name = "GSI1SK"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "GSI1"
+    hash_key        = "GSI1PK"
+    range_key       = "GSI1SK"
+    projection_type = "ALL"
+  }
+
+  point_in_time_recovery {
+    enabled = true
   }
 }
 
