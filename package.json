@@ -1,0 +1,14 @@
+{
+  "name": "housef4",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Monorepo for housef4 project",
+  "scripts": {
+    "dev": "pnpm -r run dev",
+    "build": "pnpm -r run build",
+    "test": "pnpm -r run test"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
