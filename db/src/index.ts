@@ -1,26 +1,15 @@
-export interface User {
-    id: string;
-    name: string;
-}
+export * from './types';
+export * from './keys';
+export type { FinanceRepository } from './dynamoFinanceRepository';
+export { DynamoFinanceRepository } from './dynamoFinanceRepository';
+export { getDocumentClient, requireTableName } from './dynamoClient';
 
-export interface UserRepository {
-    getUser(id: string): Promise<User | null>;
-    saveUser(user: User): Promise<void>;
-}
+import type { FinanceRepository } from './dynamoFinanceRepository';
+import { DynamoFinanceRepository } from './dynamoFinanceRepository';
 
-// DynamoDB implementation (stub)
-class DynamoUserRepository implements UserRepository {
-    async getUser(id: string): Promise<User | null> {
-        // Here you would use DynamoDB client to fetch data
-        return { id, name: "Stub User" };
-    }
-    
-    async saveUser(user: User): Promise<void> {
-        // Here you would use DynamoDB client to save data
-        console.log(`Saved user: ${user.id}`);
-    }
-}
+let financeRepo: FinanceRepository | undefined;
 
-export function getUserRepository(): UserRepository {
-    return new DynamoUserRepository();
+export function getFinanceRepository(): FinanceRepository {
+  financeRepo ??= new DynamoFinanceRepository();
+  return financeRepo;
 }

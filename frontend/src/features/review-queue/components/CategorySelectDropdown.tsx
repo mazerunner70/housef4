@@ -1,0 +1,101 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Search } from 'lucide-react'
+
+import { TAXONOMY_CATEGORIES } from '@/lib/taxonomy'
+import { cn } from '@/lib/cn'
+
+type CategorySelectDropdownProps = {
+  value: string
+  onChange: (category: string) => void
+  disabled?: boolean
+  id?: string
+}
+
+export function CategorySelectDropdown({
+  value,
+  onChange,
+  disabled,
+  id,
+}: CategorySelectDropdownProps) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return [...TAXONOMY_CATEGORIES]
+    return TAXONOMY_CATEGORIES.filter((c) => c.toLowerCase().includes(q))
+  }, [query])
+
+  return (
+    <div
+      ref={rootRef}
+      className="relative min-w-[min(100%,280px)] flex-1"
+    >
+      <button
+        id={id}
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((o) => !o)}
+        className={cn(
+          'flex w-full items-center justify-between gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-left text-sm text-[var(--color-text-strong)]',
+          disabled && 'opacity-50',
+        )}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span className="truncate">{value || 'Choose category'}</span>
+        <Search className="size-4 shrink-0 opacity-60" aria-hidden />
+      </button>
+      {open && (
+        <div
+          className="absolute z-20 mt-1 w-full overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg"
+          role="listbox"
+        >
+          <div className="border-b border-[var(--color-border)] p-2">
+            <label className="sr-only" htmlFor={`${id ?? 'cat'}-search`}>
+              Filter categories
+            </label>
+            <input
+              id={`${id ?? 'cat'}-search`}
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search categories…"
+              className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-2 py-1.5 text-sm text-[var(--color-text-strong)] outline-none focus:ring-2 focus:ring-[var(--color-accent)]"
+            />
+          </div>
+          <ul className="max-h-48 overflow-auto py-1">
+            {filtered.map((cat) => (
+              <li key={cat} role="option" aria-selected={cat === value}>
+                <button
+                  type="button"
+                  className={cn(
+                    'w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-accent-soft)]',
+                    cat === value && 'bg-[var(--color-accent-soft)] font-medium',
+                  )}
+                  onClick={() => {
+                    onChange(cat)
+                    setOpen(false)
+                    setQuery('')
+                  }}
+                >
+                  {cat}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
