@@ -1,0 +1,17 @@
+{
+  "name": "@housef4/backend",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc -w"
+  },
+  "dependencies": {
+    "@housef4/db": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/aws-lambda": "^8.10.136"
+  }
+}
