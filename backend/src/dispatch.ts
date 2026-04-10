@@ -48,7 +48,7 @@ export async function dispatch(req: InternalRequest): Promise<InternalResponse> 
     const method = req.method.toUpperCase();
     const path = normalizeApiPath(req.path);
 
-    if (method === 'GET' && isHealthPath(path)) {
+    if ((method === 'GET' || method === 'HEAD') && isHealthPath(path)) {
       return jsonResponse(200, getHealthPayload());
     }
 

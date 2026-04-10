@@ -5,7 +5,7 @@
 # - GET /api/me with IdToken (protected; use ID token for API Gateway JWT audience)
 #
 # Prerequisites:
-# - Terraform applied with cognito_allow_admin_password_auth = true (default)
+# - Terraform applied with cognito_allow_admin_password_auth = true (set in .tfvars for smoke scripts)
 # - Test user: run ./scripts/cognito-bootstrap-test-user.sh once
 # - Tools: aws, curl, jq
 #

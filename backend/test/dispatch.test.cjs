@@ -23,6 +23,16 @@ test('GET /api/health accepts API Gateway-style prefixed path', async () => {
   assert.equal(res.statusCode, 200);
 });
 
+test('HEAD /api/health returns 200', async () => {
+  const res = await dispatch({
+    method: 'HEAD',
+    path: '/api/health',
+    headers: {},
+    rawBody: '',
+  });
+  assert.equal(res.statusCode, 200);
+});
+
 test('protected API path without userId returns 401', async () => {
   const res = await dispatch({
     method: 'GET',

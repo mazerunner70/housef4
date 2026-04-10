@@ -204,6 +204,7 @@ export function AppLayout() {
                       type="button"
                       variant="ghost"
                       className="shrink-0 gap-1.5 px-2 py-2 text-xs text-zinc-400"
+                      aria-label="Sign out"
                       onClick={() => logout()}
                     >
                       <LogOut className="size-4" aria-hidden />

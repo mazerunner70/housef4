@@ -7,7 +7,7 @@
 #   ./scripts/delete-frontend-s3-bucket-aws.sh                    # uses terraform output
 #   ./scripts/delete-frontend-s3-bucket-aws.sh housef4-dev-frontend-123456789
 #
-# Needs: aws CLI, jq
+# Needs: aws CLI, jq, and terraform when omitting the bucket name (reads frontend_bucket_name output).
 
 set -euo pipefail
 
@@ -17,6 +17,10 @@ TF_DIR="${TF_DIR:-"$ROOT/infrastructure"}"
 if [[ -n "${1:-}" ]]; then
   BUCKET="$1"
 else
+  command -v terraform >/dev/null 2>&1 || {
+    echo "terraform not found (required when bucket name is omitted)" >&2
+    exit 1
+  }
   BUCKET="$(terraform -chdir="$TF_DIR" output -raw frontend_bucket_name)"
 fi
 

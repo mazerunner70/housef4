@@ -97,7 +97,7 @@ resource "aws_apigatewayv2_api" "http" {
   cors_configuration {
     allow_headers  = ["authorization", "content-type"]
     allow_methods  = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
-    allow_origins  = ["*"]
+    allow_origins  = var.http_api_cors_allow_origins
     expose_headers = []
     max_age        = 86400
   }
@@ -133,6 +133,13 @@ resource "aws_apigatewayv2_integration" "lambda" {
 resource "aws_apigatewayv2_route" "health" {
   api_id    = aws_apigatewayv2_api.http.id
   route_key = "GET /api/health"
+
+  target = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
+resource "aws_apigatewayv2_route" "health_head" {
+  api_id    = aws_apigatewayv2_api.http.id
+  route_key = "HEAD /api/health"
 
   target = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 }

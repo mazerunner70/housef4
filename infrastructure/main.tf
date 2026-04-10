@@ -2,15 +2,15 @@
 resource "aws_s3_bucket" "frontend_bucket" {
   # Globally unique: generic names like "frontend-host" collide across all AWS accounts.
   bucket        = "${var.project_id}-${var.environment}-frontend-${data.aws_caller_identity.current.account_id}"
-  force_destroy = true
+  force_destroy = var.frontend_bucket_force_destroy
 
   # aws_s3_bucket Create runs: CreateBucket → HeadBucket wait → tags → resourceBucketUpdate.
-  # Each phase can use up to the create/update timeout; provider defaults are 20m each if omitted.
+  # S3 propagation can be slow; avoid overly aggressive timeouts that cause flaky applies.
   # If "Still creating..." exceeds create+update, Ctrl+C and check: VPN/DNS, or import if bucket exists.
   timeouts {
-    create = "3m"
-    read   = "3m"
-    update = "3m"
+    create = "10m"
+    read   = "10m"
+    update = "10m"
     delete = "30m"
   }
 }

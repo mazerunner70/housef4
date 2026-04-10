@@ -16,6 +16,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TF_DIR="${TF_DIR:-"$ROOT/infrastructure"}"
 
+RESP_DIR="$(mktemp -d)"
+trap 'rm -rf "${RESP_DIR}"' EXIT
+
 from_terraform() {
   command -v terraform >/dev/null || {
     echo "terraform not found" >&2
@@ -40,35 +43,35 @@ echo "== AWS auth smoke against: $BASE_URL"
 echo
 
 echo -n "1) Static SPA root (expect 200, public): "
-code="$(curl -sS -o /tmp/housef4-static.html -w '%{http_code}' "$BASE_URL/" || true)"
+code="$(curl -sS -o "$RESP_DIR/static.html" -w '%{http_code}' "$BASE_URL/" || true)"
 echo "$code"
 if [[ "$code" != "200" ]]; then
   echo "   FAILED: expected 200" >&2
   exit 1
 fi
-if ! head -c 200 /tmp/housef4-static.html | grep -qiE 'html|<!doctype'; then
+if ! head -c 200 "$RESP_DIR/static.html" | grep -qiE 'html|<!doctype'; then
   echo "   WARN: response does not look like HTML (s3/cloudfront misconfig?)" >&2
 fi
 
 echo -n "2) GET /api/health (expect 200, public): "
-code="$(curl -sS -o /tmp/housef4-health.json -w '%{http_code}' "$BASE_URL/api/health" || true)"
+code="$(curl -sS -o "$RESP_DIR/health.json" -w '%{http_code}' "$BASE_URL/api/health" || true)"
 echo "$code"
 if [[ "$code" != "200" ]]; then
   echo "   FAILED: expected 200" >&2
   exit 1
 fi
-cat /tmp/housef4-health.json
+cat "$RESP_DIR/health.json"
 echo
 
 echo -n "3) GET /api/me without Authorization (expect 401): "
-code="$(curl -sS -o /tmp/housef4-me.json -w '%{http_code}' "$BASE_URL/api/me" || true)"
+code="$(curl -sS -o "$RESP_DIR/me.json" -w '%{http_code}' "$BASE_URL/api/me" || true)"
 echo "$code"
 if [[ "$code" != "401" ]]; then
   echo "   FAILED: expected 401 Unauthorized (body below)" >&2
-  cat /tmp/housef4-me.json >&2 || true
+  cat "$RESP_DIR/me.json" >&2 || true
   exit 1
 fi
-cat /tmp/housef4-me.json
+cat "$RESP_DIR/me.json"
 echo
 
 echo

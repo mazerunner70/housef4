@@ -15,6 +15,17 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${PORT:-3099}"
 export PORT
 
+RESP_DIR="$(mktemp -d)"
+SERVER_PID=""
+cleanup() {
+  if [[ -n "${SERVER_PID:-}" ]]; then
+    kill "$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID" 2>/dev/null || true
+  fi
+  rm -rf "${RESP_DIR}"
+}
+trap cleanup EXIT
+
 cd "$ROOT/backend"
 pnpm run build
 
@@ -50,41 +61,39 @@ wait_http() {
 echo "== Local auth smoke on http://127.0.0.1:${PORT}"
 echo
 
-pid="$(run_server_expect "")"
-trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true' EXIT
+SERVER_PID="$(run_server_expect "")"
 wait_http
 
 echo -n "1) GET /api/health (expect 200): "
-curl -sS -o /tmp/housef4-l-health.json -w '%{http_code}' "http://127.0.0.1:${PORT}/api/health"
+curl -sS -o "$RESP_DIR/health.json" -w '%{http_code}' "http://127.0.0.1:${PORT}/api/health"
 echo
-cat /tmp/housef4-l-health.json
+cat "$RESP_DIR/health.json"
 echo
 
 echo -n "2) GET /api/me without DEV_AUTH_USER_ID (expect 401): "
-code="$(curl -sS -o /tmp/housef4-l-me.json -w '%{http_code}' "http://127.0.0.1:${PORT}/api/me" || true)"
+code="$(curl -sS -o "$RESP_DIR/me.json" -w '%{http_code}' "http://127.0.0.1:${PORT}/api/me" || true)"
 echo "$code"
 if [[ "$code" != "401" ]]; then
   echo "FAILED: expected 401" >&2
   exit 1
 fi
 
-kill "$pid" 2>/dev/null || true
-wait "$pid" 2>/dev/null || true
-trap - EXIT
+kill "$SERVER_PID" 2>/dev/null || true
+wait "$SERVER_PID" 2>/dev/null || true
+SERVER_PID=""
 
-pid="$(run_server_expect "local-dev-subject-1")"
-trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true' EXIT
+SERVER_PID="$(run_server_expect "local-dev-subject-1")"
 wait_http
 
 echo -n "3) GET /api/me with DEV_AUTH_USER_ID=local-dev-subject-1 (expect 200): "
-code="$(curl -sS -o /tmp/housef4-l-me2.json -w '%{http_code}' "http://127.0.0.1:${PORT}/api/me" || true)"
+code="$(curl -sS -o "$RESP_DIR/me2.json" -w '%{http_code}' "http://127.0.0.1:${PORT}/api/me" || true)"
 echo "$code"
 if [[ "$code" != "200" ]]; then
   echo "FAILED: expected 200" >&2
-  cat /tmp/housef4-l-me2.json >&2 || true
+  cat "$RESP_DIR/me2.json" >&2 || true
   exit 1
 fi
-cat /tmp/housef4-l-me2.json
+cat "$RESP_DIR/me2.json"
 echo
 
 echo

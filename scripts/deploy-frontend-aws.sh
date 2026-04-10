@@ -5,7 +5,7 @@
 #   ./scripts/deploy-frontend-aws.sh
 #   ./scripts/deploy-frontend-aws.sh --skip-build    # reuse existing frontend/dist
 #
-# Needs: pnpm, terraform (unless --skip-build), aws CLI, configured AWS creds.
+# Needs: pnpm (unless --skip-build), terraform (always, for outputs), aws CLI, configured AWS creds.
 # Env: TF_DIR (default repo/infrastructure), AWS_PROFILE as usual for aws/terraform.
 
 set -euo pipefail
