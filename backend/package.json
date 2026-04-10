@@ -5,11 +5,11 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "dev": "tsc -w"
+    "dev": "tsc -w",
+    "start:local": "node dist/adapters/localServer.js",
+    "test": "pnpm run build && node --test test/dispatch.test.cjs"
   },
-  "dependencies": {
-    "@housef4/db": "workspace:*"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/aws-lambda": "^8.10.136",
     "@types/node": "^20.11.0",
