@@ -24,11 +24,12 @@ This document recommends how to run the **same backend codebase** comfortably on
 
 ## 2. Current baseline (repo today)
 
-- **Production-shaped runtime**: `backend/src/index.ts` exports an AWS Lambda handler (`APIGatewayEvent` → `APIGatewayProxyResult`), resolves the authenticated user from API Gateway authorizer context, and uses `@housef4/db` (`getFinanceRepository()`) against DynamoDB (`DYNAMODB_TABLE_NAME`).
-- **Data access**: `db/src/dynamoClient.ts` uses the AWS SDK default credential chain and `DynamoDBClient` with no local endpoint today—so local runs **must** either supply credentials + table name (real or emulator) or you extend the client for DynamoDB Local.
+- **Production-shaped runtime**: `backend/src/index.ts` exports the Lambda `handler`, which delegates to `lambdaHandler` in `backend/src/adapters/lambda.ts`. That adapter maps API Gateway events into an internal request shape and calls shared `dispatch()` in `backend/src/dispatch.ts`. Authenticated user resolution from the API Gateway authorizer context is implemented in the Lambda adapter for when protected routes arrive; `dispatch` is currently health-only.
+- **Local HTTP adapter**: `backend/src/adapters/localServer.ts` is a small Node `http` server that adapts `IncomingMessage` into the same internal shape and calls `dispatch()`—so local and Lambda share routing and JSON handlers without duplicate route tables.
+- **Data access**: `db/src/dynamoClient.ts` uses the AWS SDK default credential chain and `DynamoDBClient` with no local endpoint today—so local runs that hit DynamoDB **must** either supply credentials + table name (real or emulator) or you extend the client for DynamoDB Local. The Step 1 `/api/health` path does not call `@housef4/db` yet; repository usage lands in later implementation steps (see §14).
 - **Frontend**: Vite proxies `/api` to `http://localhost:3000` (see `frontend/vite.config.ts`), matching the API contract’s local story.
 
-The recommendations below assume you will add a **small local HTTP entry point** (e.g. Express, Fastify, or Hono) that adapts `IncomingMessage`/`Request` into the same internal “request context” your handlers already need (`userId`, path, method, body). The Lambda handler then becomes a thin wrapper over that shared core. *This repo has not added that server yet; this document is the blueprint.*
+The split—**thin adapters** (Lambda, local HTTP) plus **transport-agnostic `dispatch()`**—is in place. The sections below spell out how to extend that seam with auth enforcement, DynamoDB-backed handlers, CI, and production edge routing as you follow §14.
 
 ## 3. High-level picture
 

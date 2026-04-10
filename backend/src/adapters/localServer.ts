@@ -33,22 +33,32 @@ export async function startLocalServer(): Promise<http.Server> {
   console.log(`APP_ENV: ${cfg.appEnv} — listening on port ${PORT}`);
 
   const server = http.createServer(async (req, res) => {
-    const url = req.url ?? '/';
-    const method = req.method ?? 'GET';
-    let rawBody = '';
-    if (method !== 'GET' && method !== 'HEAD') {
-      rawBody = await readBody(req);
+    try {
+      const url = req.url ?? '/';
+      const method = req.method ?? 'GET';
+      let rawBody = '';
+      if (method !== 'GET' && method !== 'HEAD') {
+        rawBody = await readBody(req);
+      }
+      const internal: InternalRequest = {
+        method,
+        path: url,
+        headers: incomingHeaders(req),
+        rawBody,
+      };
+      const out = await dispatch(internal);
+      const headerPairs: Record<string, string | number> = { ...out.headers };
+      res.writeHead(out.statusCode, headerPairs);
+      res.end(JSON.stringify(out.body));
+    } catch (err) {
+      console.error(err);
+      if (res.headersSent) {
+        res.end();
+      } else {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Internal Server Error' }));
+      }
     }
-    const internal: InternalRequest = {
-      method,
-      path: url,
-      headers: incomingHeaders(req),
-      rawBody,
-    };
-    const out = await dispatch(internal);
-    const headerPairs: Record<string, string | number> = { ...out.headers };
-    res.writeHead(out.statusCode, headerPairs);
-    res.end(JSON.stringify(out.body));
   });
 
   await new Promise<void>((resolve, reject) => {

@@ -14,7 +14,8 @@ check "backend_dist_built" {
 data "archive_file" "backend_lambda" {
   type        = "zip"
   source_dir  = local.backend_dist_dir
-  output_path = "${path.module}/.build/backend_lambda.zip"
+  # Keep the zip directly under the module root so the parent directory always exists on a fresh clone (no mkdir step).
+  output_path = "${path.module}/backend_lambda.zip"
 }
 
 data "aws_iam_policy_document" "lambda_assume" {

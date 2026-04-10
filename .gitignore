@@ -28,7 +28,7 @@ Thumbs.db
 
 # Terraform
 **/.terraform/*
-infrastructure/.build/
+infrastructure/backend_lambda.zip
 *.tfstate
 *.tfstate.*
 crash.log
