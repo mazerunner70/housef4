@@ -1,24 +1,3 @@
-variable "aws_region" {
-  description = "AWS region"
-  type        = string
-  default     = "eu-west-1"
-}
-
-variable "project_id" {
-  description = "Project identifier"
-  type        = string
-  default     = "housef4"
-}
-
-variable "environment" {
-  description = "Deployment environment (e.g., dev, staging, prod)"
-  type        = string
-  default     = "dev"
-}
-
-# Example of defining the CloudFront Distribution, API Gateway, S3 bucket, Lambda
-# ...
-
 # S3 Bucket for React Frontend
 resource "aws_s3_bucket" "frontend_bucket" {
   bucket = "${var.project_id}-${var.environment}-frontend-${data.aws_caller_identity.current.account_id}"

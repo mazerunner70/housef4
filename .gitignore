@@ -28,6 +28,7 @@ Thumbs.db
 
 # Terraform
 **/.terraform/*
+infrastructure/.build/
 *.tfstate
 *.tfstate.*
 crash.log
