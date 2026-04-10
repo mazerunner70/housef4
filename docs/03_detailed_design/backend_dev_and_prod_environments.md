@@ -88,7 +88,7 @@ Centralize configuration in one module used by both entry points. Suggested vari
 |----------|-------|------------|--------|
 | `APP_ENV` | `local` | `production` | Drives auth bypass rules, logging verbosity. |
 | `DYNAMODB_TABLE_NAME` | Required once DB is wired (**§14 Step 4**) | Set in Lambda env from Terraform | Omit for **§14 Steps 1–3** if no repository calls. |
-| `AWS_REGION` | e.g. `eu-west-1` | Same | Keep aligned with Terraform `aws_region`. |
+| `AWS_REGION` | e.g. `eu-west-2` | Same | Keep aligned with Terraform `aws_region`. |
 | `DYNAMODB_ENDPOINT` | e.g. `http://localhost:8000` | *unset* | When set, SDK client uses local emulator. |
 | `COGNITO_*` / `AWS_COGNITO_*` | Optional | Required for verifying JWTs if you validate in Lambda | Only needed if the local server verifies real JWTs. |
 | `DEV_AUTH_USER_ID` | Optional fixed UUID/sub | *never set* | See §6; **omit in prod** via Terraform/IaC guardrails. Used from **§14 Step 3** onward for local dev. |

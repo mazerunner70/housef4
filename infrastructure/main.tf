@@ -1,6 +1,18 @@
-# S3 Bucket for React Frontend
+# S3 Bucket for React Frontend (name is globally unique across all AWS accounts).
 resource "aws_s3_bucket" "frontend_bucket" {
-  bucket = "${var.project_id}-${var.environment}-frontend-${data.aws_caller_identity.current.account_id}"
+  # Globally unique: generic names like "frontend-host" collide across all AWS accounts.
+  bucket        = "${var.project_id}-${var.environment}-frontend-${data.aws_caller_identity.current.account_id}"
+  force_destroy = var.frontend_bucket_force_destroy
+
+  # aws_s3_bucket Create runs: CreateBucket → HeadBucket wait → tags → resourceBucketUpdate.
+  # S3 propagation can be slow; avoid overly aggressive timeouts that cause flaky applies.
+  # If "Still creating..." exceeds create+update, Ctrl+C and check: VPN/DNS, or import if bucket exists.
+  timeouts {
+    create = "10m"
+    read   = "10m"
+    update = "10m"
+    delete = "30m"
+  }
 }
 
 # Block all public access (access should only be via CloudFront/OAC)
@@ -79,5 +91,3 @@ resource "aws_dynamodb_table" "app_table" {
     enabled = true
   }
 }
-
-data "aws_caller_identity" "current" {}

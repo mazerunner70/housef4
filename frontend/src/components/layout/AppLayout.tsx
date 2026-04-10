@@ -3,11 +3,14 @@ import {
   Bell,
   Home,
   LineChart,
+  LogOut,
   Search,
   Settings,
   Wallet,
 } from 'lucide-react'
 
+import { useAuth } from '@/auth/useAuth'
+import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/cn'
 
 /** Top bar labels match the reference; only Dashboard is wired in Stage 1. */
@@ -45,8 +48,20 @@ function AuraLogo() {
   )
 }
 
+function initialsFromEmail(email: string): string {
+  const local = email.split('@')[0] ?? email
+  const parts = local.split(/[.\s_-]+/).filter(Boolean)
+  if (parts.length >= 2) {
+    const a = parts[0]?.charAt(0) ?? ''
+    const b = parts[1]?.charAt(0) ?? ''
+    if (a && b) return `${a}${b}`.toUpperCase()
+  }
+  return local.slice(0, 2).toUpperCase()
+}
+
 export function AppLayout() {
   const location = useLocation()
+  const { cognitoEnabled, userEmail, logout } = useAuth()
 
   return (
     <div className="dashboard-ambient flex min-h-svh text-zinc-300">
@@ -171,16 +186,44 @@ export function AppLayout() {
                 <Bell className="size-[18px]" />
                 <span className="ui-notify-dot absolute right-2 top-2 size-2 rounded-full bg-red-500" />
               </button>
-              <div className="ui-surface-input flex items-center gap-2 rounded-full py-1 pl-1 pr-3">
-                <div
-                  className="flex size-8 items-center justify-center rounded-full bg-teal-500/15 text-xs font-semibold uppercase tracking-wide text-teal-200"
-                  aria-label="Alex R. avatar"
-                >
-                  AR
-                </div>
-                <span className="hidden text-sm font-medium text-zinc-200 sm:inline">
-                  Alex R.
-                </span>
+              <div className="flex flex-wrap items-center gap-2">
+                {cognitoEnabled && userEmail ? (
+                  <>
+                    <div className="ui-surface-input flex items-center gap-2 rounded-full py-1 pl-1 pr-3">
+                      <div
+                        className="flex size-8 items-center justify-center rounded-full bg-teal-500/15 text-xs font-semibold uppercase tracking-wide text-teal-200"
+                        aria-hidden
+                      >
+                        {initialsFromEmail(userEmail)}
+                      </div>
+                      <span className="hidden max-w-[10rem] truncate text-sm font-medium text-zinc-200 sm:inline">
+                        {userEmail}
+                      </span>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="shrink-0 gap-1.5 px-2 py-2 text-xs text-zinc-400"
+                      aria-label="Sign out"
+                      onClick={() => logout()}
+                    >
+                      <LogOut className="size-4" aria-hidden />
+                      <span className="hidden sm:inline">Sign out</span>
+                    </Button>
+                  </>
+                ) : (
+                  <div className="ui-surface-input flex items-center gap-2 rounded-full py-1 pl-1 pr-3">
+                    <div
+                      className="flex size-8 items-center justify-center rounded-full bg-teal-500/15 text-xs font-semibold uppercase tracking-wide text-teal-200"
+                      aria-label="Alex R. avatar"
+                    >
+                      AR
+                    </div>
+                    <span className="hidden text-sm font-medium text-zinc-200 sm:inline">
+                      Alex R.
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           </div>

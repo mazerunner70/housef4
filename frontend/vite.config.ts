@@ -5,6 +5,10 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // `amazon-cognito-identity-js` (and deps) reference Node's `global`, which browsers lack.
+  define: {
+    global: 'globalThis',
+  },
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
