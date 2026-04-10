@@ -7,14 +7,59 @@ import type {
   TransactionsResponse,
 } from '@/lib/types'
 
+export type ApiAuthTokenGetter = () => string | undefined
+
+let apiAuthTokenGetter: ApiAuthTokenGetter | undefined
+
+/**
+ * Wire a Cognito (or other) access token for production HTTP calls.
+ * Leave unset for local dev behind the Vite `/api` proxy.
+ */
+export function setApiAuthTokenGetter(getter: ApiAuthTokenGetter | undefined) {
+  apiAuthTokenGetter = getter
+}
+
+export type BearerTokenResolver = () => Promise<string | undefined>
+
+let bearerTokenResolver: BearerTokenResolver | undefined
+
+/**
+ * Async resolver (e.g. Cognito `getSession` refresh) runs before each API call.
+ * Falls back to {@link setApiAuthTokenGetter} / `VITE_API_BEARER_TOKEN` when unset
+ * or when the resolver returns nothing.
+ */
+export function setBearerTokenResolver(
+  resolver: BearerTokenResolver | undefined,
+) {
+  bearerTokenResolver = resolver
+}
+
+async function authorizationHeader(): Promise<Record<string, string>> {
+  let raw: string | undefined
+  if (bearerTokenResolver) {
+    const t = await bearerTokenResolver()
+    raw = t?.trim() || undefined
+  }
+  if (!raw) {
+    raw =
+      apiAuthTokenGetter?.()?.trim() ||
+      import.meta.env.VITE_API_BEARER_TOKEN?.trim() ||
+      undefined
+  }
+  if (!raw) return {}
+  return { Authorization: `Bearer ${raw}` }
+}
+
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const isFormData = init?.body instanceof FormData
+  const auth = await authorizationHeader()
   const res = await fetch(path, {
     ...init,
     headers: isFormData
-      ? { ...init?.headers }
+      ? { ...auth, ...init?.headers }
       : {
           'Content-Type': 'application/json',
+          ...auth,
           ...init?.headers,
         },
   })

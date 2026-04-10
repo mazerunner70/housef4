@@ -14,8 +14,12 @@ terraform {
   }
 }
 
+data "aws_caller_identity" "current" {}
+
 provider "aws" {
   region = var.aws_region
+  # Default is 25; lowering avoids very long retry storms when S3/API calls stall (see aws provider docs).
+  max_retries = 5
 
   default_tags {
     tags = {

@@ -7,7 +7,8 @@
     "build": "tsc",
     "dev": "tsc -w",
     "start:local": "node dist/adapters/localServer.js",
-    "test": "pnpm run build && node --test test/dispatch.test.cjs"
+    "test": "pnpm run build && node --test test/dispatch.test.cjs",
+    "test:integration-cognito": "pnpm run build && node --test test/integration-cognito-smoke.cjs"
   },
   "dependencies": {},
   "devDependencies": {

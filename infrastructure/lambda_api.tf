@@ -12,8 +12,8 @@ check "backend_dist_built" {
 }
 
 data "archive_file" "backend_lambda" {
-  type        = "zip"
-  source_dir  = local.backend_dist_dir
+  type       = "zip"
+  source_dir = local.backend_dist_dir
   # Keep the zip directly under the module root so the parent directory always exists on a fresh clone (no mkdir step).
   output_path = "${path.module}/backend_lambda.zip"
 }
@@ -93,6 +93,26 @@ resource "aws_lambda_function" "api" {
 resource "aws_apigatewayv2_api" "http" {
   name          = "${var.project_id}-${var.environment}-http"
   protocol_type = "HTTP"
+
+  cors_configuration {
+    allow_headers  = ["authorization", "content-type"]
+    allow_methods  = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    allow_origins  = ["*"]
+    expose_headers = []
+    max_age        = 86400
+  }
+}
+
+resource "aws_apigatewayv2_authorizer" "jwt" {
+  api_id           = aws_apigatewayv2_api.http.id
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.Authorization"]
+  name             = "${var.project_id}-${var.environment}-jwt"
+
+  jwt_configuration {
+    audience = [aws_cognito_user_pool_client.spa.id]
+    issuer   = "https://cognito-idp.${var.aws_region}.amazonaws.com/${aws_cognito_user_pool.api.id}"
+  }
 }
 
 resource "aws_apigatewayv2_stage" "default" {
@@ -110,9 +130,18 @@ resource "aws_apigatewayv2_integration" "lambda" {
   payload_format_version = "1.0"
 }
 
-resource "aws_apigatewayv2_route" "api_proxy" {
+resource "aws_apigatewayv2_route" "health" {
   api_id    = aws_apigatewayv2_api.http.id
-  route_key = "ANY /api/{proxy+}"
+  route_key = "GET /api/health"
+
+  target = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
+resource "aws_apigatewayv2_route" "api_proxy" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "ANY /api/{proxy+}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
 
   target = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 }

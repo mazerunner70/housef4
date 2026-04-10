@@ -1,3 +1,8 @@
+output "aws_region" {
+  description = "AWS region used by this stack (for e.g. VITE_COGNITO_REGION when building the SPA)"
+  value       = var.aws_region
+}
+
 output "dynamodb_app_table_name" {
   description = "Application single-table DynamoDB name (housef4)"
   value       = aws_dynamodb_table.app_table.name
@@ -41,4 +46,19 @@ output "cloudfront_domain_name" {
 output "frontend_bucket_name" {
   description = "S3 bucket for Vite build artifacts (sync via CI or aws s3 sync)"
   value       = aws_s3_bucket.frontend_bucket.id
+}
+
+output "cognito_user_pool_id" {
+  description = "Cognito User Pool id (JWT issuer path segment)"
+  value       = aws_cognito_user_pool.api.id
+}
+
+output "cognito_spa_client_id" {
+  description = "Cognito app client id (JWT audience for API Gateway authorizer)"
+  value       = aws_cognito_user_pool_client.spa.id
+}
+
+output "cognito_jwt_issuer" {
+  description = "JWT issuer URL for Cognito (verify tokens / frontend config)"
+  value       = "https://cognito-idp.${var.aws_region}.amazonaws.com/${aws_cognito_user_pool.api.id}"
 }

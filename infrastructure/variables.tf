@@ -1,7 +1,7 @@
 variable "aws_region" {
-  description = "AWS region"
+  description = "AWS region (all resources, including S3 frontend bucket)"
   type        = string
-  default     = "eu-west-1"
+  default     = "eu-west-2"
 }
 
 variable "project_id" {
@@ -43,4 +43,10 @@ variable "lambda_timeout" {
   description = "Lambda timeout in seconds"
   type        = number
   default     = 10
+}
+
+variable "cognito_allow_admin_password_auth" {
+  description = "Allow ADMIN_USER_PASSWORD_AUTH for aws cognito-idp admin-initiate-auth (smoke tests only). Set false for hardened production pools."
+  type        = bool
+  default     = true
 }

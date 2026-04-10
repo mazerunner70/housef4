@@ -6,7 +6,13 @@
   "scripts": {
     "dev": "pnpm -r run dev",
     "build": "pnpm -r run build",
-    "test": "pnpm -r run test"
+    "test": "pnpm -r run test",
+    "test:auth:local": "bash scripts/test-local-auth-curl.sh",
+    "test:auth:aws": "bash scripts/test-aws-auth-curl.sh",
+    "test:auth:cognito-smoke": "bash scripts/cognito-login-and-smoke.sh --from-terraform",
+    "test:auth:cognito-integration": "RUN_COGNITO_SMOKE=1 pnpm --filter @housef4/backend run test:integration-cognito",
+    "deploy:frontend:aws": "bash scripts/deploy-frontend-aws.sh",
+    "aws:delete-frontend-bucket": "bash scripts/delete-frontend-s3-bucket-aws.sh"
   },
   "devDependencies": {
     "typescript": "^5.4.0"

@@ -1,4 +1,5 @@
 import * as http from 'node:http';
+import { resolveLocalUserId } from '../auth/resolveLocalUserId';
 import { loadConfig } from '../config';
 import { dispatch } from '../dispatch';
 import type { InternalRequest } from '../types';
@@ -45,6 +46,7 @@ export async function startLocalServer(): Promise<http.Server> {
         path: url,
         headers: incomingHeaders(req),
         rawBody,
+        userId: resolveLocalUserId(cfg),
       };
       const out = await dispatch(internal);
       const headerPairs: Record<string, string | number> = { ...out.headers };
