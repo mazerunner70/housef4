@@ -7,10 +7,12 @@ import { DashboardPage } from '@/pages/DashboardPage'
 import { HomeRedirect } from '@/pages/HomeRedirect'
 import { LoginPage } from '@/pages/LoginPage'
 import { ReviewQueuePage } from '@/pages/ReviewQueuePage'
+import { HealthCheckPage } from '@/pages/HealthCheckPage'
 
 export default function App() {
   return (
     <Routes>
+      <Route path="/health-check" element={<HealthCheckPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route element={<CognitoGate />}>
         <Route index element={<HomeRedirect />} />

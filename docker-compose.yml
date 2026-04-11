@@ -1,0 +1,7 @@
+# DynamoDB Local for Step 4 local dev (see docs/03_detailed_design/backend_dev_and_prod_environments.md §14).
+services:
+  dynamodb-local:
+    image: amazon/dynamodb-local:2.5.2
+    ports:
+      - "8000:8000"
+    command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb"]

@@ -45,6 +45,12 @@ variable "lambda_timeout" {
   default     = 10
 }
 
+variable "health_check_build_label" {
+  description = "Stored at DynamoDB PK=health-check SK=BUILD; surfaced as GET /api/health `build` and the /health-check page."
+  type        = string
+  default     = "prod build"
+}
+
 variable "cognito_allow_admin_password_auth" {
   description = "Allow ADMIN_USER_PASSWORD_AUTH on the SPA app client (needed for admin-initiate-auth in cognito-login-and-smoke and similar scripts). Set true for dev/smoke; false for hardened production pools."
   type        = bool

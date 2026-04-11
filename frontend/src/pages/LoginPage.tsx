@@ -5,6 +5,7 @@ import {
   cognitoConfirmForgotPassword,
   cognitoForgotPassword,
 } from '@/auth/cognitoSession'
+import { isCognitoConfigured } from '@/auth/cognitoConfig'
 import { useAuth } from '@/auth/useAuth'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
@@ -22,7 +23,7 @@ function passwordMeetsPoolPolicy(pw: string): boolean {
 type LoginMode = 'signin' | 'forgot-send' | 'forgot-confirm'
 
 export function LoginPage() {
-  const { ready, cognitoEnabled, isAuthenticated, login } = useAuth()
+  const { authUiMode, ready, isAuthenticated, login } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const from =
@@ -39,14 +40,19 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
 
-  if (!cognitoEnabled) {
+  if (authUiMode === 'local') {
+    return <Navigate to="/" replace />
+  }
+
+  if (authUiMode === 'cognito' && !isCognitoConfigured()) {
     return (
       <div className="dashboard-ambient flex min-h-svh items-center justify-center px-4 py-12">
-        <Card className="max-w-md" title="Sign in">
+        <Card className="max-w-md" title="Sign in unavailable">
           <p className="text-sm text-zinc-400">
-            Cognito is not configured (missing{' '}
-            <code className="text-zinc-300">VITE_COGNITO_*</code> build vars).
-            Use local Vite dev with the API proxy, or deploy with Cognito env set.
+            This build expects Cognito (
+            <code className="text-zinc-300">VITE_AUTH_UI=cognito</code>) but{' '}
+            <code className="text-zinc-300">VITE_COGNITO_*</code> is missing.
+            Rebuild with pool, client, and region from Terraform.
           </p>
           <Button
             type="button"
@@ -228,7 +234,7 @@ export function LoginPage() {
               {submitting ? 'Signing in…' : 'Sign in'}
             </Button>
           </form>
-        )}
+        ) : null}
         {mode === 'forgot-send' ? (
           <form onSubmit={onSendResetCode} className="flex flex-col gap-4">
             <div>

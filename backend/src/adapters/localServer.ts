@@ -1,7 +1,11 @@
 import * as http from 'node:http';
+import { randomUUID } from 'node:crypto';
+
 import { resolveLocalUserId } from '../auth/resolveLocalUserId';
 import { loadConfig } from '../config';
 import { dispatch } from '../dispatch';
+import { createLogger } from '../logger';
+import { getLog, runWithRequestLogAsync } from '../requestLogContext';
 import type { InternalRequest } from '../types';
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -31,29 +35,47 @@ function incomingHeaders(
 
 export async function startLocalServer(): Promise<http.Server> {
   const cfg = loadConfig();
-  console.log(`APP_ENV: ${cfg.appEnv} — listening on port ${PORT}`);
+  const boot = createLogger({ phase: 'localServer.boot' });
+  boot.info('localServer.listen', {
+    appEnv: cfg.appEnv,
+    port: PORT,
+    dynamodbTableName: cfg.dynamodbTableName ?? null,
+    dynamodbEndpoint: cfg.dynamodbEndpoint ?? null,
+    awsRegion: cfg.awsRegion ?? process.env.AWS_REGION ?? 'eu-west-2',
+  });
 
   const server = http.createServer(async (req, res) => {
     try {
-      const url = req.url ?? '/';
-      const method = req.method ?? 'GET';
-      let rawBody = '';
-      if (method !== 'GET' && method !== 'HEAD') {
-        rawBody = await readBody(req);
-      }
-      const internal: InternalRequest = {
-        method,
-        path: url,
-        headers: incomingHeaders(req),
-        rawBody,
-        userId: resolveLocalUserId(cfg),
-      };
-      const out = await dispatch(internal);
-      const headerPairs: Record<string, string | number> = { ...out.headers };
-      res.writeHead(out.statusCode, headerPairs);
-      res.end(JSON.stringify(out.body));
+      await runWithRequestLogAsync(randomUUID(), async () => {
+        const log = getLog();
+        const url = req.url ?? '/';
+        const method = req.method ?? 'GET';
+        const pathOnly = url.split('?')[0] ?? url;
+        log.info('http.request', { method, path: pathOnly });
+
+        let rawBody = '';
+        if (method !== 'GET' && method !== 'HEAD') {
+          rawBody = await readBody(req);
+        }
+        const internal: InternalRequest = {
+          method,
+          path: pathOnly,
+          headers: incomingHeaders(req),
+          rawBody,
+          userId: resolveLocalUserId(cfg),
+        };
+        const out = await dispatch(internal);
+        log.info('http.response', { statusCode: out.statusCode, method, path: pathOnly });
+        const headerPairs: Record<string, string | number> = { ...out.headers };
+        res.writeHead(out.statusCode, headerPairs);
+        res.end(JSON.stringify(out.body));
+      });
     } catch (err) {
-      console.error(err);
+      createLogger({ phase: 'localServer' }).error('http.request.unhandled', {
+        err: err instanceof Error ? err.message : String(err),
+        errName: err instanceof Error ? err.name : undefined,
+        stack: err instanceof Error ? err.stack : undefined,
+      });
       if (res.headersSent) {
         res.end();
       } else {
@@ -68,7 +90,9 @@ export async function startLocalServer(): Promise<http.Server> {
     server.on('error', reject);
   });
 
-  console.log(`Local API: http://localhost:${PORT}/api/health`);
+  createLogger({ phase: 'localServer.boot' }).info('localServer.ready', {
+    url: `http://localhost:${PORT}/api/health`,
+  });
   return server;
 }
 
@@ -78,7 +102,10 @@ async function main(): Promise<void> {
 
 if (require.main === module) {
   main().catch((err) => {
-    console.error(err);
+    createLogger({ phase: 'localServer' }).error('localServer.fatal', {
+      err: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
     process.exitCode = 1;
   });
 }
