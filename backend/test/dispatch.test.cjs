@@ -96,3 +96,32 @@ test('GET /api/me without userId returns 401', async () => {
   });
   assert.equal(res.statusCode, 401);
 });
+
+test('POST /api/rules/tag with invalid JSON returns 400', async () => {
+  const res = await dispatch({
+    method: 'POST',
+    path: '/api/rules/tag',
+    headers: {},
+    rawBody: 'not-json',
+    userId: 'user-1',
+  });
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.error, 'Invalid JSON body');
+});
+
+test('GET /api/transactions with userId without DYNAMODB_TABLE_NAME returns 500', async () => {
+  const prev = process.env.DYNAMODB_TABLE_NAME;
+  delete process.env.DYNAMODB_TABLE_NAME;
+  try {
+    const res = await dispatch({
+      method: 'GET',
+      path: '/api/transactions',
+      headers: {},
+      rawBody: '',
+      userId: 'user-1',
+    });
+    assert.equal(res.statusCode, 500);
+  } finally {
+    if (prev !== undefined) process.env.DYNAMODB_TABLE_NAME = prev;
+  }
+});
