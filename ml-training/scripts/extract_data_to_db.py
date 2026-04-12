@@ -1,7 +1,19 @@
 import os
+from decimal import Decimal
+
 import boto3
 import psycopg2
 from psycopg2.extras import execute_values
+
+
+def _item_decimal(item, key, default='0'):
+    """DynamoDB Numbers are Decimal; avoid float() so DECIMAL columns keep precision."""
+    v = item.get(key)
+    if v is None:
+        return Decimal(default)
+    if isinstance(v, Decimal):
+        return v
+    return Decimal(str(v))
 
 # Configuration for DynamoDB
 dynamodb = boto3.resource('dynamodb', region_name=os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')))
@@ -57,7 +69,7 @@ def extract_transactions(conn):
             item.get('userId'),
             str(item.get('accountId')) if item.get('accountId') else None,
             int(item.get('date', 0)),
-            float(item.get('amount', 0)),
+            _item_decimal(item, 'amount'),
             item.get('description', ''),
             item.get('memo', ''),
             item.get('currency', ''),
@@ -93,9 +105,9 @@ def extract_patterns(conn):
             item.get('temporalPatternType', ''),
             item.get('dayOfWeek'),
             item.get('dayOfMonth'),
-            float(item.get('amountMean', 0)),
-            float(item.get('amountStd', 0) if item.get('amountStd') is not None else 0),
-            float(item.get('confidenceScore', 0)),
+            _item_decimal(item, 'amountMean'),
+            _item_decimal(item, 'amountStd'),
+            _item_decimal(item, 'confidenceScore'),
             item.get('status', ''),
             str(item.get('active', '')).lower() == 'true',
             int(item.get('createdAt', 0))

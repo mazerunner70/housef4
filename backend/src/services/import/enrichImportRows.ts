@@ -39,8 +39,8 @@ export async function enrichImportRows(
 
   const out: ImportTransactionInput[] = [];
   for (const row of parsed) {
-    const cluster_id = clusterIdFromMerchant(row.raw_merchant);
     const cleaned_merchant = cleanMerchantForClustering(row.raw_merchant);
+    const cluster_id = clusterIdFromMerchant(cleaned_merchant);
     const info = clusterInfo.get(cluster_id);
     const known = Boolean(info?.hasClassified);
     const category = known ? info!.category : 'Uncategorized';
