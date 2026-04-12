@@ -1,4 +1,7 @@
+import { createLogger } from '../../logger';
 import type { ParsedImportRow } from './canonical';
+
+const log = createLogger({ component: 'import.parseOfx' });
 
 function getTag(block: string, tag: string): string | undefined {
   const re = new RegExp(`<${tag}>([^<\\r\\n]*)`, 'i');
@@ -24,6 +27,12 @@ export function parseOfxLike(content: string): ParsedImportRow[] {
       getTag(block, 'DTAVAIL');
     if (!dtRaw) continue;
     const date = ofxDateToUtcMs(dtRaw);
+    if (date === null) {
+      log.warn('ofx import: rejected STMTTRN — unparseable date', {
+        dateString: dtRaw,
+      });
+      continue;
+    }
 
     const name = getTag(block, 'NAME');
     const memo = getTag(block, 'MEMO');
@@ -35,16 +44,21 @@ export function parseOfxLike(content: string): ParsedImportRow[] {
   return rows;
 }
 
-function ofxDateToUtcMs(s: string): number {
+function ofxDateToUtcMs(s: string): number | null {
   const t = s.trim();
-  const y = parseInt(t.slice(0, 4), 10);
-  const mo = parseInt(t.slice(4, 6), 10) - 1;
-  const d = parseInt(t.slice(6, 8), 10);
+  if (t.length < 8) return null;
+  const y = Number.parseInt(t.slice(0, 4), 10);
+  const mo = Number.parseInt(t.slice(4, 6), 10) - 1;
+  const d = Number.parseInt(t.slice(6, 8), 10);
+  if (Number.isNaN(y) || Number.isNaN(mo) || Number.isNaN(d)) return null;
   if (t.length >= 14) {
-    const hh = parseInt(t.slice(8, 10), 10);
-    const mm = parseInt(t.slice(10, 12), 10);
-    const ss = parseInt(t.slice(12, 14), 10);
-    return Date.UTC(y, mo, d, hh, mm, ss);
+    const hh = Number.parseInt(t.slice(8, 10), 10);
+    const mm = Number.parseInt(t.slice(10, 12), 10);
+    const ss = Number.parseInt(t.slice(12, 14), 10);
+    if (Number.isNaN(hh) || Number.isNaN(mm) || Number.isNaN(ss)) return null;
+    const ms = Date.UTC(y, mo, d, hh, mm, ss);
+    return Number.isNaN(ms) ? null : ms;
   }
-  return Date.UTC(y, mo, d);
+  const ms = Date.UTC(y, mo, d);
+  return Number.isNaN(ms) ? null : ms;
 }

@@ -1,6 +1,9 @@
 import { parse } from 'csv-parse/sync';
 
+import { createLogger } from '../../logger';
 import type { ParsedImportRow } from './canonical';
+
+const log = createLogger({ component: 'import.parseCsv' });
 
 function normHeader(h: string): string {
   return h.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -79,7 +82,7 @@ function pickColumns(headers: string[]): {
   };
 }
 
-function parseDateCell(s: string): number {
+function parseDateCell(s: string): number | null {
   const t = s.trim();
   const iso = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (iso) {
@@ -98,7 +101,7 @@ function parseDateCell(s: string): number {
     return Date.UTC(yy, mm - 1, dd);
   }
   const d = Date.parse(t);
-  return Number.isNaN(d) ? Date.now() : d;
+  return Number.isNaN(d) ? null : d;
 }
 
 function parseMoney(s: string): number | undefined {
@@ -145,7 +148,14 @@ export function parseBankCsv(text: string): ParsedImportRow[] {
     }
     if (amount === undefined || Number.isNaN(amount)) continue;
 
-    const date = parseDateCell(vals[cols.dateIdx] ?? '');
+    const dateRaw = vals[cols.dateIdx] ?? '';
+    const date = parseDateCell(dateRaw);
+    if (date === null) {
+      log.warn('csv import: rejected row — unparseable date cell', {
+        dateString: dateRaw,
+      });
+      continue;
+    }
     rows.push({ date, amount, raw_merchant });
   }
   return rows;

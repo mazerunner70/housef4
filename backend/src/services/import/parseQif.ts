@@ -1,4 +1,7 @@
+import { createLogger } from '../../logger';
 import type { ParsedImportRow } from './canonical';
+
+const log = createLogger({ component: 'import.parseQif' });
 
 /** Parse QIF transaction records (line tags; records often end with `^`). */
 export function parseQif(content: string): ParsedImportRow[] {
@@ -17,6 +20,16 @@ export function parseQif(content: string): ParsedImportRow[] {
       return;
     }
     const date = qifDateToUtcMs(dateStr);
+    if (date === null) {
+      log.warn('qif import: rejected record — unparseable date', {
+        dateString: dateStr,
+      });
+      dateStr = undefined;
+      amountStr = undefined;
+      payee = undefined;
+      memo = undefined;
+      return;
+    }
     const amount = Number(String(amountStr).replace(/^\+/, ''));
     if (Number.isNaN(amount)) {
       dateStr = undefined;
@@ -53,7 +66,7 @@ export function parseQif(content: string): ParsedImportRow[] {
   return rows;
 }
 
-function qifDateToUtcMs(s: string): number {
+function qifDateToUtcMs(s: string): number | null {
   const t = s.trim();
   const mdy = t.match(/^(\d{1,2})\/(\d{1,2})[/'](\d{2,4})$/);
   if (mdy) {
@@ -72,5 +85,5 @@ function qifDateToUtcMs(s: string): number {
     );
   }
   const d = Date.parse(t);
-  return Number.isNaN(d) ? Date.now() : d;
+  return Number.isNaN(d) ? null : d;
 }

@@ -9,11 +9,17 @@ import { getLog, runWithRequestLogAsync } from '../requestLogContext';
 import type { InternalRequest } from '../types';
 
 const PORT = Number(process.env.PORT) || 3000;
+const MAX_BODY_BYTES = 50 * 1024 * 1024;
 
 function readBodyBuffer(req: http.IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
+    let totalBytes = 0;
     req.on('data', (c: Buffer) => {
+      totalBytes += c.length;
+      if (totalBytes > MAX_BODY_BYTES) {
+        reject(new Error('Request body too large'));
+      }
       chunks.push(c);
     });
     req.on('end', () => {
