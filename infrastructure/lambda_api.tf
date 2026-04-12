@@ -1,19 +1,20 @@
 # API Lambda: packaged compiled output of ../backend (no Docker in this stack).
 
 locals {
-  backend_dist_dir = abspath("${path.module}/../backend/dist")
+  # Bundled Lambda artifact (includes @housef4/db and AWS SDK); see backend/package.json build:lambda.
+  backend_lambda_dir = abspath("${path.module}/../backend/dist-lambda")
 }
 
-check "backend_dist_built" {
+check "backend_lambda_built" {
   assert {
-    condition     = fileexists("${local.backend_dist_dir}/index.js")
-    error_message = "Build the backend before terraform plan/apply: `pnpm --filter @housef4/backend run build` from the repo root."
+    condition     = fileexists("${local.backend_lambda_dir}/index.js")
+    error_message = "Build the backend before terraform plan/apply: `pnpm --filter @housef4/db --filter @housef4/backend run build` from the repo root (produces backend/dist/ and backend/dist-lambda/)."
   }
 }
 
 data "archive_file" "backend_lambda" {
   type       = "zip"
-  source_dir = local.backend_dist_dir
+  source_dir = local.backend_lambda_dir
   # Keep the zip directly under the module root so the parent directory always exists on a fresh clone (no mkdir step).
   output_path = "${path.module}/backend_lambda.zip"
 }

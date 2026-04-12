@@ -5,8 +5,8 @@ import { Spinner } from '@/components/ui/Spinner'
 import { useAuth } from './useAuth'
 
 /**
- * When Cognito env is present (deployed builds), require a session for app routes.
- * Local dev without `VITE_COGNITO_*` skips the gate.
+ * `VITE_AUTH_UI=local` (default in Vite dev): no login.
+ * `VITE_AUTH_UI=cognito` + Cognito build vars (prod deploy): require a session.
  */
 export function CognitoGate() {
   const { ready, cognitoEnabled, isAuthenticated } = useAuth()

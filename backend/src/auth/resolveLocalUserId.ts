@@ -1,4 +1,5 @@
 import type { AppConfig } from '../config';
+import { getLog } from '../requestLogContext';
 
 /**
  * Local dev: when `APP_ENV=local` and `DEV_AUTH_USER_ID` is set, use it as `sub`
@@ -8,5 +9,9 @@ import type { AppConfig } from '../config';
 export function resolveLocalUserId(cfg: AppConfig): string | undefined {
   if (cfg.appEnv !== 'local') return undefined;
   const id = cfg.devAuthUserId?.trim();
-  return id && id.length > 0 ? id : undefined;
+  const out = id && id.length > 0 ? id : undefined;
+  if (out) {
+    getLog().debug('auth.localDevUser', { userIdLength: out.length });
+  }
+  return out;
 }

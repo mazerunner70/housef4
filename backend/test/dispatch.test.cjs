@@ -10,7 +10,10 @@ test('GET /api/health returns 200', async () => {
     rawBody: '',
   });
   assert.equal(res.statusCode, 200);
-  assert.deepEqual(res.body, { status: 'ok' });
+  assert.equal(res.body.status, 'ok');
+  assert.equal(res.body.build, 'unknown');
+  assert.equal(res.body.diagnostic.code, 'NO_TABLE_ENV');
+  assert.match(res.body.diagnostic.hint, /DYNAMODB_TABLE_NAME/);
 });
 
 test('GET /api/health accepts API Gateway-style prefixed path', async () => {
@@ -46,12 +49,30 @@ test('protected API path without userId returns 401', async () => {
 test('unknown protected route with userId returns 404', async () => {
   const res = await dispatch({
     method: 'GET',
-    path: '/api/metrics',
+    path: '/api/not-implemented-yet',
     headers: {},
     rawBody: '',
     userId: 'user-1',
   });
   assert.equal(res.statusCode, 404);
+});
+
+test('GET /api/metrics with userId without DYNAMODB_TABLE_NAME returns 500', async () => {
+  const prev = process.env.DYNAMODB_TABLE_NAME;
+  delete process.env.DYNAMODB_TABLE_NAME;
+  try {
+    const res = await dispatch({
+      method: 'GET',
+      path: '/api/metrics',
+      headers: {},
+      rawBody: '',
+      userId: 'user-1',
+    });
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(res.body, { error: 'Internal Server Error' });
+  } finally {
+    if (prev !== undefined) process.env.DYNAMODB_TABLE_NAME = prev;
+  }
 });
 
 test('GET /api/me returns userId when authenticated', async () => {

@@ -7,6 +7,12 @@ import type {
   TransactionsResponse,
 } from '@/lib/types'
 
+export type HealthResponse = {
+  status: string
+  build: string
+  diagnostic: { code: string; hint: string }
+}
+
 export type ApiAuthTokenGetter = () => string | undefined
 
 let apiAuthTokenGetter: ApiAuthTokenGetter | undefined
@@ -67,6 +73,14 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`${res.status} ${res.statusText}`)
   }
   return res.json() as Promise<T>
+}
+
+/** `GET /api/health` — public; `build` comes from DynamoDB PK=health-check, SK=BUILD. */
+export async function getHealth(): Promise<HealthResponse> {
+  return fetchJson<HealthResponse>('/api/health', {
+    method: 'GET',
+    cache: 'no-store',
+  })
 }
 
 /**

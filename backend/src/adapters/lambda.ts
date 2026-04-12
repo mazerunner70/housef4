@@ -5,6 +5,7 @@ import type {
 } from 'aws-lambda';
 import { loadConfig } from '../config';
 import { dispatch } from '../dispatch';
+import { getLog, runWithRequestLogAsync } from '../requestLogContext';
 import type { InternalRequest } from '../types';
 
 function jsonProxyResult(
@@ -66,17 +67,28 @@ export async function lambdaHandler(
   event: APIGatewayEvent,
   context: Context,
 ): Promise<APIGatewayProxyResult> {
-  const cfg = loadConfig();
-  console.log(
-    `Request started: ${event.httpMethod} ${event.path} - RequestId: ${context.awsRequestId} - APP_ENV: ${cfg.appEnv}`,
-  );
+  return runWithRequestLogAsync(context.awsRequestId, async () => {
+    const cfg = loadConfig();
+    const log = getLog();
+    log.info('lambda.request.start', {
+      method: event.httpMethod,
+      path: event.path,
+      appEnv: cfg.appEnv,
+      awsRequestId: context.awsRequestId,
+    });
 
-  try {
-    const internal = toInternalRequest(event);
-    const res = await dispatch(internal);
-    return jsonProxyResult(res.statusCode, res.body, res.headers);
-  } catch (err) {
-    console.error(err);
-    return jsonProxyResult(500, { error: 'Internal Server Error' });
-  }
+    try {
+      const internal = toInternalRequest(event);
+      const res = await dispatch(internal);
+      log.info('lambda.request.end', { statusCode: res.statusCode });
+      return jsonProxyResult(res.statusCode, res.body, res.headers);
+    } catch (err) {
+      log.error('lambda.request.error', {
+        err: err instanceof Error ? err.message : String(err),
+        errName: err instanceof Error ? err.name : undefined,
+        stack: err instanceof Error ? err.stack : undefined,
+      });
+      return jsonProxyResult(500, { error: 'Internal Server Error' });
+    }
+  });
 }

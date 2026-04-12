@@ -4,16 +4,20 @@
   "private": true,
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && pnpm run build:lambda",
+    "build:lambda": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist-lambda/index.js --log-level=warning",
     "dev": "tsc -w",
     "start:local": "node dist/adapters/localServer.js",
     "test": "pnpm run build && node --test test/dispatch.test.cjs",
     "test:integration-cognito": "pnpm run build && node --test test/integration-cognito-smoke.cjs"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@housef4/db": "workspace:*"
+  },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.136",
     "@types/node": "^20.11.0",
+    "esbuild": "^0.25.0",
     "typescript": "^5.4.0"
   }
 }

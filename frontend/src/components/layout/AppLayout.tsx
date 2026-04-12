@@ -59,9 +59,17 @@ function initialsFromEmail(email: string): string {
   return local.slice(0, 2).toUpperCase()
 }
 
+function initialsFromUserLabel(label: string): string {
+  const t = label.trim()
+  if (!t) return '·'
+  if (t.includes('@')) return initialsFromEmail(t)
+  return t.slice(0, 2).toUpperCase()
+}
+
 export function AppLayout() {
   const location = useLocation()
-  const { cognitoEnabled, userEmail, logout } = useAuth()
+  const { authUiMode, localUserId, cognitoEnabled, userEmail, logout } =
+    useAuth()
 
   return (
     <div className="dashboard-ambient flex min-h-svh text-zinc-300">
@@ -187,7 +195,20 @@ export function AppLayout() {
                 <span className="ui-notify-dot absolute right-2 top-2 size-2 rounded-full bg-red-500" />
               </button>
               <div className="flex flex-wrap items-center gap-2">
-                {cognitoEnabled && userEmail ? (
+                {authUiMode === 'local' ? (
+                  <div className="ui-surface-input flex items-center gap-2 rounded-full py-1 pl-1 pr-3">
+                    <div
+                      className="flex size-8 items-center justify-center rounded-full bg-teal-500/15 text-xs font-semibold uppercase tracking-wide text-teal-200"
+                      aria-hidden
+                    >
+                      {initialsFromUserLabel(localUserId ?? 'Local')}
+                    </div>
+                    <span className="hidden max-w-[12rem] truncate text-sm font-medium text-zinc-200 sm:inline">
+                      {localUserId ?? 'Local dev'}
+                    </span>
+                    <span className="sr-only">Local build (no login)</span>
+                  </div>
+                ) : cognitoEnabled && userEmail ? (
                   <>
                     <div className="ui-surface-input flex items-center gap-2 rounded-full py-1 pl-1 pr-3">
                       <div

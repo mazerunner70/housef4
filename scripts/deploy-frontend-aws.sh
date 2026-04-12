@@ -2,8 +2,13 @@
 # Build the Vite frontend, sync to the Terraform S3 bucket, and invalidate CloudFront.
 #
 # Usage:
+#   pnpm run deploy:prod
+#   pnpm run deploy:prod -- --skip-build    # incremental: reuse existing prod build artifacts
+#   pnpm run build:prod                     # db + backend + frontend only
+#   pnpm run build-deploy:prod              # build:prod + terraform apply + this script (--skip-build)
+#   pnpm run deploy:prod -- --skip-build    # SPA only (after terraform apply)
 #   ./scripts/deploy-frontend-aws.sh
-#   ./scripts/deploy-frontend-aws.sh --skip-build    # reuse existing frontend/dist
+#   ./scripts/deploy-frontend-aws.sh --skip-build
 #
 # Needs: pnpm (unless --skip-build), terraform (always, for outputs), aws CLI, configured AWS creds.
 # Env: TF_DIR (default repo/infrastructure), AWS_PROFILE as usual for aws/terraform.
@@ -35,6 +40,7 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   REGION="${AWS_REGION:-$(terraform -chdir="$TF_DIR" output -raw aws_region)}"
   (
     cd "$ROOT"
+    export VITE_AUTH_UI=cognito
     export VITE_COGNITO_REGION="$REGION"
     export VITE_COGNITO_USER_POOL_ID="$POOL"
     export VITE_COGNITO_CLIENT_ID="$CLIENT"
@@ -59,5 +65,12 @@ aws s3 sync "$ROOT/frontend/dist/" "s3://${BUCKET}/" --delete
 echo "== CloudFront invalidation: $DIST (paths /*)"
 aws cloudfront create-invalidation --distribution-id "$DIST" --paths "/*" --output json
 
+DOMAIN="$(terraform -chdir="$TF_DIR" output -raw cloudfront_domain_name)"
+BASE_URL="https://${DOMAIN}"
+
 echo
-echo "OK: deploy finished. Site: https://$(terraform -chdir="$TF_DIR" output -raw cloudfront_domain_name)/"
+echo "OK: deploy finished."
+echo "  Site:          ${BASE_URL}/"
+echo "  Health check:  ${BASE_URL}/health-check"
+echo
+echo "Open in the browser: ${BASE_URL}/health-check"

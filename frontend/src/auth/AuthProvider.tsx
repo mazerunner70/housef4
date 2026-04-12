@@ -5,17 +5,37 @@ import { setBearerTokenResolver } from '@/api/client'
 import { AuthContext } from './auth-context'
 import { cognitoSignIn, cognitoSignOut, getIdTokenJwt } from './cognitoSession'
 import { isCognitoConfigured } from './cognitoConfig'
+import { getAuthUiMode, getLocalUserId } from './authUiMode'
 import { emailFromIdToken } from './jwtPayload'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const cognitoEnabled = isCognitoConfigured()
-  const [ready, setReady] = useState(!cognitoEnabled)
+  const authUiMode = getAuthUiMode()
+  const localUserId = getLocalUserId()
+  const cognitoConfigured = isCognitoConfigured()
+  const cognitoEnabled = authUiMode === 'cognito' && cognitoConfigured
+
+  const [ready, setReady] = useState(
+    () =>
+      authUiMode === 'local' ||
+      (authUiMode === 'cognito' && !cognitoConfigured),
+  )
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [userEmail, setUserEmail] = useState<string | undefined>(undefined)
 
   useEffect(() => {
-    if (!cognitoEnabled) {
+    if (authUiMode === 'local') {
       setBearerTokenResolver(undefined)
+      setReady(true)
+      setIsAuthenticated(false)
+      setUserEmail(undefined)
+      return
+    }
+
+    if (!cognitoConfigured) {
+      setBearerTokenResolver(undefined)
+      setReady(true)
+      setIsAuthenticated(false)
+      setUserEmail(undefined)
       return
     }
 
@@ -38,7 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [cognitoEnabled])
+  }, [authUiMode, cognitoConfigured])
 
   const login = useCallback(async (email: string, password: string) => {
     await cognitoSignIn(email, password)
@@ -55,6 +75,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo(
     () => ({
+      authUiMode,
+      localUserId,
       ready,
       cognitoEnabled,
       isAuthenticated,
@@ -62,7 +84,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       logout,
     }),
-    [ready, cognitoEnabled, isAuthenticated, userEmail, login, logout],
+    [
+      authUiMode,
+      localUserId,
+      ready,
+      cognitoEnabled,
+      isAuthenticated,
+      userEmail,
+      login,
+      logout,
+    ],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
