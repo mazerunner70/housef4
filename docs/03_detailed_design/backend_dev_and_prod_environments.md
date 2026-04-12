@@ -5,6 +5,7 @@ phase: Runtime & deployment environments
 related:
   - ../02_architecture/03_infrastructure_map.md
   - ./api_contract.md
+IMplementation stage: logic implemented
 ---
 
 # Backend: Local Development and AWS Production

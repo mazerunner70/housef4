@@ -102,6 +102,7 @@ Provides the raw and mapped list of transactions.
       "id": "txn_89101112",
       "date": 1775044800000,
       "raw_merchant": "Netflix.com",
+      "cleaned_merchant": "NETFLIX",
       "amount": -15.99,
       "cluster_id": "CL_001",
       "category": "Subscriptions & Recurring",
@@ -112,6 +113,7 @@ Provides the raw and mapped list of transactions.
       "id": "txn_89101113",
       "date": 1775147400000,
       "raw_merchant": "SQ * LOCAL COFFEE",
+      "cleaned_merchant": "SQ LOCAL COFFEE",
       "amount": -4.50,
       "cluster_id": "CL_005",
       "category": "Uncategorized",
@@ -128,6 +130,7 @@ Provides the raw and mapped list of transactions.
 | `transactions[].date` | number | Milliseconds since Unix epoch (UTC); see [Date and time (JSON)](#date-and-time-json). |
 | `transactions[].amount` | number | Signed amount (negative for outflows). |
 | `transactions[].status` | string | e.g. `CLASSIFIED`, `PENDING_REVIEW`. |
+| `transactions[].cleaned_merchant` | string | Normalized merchant line for clustering and rules (see `transaction_analysis_clusters_and_categories.md`); always present on `GET /api/transactions` (derived when not stored). |
 
 Other fields follow the same snake_case names as in the example payload (`raw_merchant`, `cluster_id`, `category`, `is_recurring`).
 

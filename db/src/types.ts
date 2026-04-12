@@ -8,6 +8,11 @@ export interface TransactionRecord {
   id: string;
   date: number;
   raw_merchant: string;
+  /**
+   * Normalized merchant line for clustering / rules (see `merchantNormalize` in backend).
+   * Omitted on legacy rows until backfill; API may derive from `raw_merchant`.
+   */
+  cleaned_merchant?: string;
   amount: number;
   cluster_id: string;
   category: string;
@@ -40,6 +45,8 @@ export interface ImportTransactionInput {
   id: string;
   date: number;
   raw_merchant: string;
+  /** Same semantics as `TransactionRecord.cleaned_merchant`; persisted on ingest. */
+  cleaned_merchant: string;
   amount: number;
   cluster_id: string;
   category: string;
