@@ -1,14 +1,18 @@
-jupyterlab>=4.0.0
-scikit-learn>=1.3.0
-pandas>=2.0.0
-numpy>=1.24.0
-holidays>=0.35
-scipy>=1.11.0
-boto3>=1.28.0
-psycopg2-binary>=2.9.9
-sqlalchemy>=2.0.0
-sentence-transformers>=2.2.2
-transformers>=4.34.0
-matplotlib>=3.8.0
-seaborn>=0.13.0
+# Direct dependencies (minimum versions). Reproducible install / Docker:
+#   pip install --no-cache-dir -r requirements.txt -c constraints.txt
+# Regenerate constraints.txt after edits:
+#   pip install pip-tools && pip-compile --strip-extras --allow-unsafe requirements.txt -o constraints.txt
+jupyterlab>=4.2.5
+scikit-learn>=1.5.0
+pandas>=2.2.0,<3
+numpy>=1.26.0
+holidays>=0.56
+scipy>=1.13.0
+boto3>=1.35.0
+psycopg2-binary>=2.9.10
+sqlalchemy>=2.0.36
+sentence-transformers>=3.0.0
+transformers>=4.48.0
+matplotlib>=3.9.0
+seaborn>=0.13.2
 tqdm>=4.66.0
