@@ -45,20 +45,22 @@ function lambdaHeaders(
   return out;
 }
 
-function getRawBody(event: APIGatewayEvent): string {
-  if (!event.body) return '';
+function getBodyBytes(event: APIGatewayEvent): Buffer {
+  if (!event.body) return Buffer.alloc(0);
   if (event.isBase64Encoded) {
-    return Buffer.from(event.body, 'base64').toString('utf8');
+    return Buffer.from(event.body, 'base64');
   }
-  return event.body;
+  return Buffer.from(event.body, 'utf8');
 }
 
 function toInternalRequest(event: APIGatewayEvent): InternalRequest {
+  const bodyBuffer = getBodyBytes(event);
   return {
     method: event.httpMethod ?? 'GET',
     path: event.path ?? '/',
     headers: lambdaHeaders(event),
-    rawBody: getRawBody(event),
+    rawBody: bodyBuffer.length ? bodyBuffer.toString('utf8') : '',
+    bodyBuffer: bodyBuffer.length ? bodyBuffer : undefined,
     userId: getAuthenticatedUserId(event),
   };
 }

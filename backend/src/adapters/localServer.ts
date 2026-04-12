@@ -9,15 +9,21 @@ import { getLog, runWithRequestLogAsync } from '../requestLogContext';
 import type { InternalRequest } from '../types';
 
 const PORT = Number(process.env.PORT) || 3000;
+const MAX_BODY_BYTES = 50 * 1024 * 1024;
 
-function readBody(req: http.IncomingMessage): Promise<string> {
+function readBodyBuffer(req: http.IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
+    let totalBytes = 0;
     req.on('data', (c: Buffer) => {
+      totalBytes += c.length;
+      if (totalBytes > MAX_BODY_BYTES) {
+        reject(new Error('Request body too large'));
+      }
       chunks.push(c);
     });
     req.on('end', () => {
-      resolve(Buffer.concat(chunks).toString('utf8'));
+      resolve(Buffer.concat(chunks));
     });
     req.on('error', reject);
   });
@@ -54,14 +60,17 @@ export async function startLocalServer(): Promise<http.Server> {
         log.info('http.request', { method, path: pathOnly });
 
         let rawBody = '';
+        let bodyBuffer: Buffer | undefined;
         if (method !== 'GET' && method !== 'HEAD') {
-          rawBody = await readBody(req);
+          bodyBuffer = await readBodyBuffer(req);
+          rawBody = bodyBuffer.length ? bodyBuffer.toString('utf8') : '';
         }
         const internal: InternalRequest = {
           method,
           path: pathOnly,
           headers: incomingHeaders(req),
           rawBody,
+          bodyBuffer,
           userId: resolveLocalUserId(cfg),
         };
         const out = await dispatch(internal);
