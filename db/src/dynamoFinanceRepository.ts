@@ -137,7 +137,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
       );
       for (const item of res.Items ?? []) {
         if (item.entity_type !== 'TRANSACTION') continue;
-        out.push({
+        const rec: TransactionRecord = {
           user_id: String(item.user_id ?? userId),
           id: String(item.id),
           date: Number(item.date),
@@ -147,7 +147,11 @@ export class DynamoFinanceRepository implements FinanceRepository {
           category: String(item.category),
           status: item.status as TransactionStatus,
           is_recurring: Boolean(item.is_recurring),
-        });
+        };
+        if (item.cleaned_merchant !== undefined && item.cleaned_merchant !== null) {
+          rec.cleaned_merchant = String(item.cleaned_merchant);
+        }
+        out.push(rec);
       }
       startKey = res.LastEvaluatedKey as Record<string, unknown> | undefined;
     } while (startKey);
@@ -277,6 +281,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
         id: r.id,
         date: r.date,
         raw_merchant: r.raw_merchant,
+        cleaned_merchant: r.cleaned_merchant,
         amount: r.amount,
         cluster_id: r.cluster_id,
         category: r.category,

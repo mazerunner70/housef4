@@ -33,6 +33,13 @@ export function RecurringSubscriptionsList({
             >
               <div>
                 <p className="font-medium text-zinc-100">{t.raw_merchant}</p>
+                <p className="text-xs text-zinc-500">
+                  {t.cleaned_merchant}
+                  <span className="mx-1 text-zinc-600">·</span>
+                  {t.cluster_id}
+                  <span className="mx-1 text-zinc-600">·</span>
+                  {t.status === 'PENDING_REVIEW' ? 'Pending review' : t.category}
+                </p>
                 <p className="text-sm text-zinc-500">{t.category}</p>
               </div>
               <p className="tabular-nums text-zinc-200">

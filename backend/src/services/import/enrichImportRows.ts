@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { FinanceRepository, ImportTransactionInput } from '@housef4/db';
 
 import type { ParsedImportRow } from './canonical';
+import { cleanMerchantForClustering } from './merchantNormalize';
 
 export function clusterIdFromMerchant(raw: string): string {
   const n = raw.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -38,7 +39,8 @@ export async function enrichImportRows(
 
   const out: ImportTransactionInput[] = [];
   for (const row of parsed) {
-    const cluster_id = clusterIdFromMerchant(row.raw_merchant);
+    const cleaned_merchant = cleanMerchantForClustering(row.raw_merchant);
+    const cluster_id = clusterIdFromMerchant(cleaned_merchant);
     const info = clusterInfo.get(cluster_id);
     const known = Boolean(info?.hasClassified);
     const category = known ? info!.category : 'Uncategorized';
@@ -48,6 +50,7 @@ export async function enrichImportRows(
       id: `txn_${randomUUID().replace(/-/g, '')}`,
       date: row.date,
       raw_merchant: row.raw_merchant,
+      cleaned_merchant,
       amount: row.amount,
       cluster_id,
       category,

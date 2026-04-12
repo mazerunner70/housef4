@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: ml_user
+      POSTGRES_PASSWORD: ml_password
+      POSTGRES_DB: recurring_charges_ml
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/init.sql
+
+  ml-engine:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - .:/workspace
+      - ~/.aws:/root/.aws:ro
+    ports:
+      - "8888:8888"
+    environment:
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+      - AWS_PROFILE
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=ml_user
+      - DB_PASSWORD=ml_password
+      - DB_NAME=recurring_charges_ml
+      - HUGGINGFACE_HUB_CACHE=/workspace/.cache/huggingface
+    depends_on:
+      - db
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''
+
+volumes:
+  postgres_data:

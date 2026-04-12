@@ -31,6 +31,8 @@ export type Transaction = {
   /** Milliseconds since Unix epoch (UTC); see API contract. */
   date: number
   raw_merchant: string
+  /** Normalized merchant text for clustering; derived on the server when missing in storage. */
+  cleaned_merchant: string
   amount: number
   cluster_id: string
   category: string

@@ -20,6 +20,12 @@ lerna-debug.log*
 .DS_Store
 Thumbs.db
 
+# ML / notebooks — downloaded models and Hugging Face cache (do not commit)
+ml-training/.cache/
+ml-training/.venv-lock/
+ml-training/.test-install/
+.ml-learning/
+
 # Misc
 .env
 .env.local
