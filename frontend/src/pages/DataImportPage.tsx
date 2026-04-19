@@ -6,6 +6,7 @@ import { ImportDropzone } from '@/features/import/components/ImportDropzone'
 import { ImportSummaryCard } from '@/features/import/components/ImportSummaryCard'
 import { UploadProgressIndicator } from '@/features/import/components/UploadProgressIndicator'
 import { postImport } from '@/api/client'
+import { syncLastImportTransactionIds } from '@/lib/lastImportTransactionIds'
 import type { ImportParseResult } from '@/lib/types'
 import { useAppStore } from '@/store/appStore'
 
@@ -29,6 +30,7 @@ export function DataImportPage() {
       const result = await postImport(file)
       setSummary(result)
       setLastImportSummary(result)
+      syncLastImportTransactionIds(result.transactionIds)
       setHasUploadedData(true)
       void queryClient.invalidateQueries({ queryKey: ['metrics'] })
       void queryClient.invalidateQueries({ queryKey: ['transactions'] })
@@ -80,6 +82,11 @@ export function DataImportPage() {
           summary={summary}
           onContinueDashboard={() => navigate('/dashboard')}
           onReviewUnknown={() => navigate('/review-queue')}
+          onReviewTransactions={() =>
+            navigate('/import/review-transactions', {
+              state: { importSummary: summary },
+            })
+          }
         />
       )}
     </div>

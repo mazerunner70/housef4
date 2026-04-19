@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { CognitoGate } from '@/auth/CognitoGate'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { DataImportPage } from '@/pages/DataImportPage'
+import { ImportTransactionsReviewPage } from '@/pages/ImportTransactionsReviewPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { HomeRedirect } from '@/pages/HomeRedirect'
 import { LoginPage } from '@/pages/LoginPage'
@@ -18,6 +19,10 @@ export default function App() {
         <Route index element={<HomeRedirect />} />
         <Route element={<AppLayout />}>
           <Route path="import" element={<DataImportPage />} />
+          <Route
+            path="import/review-transactions"
+            element={<ImportTransactionsReviewPage />}
+          />
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="review-queue" element={<ReviewQueuePage />} />
         </Route>

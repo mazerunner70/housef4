@@ -32,19 +32,28 @@ export async function postImportPayload(
   );
 
   const repo = getFinanceRepository();
-  const inputs = await enrichImportRows(userId, rows, repo);
-  const result = await repo.ingestImportBatch(userId, inputs);
+  const enriched = await enrichImportRows(userId, rows, repo);
+  await repo.patchExistingTransactionsAfterImport(
+    userId,
+    enriched.existingPatches,
+  );
+  const result = await repo.ingestImportBatch(userId, enriched.toInsert);
 
   log.info('import.complete', {
     rowCount: result.rowCount,
     format,
     fileBytes: extracted.buffer.length,
+    existingTransactionsUpdated: enriched.existingPatches.length,
+    newClustersTouched: enriched.summary.newClustersTouched,
   });
 
   const base: Record<string, unknown> = {
     rowCount: result.rowCount,
     knownMerchants: result.knownMerchants,
     unknownMerchants: result.unknownMerchants,
+    existingTransactionsUpdated: enriched.existingPatches.length,
+    newClustersTouched: enriched.summary.newClustersTouched,
+    transactionIds: enriched.toInsert.map((r) => r.id),
   };
   if (format !== 'unknown') {
     base.sourceFormat = format;

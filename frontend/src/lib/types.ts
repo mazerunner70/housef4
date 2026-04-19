@@ -38,6 +38,9 @@ export type Transaction = {
   category: string
   status: 'CLASSIFIED' | 'PENDING_REVIEW'
   is_recurring: boolean
+  suggested_category?: string | null
+  category_confidence?: number
+  match_type?: string
 }
 
 export type TransactionsResponse = {
@@ -70,6 +73,12 @@ export type ImportParseResult = {
   rowCount: number
   knownMerchants: number
   unknownMerchants: number
+  /** Transactions updated with new cluster assignments after a full-corpus re-cluster. */
+  existingTransactionsUpdated?: number
+  /** Distinct cluster ids among rows in this import batch. */
+  newClustersTouched?: number
+  /** Ids of rows persisted in this import (for batch review UI). */
+  transactionIds?: string[]
   /** Detected from filename / MIME; echoed by `POST /api/imports` when wired. */
   sourceFormat?: ImportSourceFormat
 }

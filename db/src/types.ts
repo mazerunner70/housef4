@@ -18,6 +18,24 @@ export interface TransactionRecord {
   category: string;
   status: TransactionStatus;
   is_recurring: boolean;
+  /** Cached MiniLM / hash embedding from last clustering run (384 dims). */
+  merchant_embedding?: number[];
+  suggested_category?: string | null;
+  category_confidence?: number;
+  match_type?: string;
+}
+
+/** Partial update applied to existing transactions after a re-clustering import. */
+export interface ExistingTransactionPatch {
+  id: string;
+  cluster_id: string;
+  category: string;
+  status: TransactionStatus;
+  cleaned_merchant: string;
+  merchant_embedding: number[];
+  suggested_category: string | null;
+  category_confidence: number;
+  match_type: string;
 }
 
 export interface PendingClusterRecord {
@@ -54,10 +72,18 @@ export interface ImportTransactionInput {
   is_recurring: boolean;
   /** Whether this row matched an existing cluster / high-confidence category (import summary). */
   known_merchant: boolean;
+  suggested_category?: string | null;
+  category_confidence?: number;
+  match_type?: string;
+  merchant_embedding?: number[];
 }
 
 export interface ImportIngestResult {
   rowCount: number;
   knownMerchants: number;
   unknownMerchants: number;
+  /** Existing transactions updated with new cluster_id / embeddings after re-cluster. */
+  existingTransactionsUpdated: number;
+  /** Distinct cluster ids among rows in this import batch. */
+  newClustersTouched: number;
 }

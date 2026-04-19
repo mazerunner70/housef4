@@ -15,6 +15,7 @@ import {
 } from './keys';
 import { getDocumentClient, requireTableName } from './dynamoClient';
 import type {
+  ExistingTransactionPatch,
   ImportIngestResult,
   ImportTransactionInput,
   MetricsSnapshot,
@@ -29,6 +30,10 @@ export interface FinanceRepository {
   listTransactions(userId: string): Promise<TransactionRecord[]>;
   getMetrics(userId: string): Promise<MetricsSnapshot>;
   listPendingClusters(userId: string): Promise<PendingClusterRecord[]>;
+  patchExistingTransactionsAfterImport(
+    userId: string,
+    patches: ExistingTransactionPatch[],
+  ): Promise<void>;
   ingestImportBatch(
     userId: string,
     rows: ImportTransactionInput[],
@@ -63,6 +68,20 @@ function monthBoundsUtcMs(at: number): { start: number; end: number } {
     999,
   );
   return { start, end };
+}
+
+function bestSuggestedFromRows(rows: ImportTransactionInput[]): string | null {
+  let best: string | null = null;
+  let bestC = -1;
+  for (const r of rows) {
+    if (r.suggested_category == null || r.suggested_category === '') continue;
+    const c = r.category_confidence ?? 0;
+    if (c > bestC) {
+      bestC = c;
+      best = r.suggested_category;
+    }
+  }
+  return best;
 }
 
 function uniqSampleMerchants(merchants: string[], cap: number): string[] {
@@ -150,6 +169,24 @@ export class DynamoFinanceRepository implements FinanceRepository {
         };
         if (item.cleaned_merchant !== undefined && item.cleaned_merchant !== null) {
           rec.cleaned_merchant = String(item.cleaned_merchant);
+        }
+        if (item.merchant_embedding !== undefined && item.merchant_embedding !== null) {
+          const me = item.merchant_embedding as unknown[];
+          if (Array.isArray(me)) {
+            rec.merchant_embedding = me.map((x) => Number(x));
+          }
+        }
+        if (item.suggested_category !== undefined) {
+          rec.suggested_category =
+            item.suggested_category === null
+              ? null
+              : String(item.suggested_category);
+        }
+        if (item.category_confidence !== undefined && item.category_confidence !== null) {
+          rec.category_confidence = Number(item.category_confidence);
+        }
+        if (item.match_type !== undefined && item.match_type !== null) {
+          rec.match_type = String(item.match_type);
         }
         out.push(rec);
       }
@@ -244,12 +281,56 @@ export class DynamoFinanceRepository implements FinanceRepository {
     return out;
   }
 
+  async patchExistingTransactionsAfterImport(
+    userId: string,
+    patches: ExistingTransactionPatch[],
+  ): Promise<void> {
+    if (patches.length === 0) return;
+    const pk = userPk(userId);
+    for (const p of patches) {
+      const gsi1pk = clusterTxnGsi1Pk(userId, p.cluster_id);
+      const gsi1sk = clusterTxnGsi1Sk(p.id);
+      await this.doc.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: { PK: pk, SK: txnSk(p.id) },
+          UpdateExpression:
+            'SET cluster_id = :cid, category = :cat, #st = :st, cleaned_merchant = :cm, ' +
+            'GSI1PK = :gpk, GSI1SK = :gsk, merchant_embedding = :me, ' +
+            'suggested_category = :sg, category_confidence = :cc, #mt = :mt',
+          ExpressionAttributeNames: {
+            '#st': 'status',
+            '#mt': 'match_type',
+          },
+          ExpressionAttributeValues: {
+            ':cid': p.cluster_id,
+            ':cat': p.category,
+            ':st': p.status,
+            ':cm': p.cleaned_merchant,
+            ':gpk': gsi1pk,
+            ':gsk': gsi1sk,
+            ':me': p.merchant_embedding,
+            ':sg': p.suggested_category,
+            ':cc': p.category_confidence,
+            ':mt': p.match_type,
+          },
+        }),
+      );
+    }
+  }
+
   async ingestImportBatch(
     userId: string,
     rows: ImportTransactionInput[],
   ): Promise<ImportIngestResult> {
     if (rows.length === 0) {
-      return { rowCount: 0, knownMerchants: 0, unknownMerchants: 0 };
+      return {
+        rowCount: 0,
+        knownMerchants: 0,
+        unknownMerchants: 0,
+        existingTransactionsUpdated: 0,
+        newClustersTouched: 0,
+      };
     }
 
     for (const r of rows) {
@@ -271,7 +352,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
 
       const gsi1pk = clusterTxnGsi1Pk(r.user_id, r.cluster_id);
       const gsi1sk = clusterTxnGsi1Sk(r.id);
-      txnItems.push({
+      const item: Record<string, unknown> = {
         PK: pk,
         SK: txnSk(r.id),
         GSI1PK: gsi1pk,
@@ -287,7 +368,20 @@ export class DynamoFinanceRepository implements FinanceRepository {
         category: r.category,
         status: r.status,
         is_recurring: r.is_recurring,
-      });
+      };
+      if (r.merchant_embedding?.length) {
+        item.merchant_embedding = r.merchant_embedding;
+      }
+      if (r.suggested_category !== undefined) {
+        item.suggested_category = r.suggested_category;
+      }
+      if (r.category_confidence !== undefined) {
+        item.category_confidence = r.category_confidence;
+      }
+      if (r.match_type !== undefined) {
+        item.match_type = r.match_type;
+      }
+      txnItems.push(item);
     }
 
     const byCluster = new Map<
@@ -350,8 +444,9 @@ export class DynamoFinanceRepository implements FinanceRepository {
         g.rows.some((x) => x.status === 'PENDING_REVIEW') ||
         (prev?.pending_review ?? false);
 
+      const batchSuggestion = bestSuggestedFromRows(g.rows);
       const suggested_category =
-        prev?.suggested_category ?? null;
+        batchSuggestion ?? prev?.suggested_category ?? null;
 
       clusterItems.push({
         PK: pk,
@@ -375,6 +470,8 @@ export class DynamoFinanceRepository implements FinanceRepository {
       rowCount: rows.length,
       knownMerchants,
       unknownMerchants,
+      existingTransactionsUpdated: 0,
+      newClustersTouched: new Set(rows.map((r) => r.cluster_id)).size,
     };
   }
 
