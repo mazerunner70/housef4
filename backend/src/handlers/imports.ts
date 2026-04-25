@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { getFinanceRepository } from '@housef4/db';
 
 import { HttpError } from '../httpError';
@@ -25,7 +27,8 @@ export async function postImportPayload(
     );
   }
 
-  const { rows, format } = parseImportBuffer(
+  const importStartedAt = Date.now();
+  const { rows, format: detectedFormat } = parseImportBuffer(
     extracted.buffer,
     extracted.filename,
     extracted.mimeType,
@@ -38,13 +41,39 @@ export async function postImportPayload(
     enriched.existingPatches,
   );
   const result = await repo.ingestImportBatch(userId, enriched.toInsert);
+  await repo.retireClusterAggregates(userId, enriched.retiredClusterIds);
+
+  const importFileId = randomUUID();
+  const displayName = extracted.filename?.trim() || 'import';
+  const importCompletedAt = Date.now();
+  const ingest = {
+    ...result,
+    existingTransactionsUpdated: enriched.existingPatches.length,
+    newClustersTouched: enriched.summary.newClustersTouched,
+  };
+  await repo.recordTransactionFile(userId, {
+    id: importFileId,
+    source: {
+      name: displayName,
+      size_bytes: extracted.buffer.length,
+      ...(extracted.mimeType && { content_type: extracted.mimeType }),
+    },
+    format:
+      detectedFormat !== 'unknown' ? { source_format: detectedFormat } : {},
+    timing: {
+      started_at: importStartedAt,
+      completed_at: importCompletedAt,
+    },
+    result: ingest,
+  });
 
   log.info('import.complete', {
     rowCount: result.rowCount,
-    format,
+    format: detectedFormat,
     fileBytes: extracted.buffer.length,
     existingTransactionsUpdated: enriched.existingPatches.length,
     newClustersTouched: enriched.summary.newClustersTouched,
+    retiredClusterCount: enriched.retiredClusterIds.length,
   });
 
   const base: Record<string, unknown> = {
@@ -54,9 +83,10 @@ export async function postImportPayload(
     existingTransactionsUpdated: enriched.existingPatches.length,
     newClustersTouched: enriched.summary.newClustersTouched,
     transactionIds: enriched.toInsert.map((r) => r.id),
+    importFileId,
   };
-  if (format !== 'unknown') {
-    base.sourceFormat = format;
+  if (detectedFormat !== 'unknown') {
+    base.sourceFormat = detectedFormat;
   }
   return base;
 }

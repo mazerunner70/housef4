@@ -9,11 +9,11 @@ import {
   type CategorySuggestion,
 } from './categoryClassifier';
 import type { ParsedImportRow } from './canonical';
-import { dbscanCosine, cosineDistance } from './dbscanCosine';
+import { dbscanCosine } from './dbscanCosine';
 import { cleanMerchantForClustering } from './merchantNormalize';
 import type { MerchantEmbedder } from './merchantsEmbedder';
 import { meanNormalized } from './merchantsEmbedder';
-import { stableClusterIdFromCleaned } from './stableClusterId';
+import { findSplitClusterIds, resolveClusterIdByPhysicalGroup } from './clusterIdentity';
 
 export const DBSCAN_EPS = 0.3;
 export const DBSCAN_MIN_SAMPLES = 3;
@@ -33,38 +33,10 @@ export type Assignment = {
   embedding: Float32Array;
 };
 
-function medoidIndex(indices: number[], embeddings: Float32Array[]): number {
-  let best = indices[0]!;
-  let bestSum = Infinity;
-  for (const i of indices) {
-    let s = 0;
-    for (const j of indices) {
-      s += cosineDistance(embeddings[i]!, embeddings[j]!);
-    }
-    if (s < bestSum) {
-      bestSum = s;
-      best = i;
-    }
-  }
-  return best;
-}
-
 /** DBSCAN uses -1 for all noise points; split into singleton groups for stable ids and rules. */
 function splitNoiseLabels(labels: number[]): number[] {
   let noiseSeq = -1000000;
   return labels.map((L) => (L === -1 ? noiseSeq-- : L));
-}
-
-function stableIdForGroup(
-  indices: number[],
-  cleanedTexts: string[],
-  embeddings: Float32Array[],
-): string {
-  if (indices.length === 1) {
-    return stableClusterIdFromCleaned(cleanedTexts[indices[0]!]!);
-  }
-  const med = medoidIndex(indices, embeddings);
-  return stableClusterIdFromCleaned(cleanedTexts[med]!);
 }
 
 function inheritedCategoryForGroup(
@@ -160,13 +132,34 @@ export async function runClusterAndCategoryPipeline(
     g.push(i);
   }
 
-  const indexToClusterId = new Map<number, string>();
+  const kindAtIndex: ('existing' | 'new')[] = sources.map((s) =>
+    s.kind === 'existing' ? 'existing' : 'new',
+  );
+  const previousClusterIdAtIndex: (string | undefined)[] = sources.map(
+    (s) => (s.kind === 'existing' ? s.record.cluster_id : undefined),
+  );
+
+  const splitClusterIds = findSplitClusterIds(
+    labels,
+    kindAtIndex,
+    previousClusterIdAtIndex,
+  );
+
+  const labelResolution = resolveClusterIdByPhysicalGroup(
+    byLabel,
+    kindAtIndex,
+    previousClusterIdAtIndex,
+    splitClusterIds,
+    cleanedTexts,
+    embeddings,
+  );
+
   const clusterSuggestions = new Map<string, CategorySuggestion>();
-  for (const [, indices] of byLabel) {
-    const cid = stableIdForGroup(indices, cleanedTexts, embeddings);
-    for (const i of indices) indexToClusterId.set(i, cid);
+  for (const L of labelResolution.keys()) {
+    const meta = labelResolution.get(L)!;
+    const indices = byLabel.get(L)!;
     clusterSuggestions.set(
-      cid,
+      meta.cluster_id,
       categorizeGroup(indices, cleanedTexts, embeddings, categoryVectors),
     );
   }
@@ -174,8 +167,10 @@ export async function runClusterAndCategoryPipeline(
   const assignments: Assignment[] = sources.map((_, i) => {
     const L = labels[i]!;
     const indices = byLabel.get(L)!;
-    const inherited = inheritedCategoryForGroup(indices, sources);
-    const cluster_id = indexToClusterId.get(i)!;
+    const { cluster_id, conserve } = labelResolution.get(L)!;
+    const inherited = conserve
+      ? inheritedCategoryForGroup(indices, sources)
+      : null;
     const suggestion = clusterSuggestions.get(cluster_id)!;
 
     if (inherited) {
@@ -218,6 +213,19 @@ export async function runClusterAndCategoryPipeline(
   });
 
   return { sources, assignments, clusterSuggestions, existingSorted };
+}
+
+/** §7.4: cluster ids present before import on some transaction but in none after. */
+export function computeRetiredClusterIds(
+  existing: TransactionRecord[],
+  assignments: Assignment[],
+): string[] {
+  const before = new Set<string>();
+  for (const t of existing) {
+    if (t.cluster_id) before.add(t.cluster_id);
+  }
+  const after = new Set(assignments.map((a) => a.cluster_id));
+  return [...before].filter((c) => !after.has(c));
 }
 
 export function buildNewImportInputs(

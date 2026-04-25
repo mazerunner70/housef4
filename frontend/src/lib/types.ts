@@ -79,6 +79,47 @@ export type ImportParseResult = {
   newClustersTouched?: number
   /** Ids of rows persisted in this import (for batch review UI). */
   transactionIds?: string[]
+  /** Id of the persisted `TRANSACTION_FILE` record for this run. */
+  importFileId?: string
   /** Detected from filename / MIME; echoed by `POST /api/imports` when wired. */
   sourceFormat?: ImportSourceFormat
+}
+
+/** Same shape as `ImportIngestResult` / the body of a successful `POST /api/imports` summary. */
+export type ImportIngestSnapshot = {
+  rowCount: number
+  knownMerchants: number
+  unknownMerchants: number
+  existingTransactionsUpdated: number
+  newClustersTouched: number
+}
+
+/** `GET /api/transaction-files` — same sections as the persisted `TRANSACTION_FILE` item. */
+export type TransactionFileSource = {
+  name: string
+  size_bytes: number
+  content_type?: string
+}
+
+export type TransactionFileFormat = {
+  source_format?: string
+}
+
+export type TransactionFileTiming = {
+  started_at: number
+  completed_at: number
+}
+
+export type TransactionFile = {
+  user_id: string
+  id: string
+  source: TransactionFileSource
+  format: TransactionFileFormat
+  timing: TransactionFileTiming
+  /** Ingest + re-cluster summary (matches `ImportIngestSnapshot`). */
+  result: ImportIngestSnapshot
+}
+
+export type TransactionFilesResponse = {
+  transaction_files: TransactionFile[]
 }

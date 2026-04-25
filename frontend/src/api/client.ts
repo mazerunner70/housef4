@@ -4,6 +4,7 @@ import type {
   ReviewQueueResponse,
   TagRuleRequest,
   TagRuleResponse,
+  TransactionFilesResponse,
   TransactionsResponse,
 } from '@/lib/types'
 
@@ -98,6 +99,10 @@ export async function getMetrics(): Promise<MetricsResponse> {
 
 export async function getTransactions(): Promise<TransactionsResponse> {
   return fetchJson<TransactionsResponse>('/api/transactions')
+}
+
+export async function getTransactionFiles(): Promise<TransactionFilesResponse> {
+  return fetchJson<TransactionFilesResponse>('/api/transaction-files')
 }
 
 export async function getReviewQueue(): Promise<ReviewQueueResponse> {

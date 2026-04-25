@@ -9,6 +9,12 @@ Welcome to the `housef4` monorepo.
 * `/db` - Database repository abstraction layer (DynamoDB wrapper)
 * `/infrastructure` - Terraform definitions for AWS resources
 
+## Documentation map
+
+- **API wire format and endpoints:** `docs/03_detailed_design/api_contract.md` (including **`GET /api/transaction-files`** for per-upload import history)
+- **Persistent data (DynamoDB single-table, keys, GSI):** `docs/03_detailed_design/database/data_model.md` (includes **`TRANSACTION_FILE`** / `FILE#` items)
+- **Transaction import, clustering, and cluster `cluster_id` lifecycle:** `docs/03_detailed_design/import_transaction_files.md`
+
 ## Setup
 
 1. Run `pnpm install` in the root directory.

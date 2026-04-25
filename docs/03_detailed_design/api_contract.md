@@ -2,6 +2,8 @@
 
 This document establishes the JSON payload bounds for the MVP based on the agreed ML & Personal Finance requirements. The **`frontend/`** client implements these shapes in `src/api/client.ts` and `src/lib/types.ts`.
 
+**Persistence:** the **physical** storage layout in DynamoDB (table keys, `GSI1`, `entity_type` items, and attributes) is the companion document [`database/data_model.md`](./database/data_model.md). When API fields or resource shapes change, update that document together with this one so the wire format and the database stay aligned.
+
 ## Frontend client behavior
 
 - **Base path**: requests use relative URLs under **`/api/...`**. In local Vite dev, `vite.config.ts` proxies `/api` to the backend (default target `http://localhost:3000`).
@@ -14,7 +16,7 @@ All date and datetime fields in JSON request and response bodies are **numbers: 
 
 ## 1. Import Endpoint
 
-Accepts a bank or PFM export file, parses it server-side into normalized transactions, persists them, and returns a summary aligned with the import UI (`ImportParseResult`). Supported uploads include **CSV**, **OFX**, **QFX** (OFX variant), and **QIF**; the server detects format from filename and/or `Content-Type`. How raw file fields map into the app’s canonical transaction fields is specified in [`import_field_mapping.md`](./import_field_mapping.md).
+Accepts a bank or PFM export file, parses it server-side into normalized transactions, persists them, writes a **transaction file** (import history) row per successful run, and returns a summary aligned with the import UI (`ImportParseResult`). Supported uploads include **CSV**, **OFX**, **QFX** (OFX variant), and **QIF**; the server detects format from filename and/or `Content-Type`. How raw file fields map into the app’s canonical transaction fields is specified in [`import_field_mapping.md`](./import_field_mapping.md).
 
 **`POST /api/imports`**
 
@@ -30,9 +32,15 @@ Accepts a bank or PFM export file, parses it server-side into normalized transac
   "rowCount": 340,
   "knownMerchants": 290,
   "unknownMerchants": 50,
-  "sourceFormat": "ofx"
+  "sourceFormat": "ofx",
+  "importFileId": "550e8400-e29b-41d4-a716-446655440000",
+  "transactionIds": ["txn_abc", "txn_def"],
+  "existingTransactionsUpdated": 12,
+  "newClustersTouched": 4
 }
 ```
+
+Optional fields are omitted when not applicable (e.g. `transactionIds` only when new rows were ingested).
 
 | Field | Type | Notes |
 |--------|------|--------|
@@ -40,8 +48,52 @@ Accepts a bank or PFM export file, parses it server-side into normalized transac
 | `knownMerchants` | number | Rows matched to existing clusters or high-confidence categories. |
 | `unknownMerchants` | number | Rows requiring cluster review (feeds review queue). |
 | `sourceFormat` | string (optional) | One of: `csv`, `ofx`, `qfx`, `qif`. Omitted if the server cannot determine the format. |
+| `importFileId` | string (optional) | Id of the persisted **transaction file** record for this import (see [`database/data_model.md`](./database/data_model.md) `TRANSACTION_FILE`); present when the server records import history. |
+| `transactionIds` | string[] (optional) | Ids of new transaction rows from this request (ingest batch). |
+| `existingTransactionsUpdated` | number (optional) | Existing rows whose cluster or embeddings changed. |
+| `newClustersTouched` | number (optional) | Distinct cluster ids in the new rows. |
 
-After a successful import, subsequent **`GET /api/metrics`**, **`GET /api/transactions`**, and **`GET /api/review-queue`** responses must reflect the new data.
+After a successful import, subsequent **`GET /api/metrics`**, **`GET /api/transactions`**, **`GET /api/review-queue`**, and **`GET /api/transaction-files`** responses must reflect the new data.
+
+### Import history listing
+
+**`GET /api/transaction-files`**
+
+Returns recorded uploads (one item per successful `POST /api/imports` that wrote a `TRANSACTION_FILE` row), newest first.
+
+```json
+{
+  "transaction_files": [
+    {
+      "user_id": "a1b2c3d4-…",
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "source": {
+        "name": "Statement.qfx",
+        "size_bytes": 245800,
+        "content_type": "application/vnd.intu.qfx"
+      },
+      "format": {
+        "source_format": "qfx"
+      },
+      "timing": {
+        "started_at": 1775044799000,
+        "completed_at": 1775044800000
+      },
+      "result": {
+        "rowCount": 340,
+        "knownMerchants": 290,
+        "unknownMerchants": 50,
+        "existingTransactionsUpdated": 12,
+        "newClustersTouched": 4
+      }
+    }
+  ]
+}
+```
+
+| Field | Type | Notes |
+|--------|------|--------|
+| `transaction_files` | array | Each item matches **`TransactionFileRecord`** in [`db/src/types.ts`](../../../db/src/types.ts). **`user_id`**, **`id`**, **`source`** (upload: `name`, `size_bytes`, optional `content_type`), **`format`** (optional `source_format` when detected), **`timing`** (`started_at` / `completed_at`, epoch **ms** UTC), **`result`** (**camelCase** — same shape as `POST /api/imports` batch summary: `ImportIngestResult`). Newest first by `timing.completed_at`. |
 
 ## 2. Metrics Baseline Endpoint
 

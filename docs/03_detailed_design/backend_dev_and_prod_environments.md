@@ -282,11 +282,12 @@ flowchart LR
 
 ### Step 5 — Product API (`api_contract.md`, iterative)
 
-**Goal:** Flesh out imports, metrics, transactions, review queue—each route goes through **`dispatch`** only (§15); no duplicate Lambda vs local logic.
+**Goal:** Flesh out imports, import history listing, metrics, transactions, review queue—each route goes through **`dispatch`** only (§15); no duplicate Lambda vs local logic.
 
 | Deliverable | Notes |
 |-------------|--------|
 | **Imports** | `POST /api/imports` multipart per [`api_contract.md`](./api_contract.md). |
+| **Import history** | `GET /api/transaction-files` per [`api_contract.md`](./api_contract.md) (lists `TRANSACTION_FILE` rows). |
 | **Read paths** | As MVP requires. |
 | **Validation** | Zod (or equivalent) at service boundaries. |
 

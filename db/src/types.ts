@@ -1,4 +1,7 @@
-/** Shapes aligned with `docs/03_detailed_design/api_contract.md` (JSON uses epoch ms for dates). */
+/**
+ * Shapes aligned with `docs/03_detailed_design/api_contract.md` (JSON uses epoch ms for dates)
+ * and persisted record layout in `docs/03_detailed_design/database/data_model.md`.
+ */
 
 export type TransactionStatus = 'CLASSIFIED' | 'PENDING_REVIEW';
 
@@ -14,7 +17,8 @@ export interface TransactionRecord {
    */
   cleaned_merchant?: string;
   amount: number;
-  cluster_id: string;
+  /** Absent on legacy or unclustered rows when backfilled. */
+  cluster_id?: string;
   category: string;
   status: TransactionStatus;
   is_recurring: boolean;
@@ -87,3 +91,42 @@ export interface ImportIngestResult {
   /** Distinct cluster ids among rows in this import batch. */
   newClustersTouched: number;
 }
+
+/** §1 — Multipart upload: raw bytes, client filename, part MIME. */
+export interface TransactionFileSource {
+  name: string;
+  size_bytes: number;
+  content_type?: string;
+}
+
+/**
+ * §2 — How the file is classified for parsing (`parseImportBuffer` / sniffing).
+ * Filled after format detection, before or alongside row parse.
+ */
+export interface TransactionFileFormat {
+  source_format?: string;
+}
+
+/**
+ * §3 — Clock: when the server began processing this import (after extract) and when the run finished.
+ */
+export interface TransactionFileTiming {
+  started_at: number;
+  completed_at: number;
+}
+
+/**
+ * One persisted import: sections match how the run proceeds — source file → format →
+ * timing → result stats. See `database/data_model.md`.
+ */
+export interface TransactionFileInput {
+  id: string;
+  source: TransactionFileSource;
+  format: TransactionFileFormat;
+  timing: TransactionFileTiming;
+  /** Final batch summary (ingest + re-cluster), same shape as `ImportIngestResult`. */
+  result: ImportIngestResult;
+}
+
+/** Stored row: same sections as {@link TransactionFileInput} plus `user_id`. */
+export type TransactionFileRecord = TransactionFileInput & { user_id: string };

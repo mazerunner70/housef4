@@ -21,20 +21,12 @@ export function ImportSummaryCard({
       description="We parsed your file and matched merchants to categories where confidence was high."
     >
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-        <button
-          type="button"
-          onClick={onReviewTransactions}
-          disabled={summary.rowCount === 0}
-          className="rounded-xl bg-white/[0.04] p-4 text-left transition hover:bg-white/[0.07] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-nav-accent)] disabled:pointer-events-none disabled:opacity-50"
-        >
-          <span className="text-sm text-zinc-500">Transactions</span>
-          <span className="mt-1 block text-2xl font-semibold tabular-nums text-zinc-100">
+        <div className="rounded-xl bg-white/[0.04] p-4">
+          <p className="text-sm text-zinc-500">Transactions</p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums text-zinc-100">
             {summary.rowCount}
-          </span>
-          <span className="mt-2 block text-xs text-zinc-500">
-            Click to review this import
-          </span>
-        </button>
+          </p>
+        </div>
         <div className="rounded-xl bg-white/[0.04] p-4">
           <p className="text-sm text-zinc-500">Known merchants</p>
           <p className="mt-1 text-2xl font-semibold tabular-nums text-emerald-400">
@@ -65,7 +57,18 @@ export function ImportSummaryCard({
         )}
       </div>
       <div className="mt-6 flex flex-wrap gap-3">
-        <Button type="button" onClick={onContinueDashboard}>
+        <Button
+          type="button"
+          onClick={onReviewTransactions}
+          disabled={summary.rowCount === 0}
+        >
+          Review imported transactions
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={onContinueDashboard}
+        >
           View dashboard
         </Button>
         {summary.unknownMerchants > 0 && (

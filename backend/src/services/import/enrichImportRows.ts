@@ -8,6 +8,7 @@ import type {
 import type { ParsedImportRow } from './canonical';
 import {
   buildNewImportInputs,
+  computeRetiredClusterIds,
   runClusterAndCategoryPipeline,
   type Assignment,
 } from './clusterPipeline';
@@ -59,6 +60,8 @@ function buildExistingPatches(
 export type EnrichImportResult = {
   toInsert: ImportTransactionInput[];
   existingPatches: ExistingTransactionPatch[];
+  /** CLUSTER# rows to remove after write-back; see `import_transaction_files.md` §7.4. */
+  retiredClusterIds: string[];
   summary: {
     importRowCount: number;
     knownMerchants: number;
@@ -76,6 +79,7 @@ export async function enrichImportRows(
     return {
       toInsert: [],
       existingPatches: [],
+      retiredClusterIds: [],
       summary: {
         importRowCount: 0,
         knownMerchants: 0,
@@ -99,6 +103,8 @@ export async function enrichImportRows(
     parsed.length,
   );
 
+  const retiredClusterIds = computeRetiredClusterIds(existing, assignments);
+
   let knownMerchants = 0;
   let unknownMerchants = 0;
   for (const r of toInsert) {
@@ -111,6 +117,7 @@ export async function enrichImportRows(
   return {
     toInsert,
     existingPatches,
+    retiredClusterIds,
     summary: {
       importRowCount: parsed.length,
       knownMerchants,
