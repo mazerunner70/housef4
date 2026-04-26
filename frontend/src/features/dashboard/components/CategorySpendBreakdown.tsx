@@ -8,12 +8,14 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 
-import type { MetricsResponse, SpendingCategoryRow } from '@/lib/types'
+import type { SpendingCategoryRow } from '@/lib/types'
 import { cn } from '@/lib/cn'
 import { theme } from '@/lib/theme'
 
 type CategorySpendBreakdownProps = {
-  metrics: MetricsResponse
+  categories: SpendingCategoryRow[]
+  periodLabel: string
+  onClearMonthFilter?: () => void
   className?: string
 }
 
@@ -67,21 +69,27 @@ function shortLabel(full: string): string {
 }
 
 export function CategorySpendBreakdown({
-  metrics,
+  categories,
+  periodLabel,
+  onClearMonthFilter,
   className,
 }: CategorySpendBreakdownProps) {
   const rows = useMemo(() => {
-    const withBudget = metrics.spending_by_category.filter(
-      (r): r is SpendingCategoryRow & { budget: number } =>
-        r.budget != null && r.budget > 0,
-    )
-    const picked = withBudget.slice(0, 5)
+    const sorted = [...categories].sort((a, b) => b.amount - a.amount)
+    const picked = sorted.slice(0, 5)
+    const maxAmt = picked[0]?.amount ?? 0
     return picked.map((row, i) => {
       const rowTheme = ROW_THEMES[i % ROW_THEMES.length]
-      const pct = Math.min(100, (row.amount / row.budget) * 100)
+      const budget = row.budget
+      const pct =
+        budget != null && budget > 0
+          ? Math.min(100, (row.amount / budget) * 100)
+          : maxAmt > 0
+            ? Math.min(100, (row.amount / maxAmt) * 100)
+            : 0
       return { row, rowTheme, pct, label: shortLabel(row.category) }
     })
-  }, [metrics.spending_by_category])
+  }, [categories])
 
   return (
     <section
@@ -91,10 +99,21 @@ export function CategorySpendBreakdown({
       )}
     >
       <header className="mb-5">
-        <h2 className="text-lg font-semibold tracking-tight text-white">
-          Spending by Category
-        </h2>
-        <p className="mt-1 text-sm text-zinc-500">This month</p>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <h2 className="text-lg font-semibold tracking-tight text-white">
+            Spending by Category
+          </h2>
+          {onClearMonthFilter ? (
+            <button
+              type="button"
+              onClick={onClearMonthFilter}
+              className="text-xs font-medium text-zinc-500 underline decoration-zinc-600 underline-offset-2 transition hover:text-zinc-300"
+            >
+              Back to this month
+            </button>
+          ) : null}
+        </div>
+        <p className="mt-1 text-sm text-zinc-500">{periodLabel}</p>
       </header>
       <ul className="flex flex-1 flex-col gap-5">
         {rows.map(({ row, rowTheme, pct, label }) => {
@@ -104,6 +123,8 @@ export function CategorySpendBreakdown({
             width: `${pct}%`,
             boxShadow: `0 0 14px ${glow}, 0 0 4px ${glow}`,
           }
+          const budget = row.budget
+          const hasBudget = budget != null && budget > 0
           return (
             <li key={row.category}>
               <div className="flex items-center gap-3">
@@ -125,13 +146,18 @@ export function CategorySpendBreakdown({
                         style: 'currency',
                         currency: 'USD',
                         maximumFractionDigits: 0,
-                      })}{' '}
-                      <span className="text-zinc-600">/</span>{' '}
-                      {row.budget!.toLocaleString(undefined, {
-                        style: 'currency',
-                        currency: 'USD',
-                        maximumFractionDigits: 0,
                       })}
+                      {hasBudget ? (
+                        <>
+                          {' '}
+                          <span className="text-zinc-600">/</span>{' '}
+                          {budget.toLocaleString(undefined, {
+                            style: 'currency',
+                            currency: 'USD',
+                            maximumFractionDigits: 0,
+                          })}
+                        </>
+                      ) : null}
                     </span>
                   </div>
                   <div
@@ -140,7 +166,11 @@ export function CategorySpendBreakdown({
                     aria-valuenow={Math.round(pct)}
                     aria-valuemin={0}
                     aria-valuemax={100}
-                    aria-label={`${label} spending versus budget`}
+                    aria-label={
+                      hasBudget
+                        ? `${label} spending versus budget`
+                        : `${label} share of top spending`
+                    }
                   >
                     <div
                       className={cn(

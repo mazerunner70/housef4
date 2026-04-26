@@ -107,6 +107,8 @@ export async function postImportPayload(
     retiredClusterCount: enriched.retiredClusterIds.length,
   });
 
+  await repo.refreshStoredDashboardMetrics(userId);
+
   const base: Record<string, unknown> = {
     rowCount: result.rowCount,
     knownMerchants: result.knownMerchants,

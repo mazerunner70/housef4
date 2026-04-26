@@ -1,3 +1,4 @@
+import { useCallback, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { NetWorthHero } from '@/features/dashboard/components/NetWorthHero'
@@ -8,12 +9,65 @@ import { Spinner } from '@/components/ui/Spinner'
 import { useMetrics } from '@/hooks/useMetrics'
 import { useTransactions } from '@/hooks/useTransactions'
 import { useReviewQueue } from '@/hooks/useReviewQueue'
+import {
+  formatUtcMonthHeading,
+  spendingByCategoryForUtcRange,
+  utcMonthBoundsFromStart,
+  utcMonthStartForCashflowLabel,
+} from '@/lib/dashboardSpending'
+import type { SpendingCategoryRow } from '@/lib/types'
 import { cn } from '@/lib/cn'
 
 export function DashboardPage() {
   const metricsQuery = useMetrics()
   const transactionsQuery = useTransactions()
   const reviewQuery = useReviewQueue()
+
+  /** Axis label from `cashflow_history` — unique per month; avoids bad `month_start_ms` fallbacks. */
+  const [selectedCashflowMonthLabel, setSelectedCashflowMonthLabel] = useState<
+    string | null
+  >(null)
+
+  const metrics = metricsQuery.data
+  const transactions = transactionsQuery.data?.transactions ?? []
+
+  const categoryPane = useMemo((): {
+    categories: SpendingCategoryRow[]
+    periodLabel: string
+  } => {
+    if (!metrics) {
+      return { categories: [], periodLabel: 'This month' }
+    }
+    if (selectedCashflowMonthLabel == null) {
+      return {
+        categories: metrics.spending_by_category,
+        periodLabel: 'This month',
+      }
+    }
+    const monthStart = utcMonthStartForCashflowLabel(
+      metrics,
+      selectedCashflowMonthLabel,
+    )
+    if (monthStart == null) {
+      return {
+        categories: [],
+        periodLabel: selectedCashflowMonthLabel,
+      }
+    }
+    const { start, end } = utcMonthBoundsFromStart(monthStart)
+    return {
+      categories: spendingByCategoryForUtcRange(transactions, start, end),
+      periodLabel: formatUtcMonthHeading(monthStart),
+    }
+  }, [selectedCashflowMonthLabel, metrics, transactions])
+
+  const clearCategoryMonth = useCallback(() => {
+    setSelectedCashflowMonthLabel(null)
+  }, [])
+
+  const scheduleSelectCashflowMonth = useCallback((label: string) => {
+    queueMicrotask(() => setSelectedCashflowMonthLabel(label))
+  }, [])
 
   const pending = reviewQuery.data?.pending_clusters.length ?? 0
 
@@ -26,7 +80,7 @@ export function DashboardPage() {
     )
   }
 
-  if (metricsQuery.isError || !metricsQuery.data) {
+  if (metricsQuery.isError || !metrics) {
     return (
       <p className="text-zinc-400">
         We couldn’t load metrics. Ensure the API is running and reachable (see
@@ -34,9 +88,6 @@ export function DashboardPage() {
       </p>
     )
   }
-
-  const metrics = metricsQuery.data
-  const transactions = transactionsQuery.data?.transactions ?? []
 
   return (
     <div className="space-y-8">
@@ -60,10 +111,24 @@ export function DashboardPage() {
 
       <div className="grid gap-6 lg:grid-cols-3 lg:items-stretch">
         <div className="lg:col-span-2">
-          <MonthlyCashFlowChart metrics={metrics} className="h-full min-h-[360px]" />
+          <MonthlyCashFlowChart
+            metrics={metrics}
+            selectedMonthLabel={selectedCashflowMonthLabel}
+            onSelectCashflowMonth={scheduleSelectCashflowMonth}
+            className="h-full min-h-[360px]"
+          />
         </div>
         <div className="lg:col-span-1">
-          <CategorySpendBreakdown metrics={metrics} className="min-h-[360px]" />
+          <CategorySpendBreakdown
+            categories={categoryPane.categories}
+            periodLabel={categoryPane.periodLabel}
+            onClearMonthFilter={
+              selectedCashflowMonthLabel === null
+                ? undefined
+                : clearCategoryMonth
+            }
+            className="min-h-[360px]"
+          />
         </div>
       </div>
 
