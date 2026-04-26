@@ -53,7 +53,8 @@ resource "aws_s3_bucket_versioning" "frontend_bucket_versioning" {
   }
 }
 
-# Single-table design: PK/SK for user-scoped entities; GSI1 for cluster → transactions (tag updates).
+# Single-table design: PK/SK for user-scoped entities; GSI1 for cluster → transactions (tag updates);
+# GSI2 for import file → transactions (batch review by transaction file id).
 # Canonical attribute documentation: docs/03_detailed_design/database/data_model.md
 resource "aws_dynamodb_table" "app_table" {
   name         = "${var.project_id}-${var.environment}-table"
@@ -81,10 +82,27 @@ resource "aws_dynamodb_table" "app_table" {
     type = "S"
   }
 
+  attribute {
+    name = "GSI2PK"
+    type = "S"
+  }
+
+  attribute {
+    name = "GSI2SK"
+    type = "S"
+  }
+
   global_secondary_index {
     name            = "GSI1"
     hash_key        = "GSI1PK"
     range_key       = "GSI1SK"
+    projection_type = "ALL"
+  }
+
+  global_secondary_index {
+    name            = "GSI2"
+    hash_key        = "GSI2PK"
+    range_key       = "GSI2SK"
     projection_type = "ALL"
   }
 

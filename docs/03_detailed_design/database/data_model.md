@@ -31,8 +31,12 @@ This is the **canonical description** of how persisted application data is store
   - **GSI1PK** (String) — `USER#<user_id>#CLUSTER#<cluster_id>` (see `clusterTxnGsi1Pk` in `db/src/keys.ts`). Enables all transactions in a **cluster** for a user to be found without a table scan.
   - **GSI1SK** (String) — `TXN#<transaction_id>` (same as base `SK` for that transaction) via `clusterTxnGsi1Sk`.
   - **Projection:** `ALL` (full item image on the index).
+- **Global secondary index: `GSI2`**
+  - **GSI2PK** (String) — `USER#<user_id>#FILE#<transaction_file_id>` (`fileTxnGsi2Pk`). Enables all transactions **created in one import file** for batch review.
+  - **GSI2SK** (String) — `TXN#<transaction_id>` (`fileTxnGsi2Sk`).
+  - **Projection:** `ALL`.
 
-Access patterns: list user transactions and clusters by **base table** query on `PK` + `SK` prefix; list / update all transactions in a **cluster** (e.g. tag rules) by **GSI1** query on `GSI1PK`.
+Access patterns: list user transactions and clusters by **base table** query on `PK` + `SK` prefix; list / update all transactions in a **cluster** (e.g. tag rules) by **GSI1** query on `GSI1PK`; list transactions for an import by **GSI2** query on `GSI2PK`.
 
 ---
 
@@ -56,6 +60,8 @@ Every application item (except the health system row) includes:
 | `SK` | `TXN#<transaction_id>` |
 | `GSI1PK` | `USER#<user_id>#CLUSTER#<cluster_id>` |
 | `GSI1SK` | `TXN#<transaction_id>` |
+| `GSI2PK` | `USER#<user_id>#FILE#<transaction_file_id>` (set when row is created by an import) |
+| `GSI2SK` | `TXN#<transaction_id>` |
 
 **Attributes (persisted)** — see `DynamoFinanceRepository.ingestImportBatch` / `patchExistingTransactionsAfterImport` / `listTransactions`.
 
@@ -75,6 +81,8 @@ Every application item (except the health system row) includes:
 | `suggested_category` | String or null | From rules / ML. |
 | `category_confidence` | Number | Optional. |
 | `match_type` | String | Optional; how the row was matched. |
+| `transaction_file_id` | String | Id of the `TRANSACTION_FILE` row for the import that **inserted** this transaction (same id as in `SK` of `FILE#…`). Required on every transaction row. |
+| `GSI2PK` / `GSI2SK` | String | Denormalized keys for **GSI2** (see above); always set with `transaction_file_id` on insert. |
 
 ---
 

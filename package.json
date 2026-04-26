@@ -8,6 +8,7 @@
     "build": "pnpm -r run build",
     "test": "pnpm -r run test",
     "build-deploy:local": "bash scripts/setup-local-dev.sh",
+    "build-deploy:local:fresh": "bash scripts/setup-local-dev-fresh.sh",
     "test:auth:local": "bash scripts/test-local-auth-curl.sh",
     "test:auth:aws": "bash scripts/test-aws-auth-curl.sh",
     "test:auth:cognito-smoke": "bash scripts/cognito-login-and-smoke.sh --from-terraform",

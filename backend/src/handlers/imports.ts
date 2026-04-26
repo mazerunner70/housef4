@@ -34,16 +34,20 @@ export async function postImportPayload(
     extracted.mimeType,
   );
 
+  const importFileId = randomUUID();
   const repo = getFinanceRepository();
   const enriched = await enrichImportRows(userId, rows, repo);
   await repo.patchExistingTransactionsAfterImport(
     userId,
     enriched.existingPatches,
   );
-  const result = await repo.ingestImportBatch(userId, enriched.toInsert);
+  const result = await repo.ingestImportBatch(
+    userId,
+    enriched.toInsert,
+    importFileId,
+  );
   await repo.retireClusterAggregates(userId, enriched.retiredClusterIds);
 
-  const importFileId = randomUUID();
   const displayName = extracted.filename?.trim() || 'import';
   const importCompletedAt = Date.now();
   const ingest = {
@@ -82,7 +86,6 @@ export async function postImportPayload(
     unknownMerchants: result.unknownMerchants,
     existingTransactionsUpdated: enriched.existingPatches.length,
     newClustersTouched: enriched.summary.newClustersTouched,
-    transactionIds: enriched.toInsert.map((r) => r.id),
     importFileId,
   };
   if (detectedFormat !== 'unknown') {

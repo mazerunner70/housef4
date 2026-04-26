@@ -27,6 +27,8 @@ export interface TransactionRecord {
   suggested_category?: string | null;
   category_confidence?: number;
   match_type?: string;
+  /** Import file id for the `TRANSACTION_FILE` row that created this transaction (same id as in `FILE#…` / `importFileId`). */
+  transaction_file_id: string;
 }
 
 /** Partial update applied to existing transactions after a re-clustering import. */

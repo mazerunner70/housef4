@@ -38,6 +38,8 @@ export type Transaction = {
   category: string
   status: 'CLASSIFIED' | 'PENDING_REVIEW'
   is_recurring: boolean
+  /** Id of the import file (`TRANSACTION_FILE`) that created this row. */
+  transaction_file_id: string
   suggested_category?: string | null
   category_confidence?: number
   match_type?: string
@@ -77,10 +79,8 @@ export type ImportParseResult = {
   existingTransactionsUpdated?: number
   /** Distinct cluster ids among rows in this import batch. */
   newClustersTouched?: number
-  /** Ids of rows persisted in this import (for batch review UI). */
-  transactionIds?: string[]
   /** Id of the persisted `TRANSACTION_FILE` record for this run. */
-  importFileId?: string
+  importFileId: string
   /** Detected from filename / MIME; echoed by `POST /api/imports` when wired. */
   sourceFormat?: ImportSourceFormat
 }

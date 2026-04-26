@@ -34,13 +34,12 @@ Accepts a bank or PFM export file, parses it server-side into normalized transac
   "unknownMerchants": 50,
   "sourceFormat": "ofx",
   "importFileId": "550e8400-e29b-41d4-a716-446655440000",
-  "transactionIds": ["txn_abc", "txn_def"],
   "existingTransactionsUpdated": 12,
   "newClustersTouched": 4
 }
 ```
 
-Optional fields are omitted when not applicable (e.g. `transactionIds` only when new rows were ingested).
+Optional fields are omitted when not applicable (e.g. `sourceFormat` when unknown).
 
 | Field | Type | Notes |
 |--------|------|--------|
@@ -48,8 +47,7 @@ Optional fields are omitted when not applicable (e.g. `transactionIds` only when
 | `knownMerchants` | number | Rows matched to existing clusters or high-confidence categories. |
 | `unknownMerchants` | number | Rows requiring cluster review (feeds review queue). |
 | `sourceFormat` | string (optional) | One of: `csv`, `ofx`, `qfx`, `qif`. Omitted if the server cannot determine the format. |
-| `importFileId` | string (optional) | Id of the persisted **transaction file** record for this import (see [`database/data_model.md`](./database/data_model.md) `TRANSACTION_FILE`); present when the server records import history. |
-| `transactionIds` | string[] (optional) | Ids of new transaction rows from this request (ingest batch). |
+| `importFileId` | string | Id of the persisted **transaction file** record for this import (see [`database/data_model.md`](./database/data_model.md) `TRANSACTION_FILE`). |
 | `existingTransactionsUpdated` | number (optional) | Existing rows whose cluster or embeddings changed. |
 | `newClustersTouched` | number (optional) | Distinct cluster ids in the new rows. |
 
@@ -145,6 +143,8 @@ Provides the raw and mapped list of transactions.
 
 **`GET /api/transactions`**
 
+Optional query: **`transactionFileId`** (string, UUID of a persisted import / `TRANSACTION_FILE` row). When set, the response contains only transactions whose stored **`transaction_file_id`** matches that id (server uses DynamoDB **GSI2**). When omitted, behavior is unchanged: all transactions for the user.
+
 ### Response Payload
 
 ```json
@@ -159,7 +159,8 @@ Provides the raw and mapped list of transactions.
       "cluster_id": "CL_001",
       "category": "Subscriptions & Recurring",
       "status": "CLASSIFIED",
-      "is_recurring": true
+      "is_recurring": true,
+      "transaction_file_id": "550e8400-e29b-41d4-a716-446655440000"
     },
     {
       "id": "txn_89101113",
@@ -170,7 +171,8 @@ Provides the raw and mapped list of transactions.
       "cluster_id": "CL_005",
       "category": "Uncategorized",
       "status": "PENDING_REVIEW",
-      "is_recurring": false
+      "is_recurring": false,
+      "transaction_file_id": "660e8400-e29b-41d4-a716-446655440001"
     }
   ]
 }
@@ -183,6 +185,7 @@ Provides the raw and mapped list of transactions.
 | `transactions[].amount` | number | Signed amount (negative for outflows). |
 | `transactions[].status` | string | e.g. `CLASSIFIED`, `PENDING_REVIEW`. |
 | `transactions[].cleaned_merchant` | string | Normalized merchant line for clustering and rules (see `transaction_analysis_clusters_and_categories.md`); always present on `GET /api/transactions` (derived when not stored). |
+| `transactions[].transaction_file_id` | string | Id of the `TRANSACTION_FILE` import that created this row. |
 
 Other fields follow the same snake_case names as in the example payload (`raw_merchant`, `cluster_id`, `category`, `is_recurring`).
 

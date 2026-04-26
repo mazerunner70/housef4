@@ -54,9 +54,14 @@ export async function startLocalServer(): Promise<http.Server> {
     try {
       await runWithRequestLogAsync(randomUUID(), async () => {
         const log = getLog();
-        const url = req.url ?? '/';
+        const urlRaw = req.url ?? '/';
         const method = req.method ?? 'GET';
-        const pathOnly = url.split('?')[0] ?? url;
+        const url = new URL(urlRaw, 'http://127.0.0.1');
+        const pathOnly = url.pathname;
+        const query: Record<string, string | undefined> = {};
+        url.searchParams.forEach((value, key) => {
+          query[key] = value;
+        });
         log.info('http.request', { method, path: pathOnly });
 
         let rawBody = '';
@@ -68,6 +73,7 @@ export async function startLocalServer(): Promise<http.Server> {
         const internal: InternalRequest = {
           method,
           path: pathOnly,
+          query: Object.keys(query).length > 0 ? query : undefined,
           headers: incomingHeaders(req),
           rawBody,
           bodyBuffer,

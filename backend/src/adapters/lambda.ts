@@ -55,9 +55,11 @@ function getBodyBytes(event: APIGatewayEvent): Buffer {
 
 function toInternalRequest(event: APIGatewayEvent): InternalRequest {
   const bodyBuffer = getBodyBytes(event);
+  const qp = event.queryStringParameters;
   return {
     method: event.httpMethod ?? 'GET',
     path: event.path ?? '/',
+    query: qp ? { ...qp } : undefined,
     headers: lambdaHeaders(event),
     rawBody: bodyBuffer.length ? bodyBuffer.toString('utf8') : '',
     bodyBuffer: bodyBuffer.length ? bodyBuffer : undefined,
