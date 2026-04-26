@@ -54,6 +54,14 @@ export interface PendingClusterRecord {
   currency?: string;
 }
 
+/** User-defined label for a bank / card account; imports attach a transaction file to one account. */
+export interface AccountRecord {
+  user_id: string;
+  id: string;
+  name: string;
+  created_at: number;
+}
+
 export interface MetricsSnapshot {
   monthly_cashflow: {
     income: number;
@@ -127,6 +135,8 @@ export interface TransactionFileTiming {
  */
 export interface TransactionFileInput {
   id: string;
+  /** `ACCOUNT#…` id for the user’s financial account this file belongs to. */
+  account_id: string;
   source: TransactionFileSource;
   format: TransactionFileFormat;
   timing: TransactionFileTiming;

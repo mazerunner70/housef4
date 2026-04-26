@@ -22,7 +22,10 @@ Accepts a bank or PFM export file, parses it server-side into normalized transac
 
 ### Request
 
-- **`multipart/form-data`** with a single part **`file`** (the export binary or text).
+- **`multipart/form-data`** with:
+  - a single part **`file`** (the export binary or text), and
+  - either **`new_account_name`** (non-empty string; the server creates an `ACCOUNT` row and links the file to it) or **`account_id`** (uuid of an existing account for this user; validated before ingest).
+- If both are present, **`new_account_name`** takes precedence and a new account is created.
 - Typical extensions: `.csv`, `.ofx`, `.qfx`, `.qif`. Relevant MIME types include `text/csv`, `application/x-ofx`, `application/vnd.intu.qfx`, `application/qif`, and `text/plain` when appropriate.
 
 ### Response Payload
@@ -51,7 +54,29 @@ Optional fields are omitted when not applicable (e.g. `sourceFormat` when unknow
 | `existingTransactionsUpdated` | number (optional) | Existing rows whose cluster or embeddings changed. |
 | `newClustersTouched` | number (optional) | Distinct cluster ids in the new rows. |
 
-After a successful import, subsequent **`GET /api/metrics`**, **`GET /api/transactions`**, **`GET /api/review-queue`**, and **`GET /api/transaction-files`** responses must reflect the new data.
+After a successful import, subsequent **`GET /api/metrics`**, **`GET /api/transactions`**, **`GET /api/review-queue`**, **`GET /api/accounts`**, and **`GET /api/transaction-files`** responses must reflect the new data (including any new account).
+
+### Accounts listing
+
+**`GET /api/accounts`**
+
+Returns the user’s financial **accounts** (for the import page dropdown), sorted by name.
+
+```json
+{
+  "accounts": [
+    {
+      "id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "name": "Chase Checking",
+      "created_at": 1775044700000
+    }
+  ]
+}
+```
+
+| Field | Type | Notes |
+|--------|------|--------|
+| `accounts` | array | Each item has `id` (string), `name` (string), `created_at` (epoch **ms** UTC). |
 
 ### Import history listing
 
@@ -65,6 +90,7 @@ Returns recorded uploads (one item per successful `POST /api/imports` that wrote
     {
       "user_id": "a1b2c3d4-…",
       "id": "550e8400-e29b-41d4-a716-446655440000",
+      "account_id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
       "source": {
         "name": "Statement.qfx",
         "size_bytes": 245800,
@@ -91,7 +117,7 @@ Returns recorded uploads (one item per successful `POST /api/imports` that wrote
 
 | Field | Type | Notes |
 |--------|------|--------|
-| `transaction_files` | array | Each item matches **`TransactionFileRecord`** in [`db/src/types.ts`](../../../db/src/types.ts). **`user_id`**, **`id`**, **`source`** (upload: `name`, `size_bytes`, optional `content_type`), **`format`** (optional `source_format` when detected), **`timing`** (`started_at` / `completed_at`, epoch **ms** UTC), **`result`** (**camelCase** — same shape as `POST /api/imports` batch summary: `ImportIngestResult`). Newest first by `timing.completed_at`. |
+| `transaction_files` | array | Each item matches **`TransactionFileRecord`** in [`db/src/types.ts`](../../../db/src/types.ts). **`user_id`**, **`id`**, **`account_id`** (string; empty for legacy files before accounts), **`source`** (upload: `name`, `size_bytes`, optional `content_type`), **`format`** (optional `source_format` when detected), **`timing`** (`started_at` / `completed_at`, epoch **ms** UTC), **`result`** (**camelCase** — same shape as `POST /api/imports` batch summary: `ImportIngestResult`). Newest first by `timing.completed_at`. |
 
 ## 2. Metrics Baseline Endpoint
 

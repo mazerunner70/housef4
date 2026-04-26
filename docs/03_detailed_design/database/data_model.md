@@ -46,7 +46,7 @@ Every application item (except the health system row) includes:
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
-| **`entity_type`** | String | `TRANSACTION`, `CLUSTER`, `TRANSACTION_FILE`, or `PROFILE`. Used when reading and filtering. |
+| **`entity_type`** | String | `TRANSACTION`, `CLUSTER`, `TRANSACTION_FILE`, `ACCOUNT`, or `PROFILE`. Used when reading and filtering. |
 
 ---
 
@@ -126,6 +126,7 @@ Per-upload **import history**: the uploaded file, how it was classified, when pr
 | Attribute | Type | Notes |
 |-----------|------|--------|
 | `id` | String | Same as in `SK` after the `FILE#` prefix. |
+| `account_id` | String | Id of the user’s `ACCOUNT` item (`ACCOUNT#…` sort key id segment) for this file. Omitted on legacy items; readers treat missing as empty. |
 | **`source`** | Map (object) | **§1 — Multipart / upload audit:** `name` (client filename or display default), `size_bytes`, optional `content_type` (part MIME). |
 | **`format`** | Map (object) | **§2 — Import source type for parsing** (set after sniffing): optional `source_format` (e.g. `csv` / `ofx` / `qfx` / `qif`); optional `currency` (ISO 4217) when inferrable (e.g. OFX `CURDEF`); may be empty if unknown. |
 | **`timing`** | Map (object) | **§3 — Clock (epoch ms UTC):** `started_at` (after a successful multipart extract, before parse/enrich/ingest), `completed_at` (when the run finishes and the item is written). **Listing order** (newest first) uses `timing.completed_at`. |
@@ -139,7 +140,26 @@ Does not use GSI1. Listed via base-table query: `PK = USER#<user_id>` and `SK` b
 
 ---
 
-## 4. Profile (`entity_type: PROFILE`)
+## 4. Account (`entity_type: ACCOUNT`)
+
+A user-labeled **financial account** (e.g. “Chase Checking”) so each import can be associated with a stable id. **Keys:**
+
+| Key | Value pattern |
+|-----|---------------|
+| `PK` | `USER#<user_id>` |
+| `SK` | `ACCOUNT#<account_id>` (UUID) |
+
+| Attribute | Type | Notes |
+|-----------|------|--------|
+| `id` | String | Same as the UUID in `SK` after `ACCOUNT#`. |
+| `name` | String | User-visible label (trimmed on create). |
+| `created_at` | Number | Epoch **ms** UTC. |
+
+Created via `POST /api/imports` when the client sends **`new_account_name`**, or via the same code path the handler uses. Listed with `begins_with(SK, ACCOUNT#)` (see `listAccounts`).
+
+---
+
+## 5. Profile (`entity_type: PROFILE`)
 
 One item per user for metrics that are **stored** (not only derived in memory). **Key:**
 
@@ -152,7 +172,7 @@ One item per user for metrics that are **stored** (not only derived in memory). 
 
 ---
 
-## 5. Health system row (non-domain)
+## 6. Health system row (non-domain)
 
 A Terraform-managed item supports build/version health checks. It is **not** a user or application entity. See `infrastructure/dynamodb_health_item.tf` (`PK=health-check`, `SK=BUILD`).
 

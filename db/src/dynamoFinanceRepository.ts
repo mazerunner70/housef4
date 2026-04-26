@@ -6,13 +6,16 @@ import {
   QueryCommand,
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
+import { randomUUID } from 'node:crypto';
 import {
+  accountSk,
   clusterSk,
   clusterTxnGsi1Pk,
   clusterTxnGsi1Sk,
   fileSk,
   fileTxnGsi2Pk,
   fileTxnGsi2Sk,
+  ACCOUNT_PREFIX,
   FILE_PREFIX,
   PROFILE_SK,
   txnSk,
@@ -20,6 +23,7 @@ import {
 } from './keys';
 import { getDocumentClient, requireTableName } from './dynamoClient';
 import type {
+  AccountRecord,
   ExistingTransactionPatch,
   ImportIngestResult,
   ImportTransactionInput,
@@ -63,6 +67,12 @@ export interface FinanceRepository {
     input: TransactionFileInput,
   ): Promise<void>;
   listTransactionFiles(userId: string): Promise<TransactionFileRecord[]>;
+  listAccounts(userId: string): Promise<AccountRecord[]>;
+  getAccount(
+    userId: string,
+    accountId: string,
+  ): Promise<AccountRecord | null>;
+  createAccount(userId: string, name: string): Promise<AccountRecord>;
   applyTagRule(
     userId: string,
     clusterId: string,
@@ -717,6 +727,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
       entity_type: 'TRANSACTION_FILE',
       user_id: userId,
       id: input.id,
+      account_id: input.account_id,
       source: input.source,
       format: input.format,
       timing: input.timing,
@@ -759,6 +770,10 @@ export class DynamoFinanceRepository implements FinanceRepository {
         const rec: TransactionFileRecord = {
           user_id: String(row.user_id ?? userId),
           id: String(row.id),
+          account_id:
+            row.account_id != null && String(row.account_id).length > 0
+              ? String(row.account_id)
+              : '',
           source,
           format: parseFormatFromItem(row),
           timing: parseTimingFromItem(row),
@@ -771,6 +786,91 @@ export class DynamoFinanceRepository implements FinanceRepository {
 
     out.sort((a, b) => b.timing.completed_at - a.timing.completed_at);
     return out;
+  }
+
+  async listAccounts(userId: string): Promise<AccountRecord[]> {
+    const pk = userPk(userId);
+    const out: AccountRecord[] = [];
+    let startKey: Record<string, unknown> | undefined;
+    do {
+      const res = await this.doc.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          KeyConditionExpression: 'PK = :pk AND begins_with(SK, :ap)',
+          ExpressionAttributeValues: {
+            ':pk': pk,
+            ':ap': ACCOUNT_PREFIX,
+          },
+          ExclusiveStartKey: startKey,
+        }),
+      );
+      for (const item of res.Items ?? []) {
+        if (item.entity_type !== 'ACCOUNT') continue;
+        const row = item as Record<string, unknown>;
+        out.push({
+          user_id: String(row.user_id ?? userId),
+          id: String(row.id),
+          name: String(row.name ?? ''),
+          created_at: Number(row.created_at ?? 0),
+        });
+      }
+      startKey = res.LastEvaluatedKey as Record<string, unknown> | undefined;
+    } while (startKey);
+
+    out.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    return out;
+  }
+
+  async getAccount(
+    userId: string,
+    accountId: string,
+  ): Promise<AccountRecord | null> {
+    const pk = userPk(userId);
+    const got = await this.doc.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: { PK: pk, SK: accountSk(accountId) },
+      }),
+    );
+    if (got.Item?.entity_type !== 'ACCOUNT') return null;
+    const row = got.Item as Record<string, unknown>;
+    return {
+      user_id: String(row.user_id ?? userId),
+      id: String(row.id),
+      name: String(row.name ?? ''),
+      created_at: Number(row.created_at ?? 0),
+    };
+  }
+
+  async createAccount(userId: string, name: string): Promise<AccountRecord> {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      throw new Error('Account name is required');
+    }
+    const id = randomUUID();
+    const created_at = Date.now();
+    const rec: AccountRecord = {
+      user_id: userId,
+      id,
+      name: trimmed,
+      created_at,
+    };
+    const pk = userPk(userId);
+    await this.doc.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: {
+          PK: pk,
+          SK: accountSk(id),
+          entity_type: 'ACCOUNT',
+          user_id: userId,
+          id,
+          name: trimmed,
+          created_at,
+        },
+      }),
+    );
+    return rec;
   }
 
   private async ensureProfile(userId: string): Promise<void> {

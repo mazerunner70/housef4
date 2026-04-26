@@ -1,4 +1,5 @@
 import type {
+  AccountsResponse,
   ImportParseResult,
   MetricsResponse,
   ReviewQueueResponse,
@@ -84,12 +85,25 @@ export async function getHealth(): Promise<HealthResponse> {
   })
 }
 
+export type PostImportAccount =
+  | { accountId: string; newAccountName?: never }
+  | { accountId?: never; newAccountName: string }
+
 /**
- * `POST /api/imports` — multipart field name **`file`** (see API contract).
+ * `POST /api/imports` — multipart: **`file`**, and either **`account_id`** or
+ * **`new_account_name`** (see API contract).
  */
-export async function postImport(file: File): Promise<ImportParseResult> {
+export async function postImport(
+  file: File,
+  account: PostImportAccount,
+): Promise<ImportParseResult> {
   const body = new FormData()
   body.append('file', file)
+  if (account.newAccountName !== undefined) {
+    body.append('new_account_name', account.newAccountName)
+  } else {
+    body.append('account_id', account.accountId)
+  }
   return fetchJson<ImportParseResult>('/api/imports', { method: 'POST', body })
 }
 
@@ -117,6 +131,10 @@ export async function getTransactions(
 
 export async function getTransactionFiles(): Promise<TransactionFilesResponse> {
   return fetchJson<TransactionFilesResponse>('/api/transaction-files')
+}
+
+export async function getAccounts(): Promise<AccountsResponse> {
+  return fetchJson<AccountsResponse>('/api/accounts')
 }
 
 export async function getReviewQueue(): Promise<ReviewQueueResponse> {

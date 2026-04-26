@@ -8,12 +8,25 @@ export interface ExtractedUpload {
 }
 
 /**
- * Reads the `file` field from `multipart/form-data` (API contract: single part named `file`).
+ * `multipart/form-data` for `POST /api/imports`: one part `file` plus optional
+ * `account_id` (existing) or `new_account_name` (create before ingest).
  */
-export async function extractMultipartFile(
+export type ImportMultipartFields = {
+  accountId: string;
+  newAccountName: string;
+};
+
+export type ExtractedImportUpload = {
+  file: ExtractedUpload;
+} & ImportMultipartFields;
+
+/**
+ * Reads the `file` field and import account fields from `multipart/form-data`.
+ */
+export async function extractImportMultipart(
   headers: Record<string, string | undefined>,
   bodyBuffer: Buffer,
-): Promise<ExtractedUpload | null> {
+): Promise<ExtractedImportUpload | null> {
   const ct =
     headers['content-type'] ??
     headers['Content-Type'] ??
@@ -27,7 +40,14 @@ export async function extractMultipartFile(
       headers: { 'content-type': ct },
       limits: { files: 1, fileSize: 50 * 1024 * 1024 },
     });
-    let found: ExtractedUpload | null = null;
+    let fileFound: ExtractedUpload | null = null;
+    let accountId = '';
+    let newAccountName = '';
+
+    bb.on('field', (name, val) => {
+      if (name === 'account_id') accountId = val;
+      if (name === 'new_account_name') newAccountName = val;
+    });
 
     bb.on('file', (name, file, info) => {
       if (name !== 'file') {
@@ -42,7 +62,7 @@ export async function extractMultipartFile(
         file.resume();
       });
       file.on('end', () => {
-        found = {
+        fileFound = {
           filename: info.filename,
           buffer: Buffer.concat(chunks),
           mimeType: info.mimeType,
@@ -50,7 +70,17 @@ export async function extractMultipartFile(
       });
     });
 
-    bb.on('finish', () => resolve(found));
+    bb.on('finish', () => {
+      if (!fileFound) {
+        resolve(null);
+        return;
+      }
+      resolve({
+        file: fileFound,
+        accountId,
+        newAccountName,
+      });
+    });
     bb.on('error', reject);
     Readable.from(bodyBuffer).pipe(bb);
   });
