@@ -63,7 +63,7 @@ export async function postImportPayload(
       ...(extracted.mimeType && { content_type: extracted.mimeType }),
     },
     format:
-      detectedFormat !== 'unknown' ? { source_format: detectedFormat } : {},
+      detectedFormat === 'unknown' ? {} : { source_format: detectedFormat },
     timing: {
       started_at: importStartedAt,
       completed_at: importCompletedAt,

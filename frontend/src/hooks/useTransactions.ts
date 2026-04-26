@@ -17,7 +17,20 @@ export function useTransactionsByImportFile(
   const id = transactionFileId?.trim() || undefined
   return useQuery({
     queryKey: ['transactions', 'by-file', id ?? ''],
-    queryFn: () => getTransactions(id!),
+    queryFn: () => getTransactions({ transactionFileId: id! }),
     enabled: Boolean(id),
+  })
+}
+
+/** Rows in a pending-review cluster (`GET /api/transactions?clusterId=…`). */
+export function useTransactionsByCluster(
+  clusterId: string | undefined,
+  enabled: boolean,
+) {
+  const id = clusterId?.trim() || undefined
+  return useQuery({
+    queryKey: ['transactions', 'by-cluster', id ?? ''],
+    queryFn: () => getTransactions({ clusterId: id! }),
+    enabled: Boolean(id) && enabled,
   })
 }
