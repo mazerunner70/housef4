@@ -55,9 +55,13 @@ export type PendingCluster = {
   total_transactions: number
   total_amount: number
   suggested_category: string | null
+  /** When set, from import (e.g. OFX `CURDEF`) on the batch that formed this cluster aggregate. */
+  currency?: string
 }
 
 export type ReviewQueueResponse = {
+  /** User profile default (ISO 4217); used when a cluster has no `currency` yet. */
+  default_currency: string
   pending_clusters: PendingCluster[]
 }
 
@@ -103,6 +107,8 @@ export type TransactionFileSource = {
 
 export type TransactionFileFormat = {
   source_format?: string
+  /** When known from import metadata (e.g. OFX). */
+  currency?: string
 }
 
 export type TransactionFileTiming = {

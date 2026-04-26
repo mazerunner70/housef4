@@ -50,6 +50,8 @@ export interface PendingClusterRecord {
   total_transactions: number;
   total_amount: number;
   suggested_category: string | null;
+  /** Denormalized from the import batch(es); UI prefers this, then profile default, then USD. */
+  currency?: string;
 }
 
 export interface MetricsSnapshot {
@@ -107,6 +109,8 @@ export interface TransactionFileSource {
  */
 export interface TransactionFileFormat {
   source_format?: string;
+  /** ISO 4217 when known (e.g. from OFX `CURDEF`), for display. */
+  currency?: string;
 }
 
 /**

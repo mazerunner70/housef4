@@ -1,6 +1,7 @@
 import { useId, useState } from 'react'
 
 import type { PendingCluster } from '@/lib/types'
+import { formatCurrencyAmount, resolveCurrencyCode } from '@/lib/formatCurrency'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/cn'
 import { Card } from '@/components/ui/Card'
@@ -8,14 +9,17 @@ import { CategorySelectDropdown } from '@/features/review-queue/components/Categ
 import { ClusterMatchingTransactionsDialog } from '@/features/review-queue/components/ClusterMatchingTransactionsDialog'
 import { ConfirmClusterTagButton } from '@/features/review-queue/components/ConfirmClusterTagButton'
 
-type ClusterReviewRowProps = {
+type ClusterReviewRowProps = Readonly<{
   cluster: PendingCluster
+  /** Profile default (ISO 4217) from `GET /api/review-queue` when the cluster has no file currency. */
+  defaultCurrency: string
   onConfirm: (clusterId: string, category: string) => void
   isSubmitting?: boolean
-}
+}>
 
 export function ClusterReviewRow({
   cluster,
+  defaultCurrency,
   onConfirm,
   isSubmitting,
 }: ClusterReviewRowProps) {
@@ -24,6 +28,11 @@ export function ClusterReviewRow({
   const [category, setCategory] = useState(suggested)
   const [categoryMenuOpen, setCategoryMenuOpen] = useState(false)
   const [matchingTxOpen, setMatchingTxOpen] = useState(false)
+
+  const totalFormatted = formatCurrencyAmount(
+    cluster.total_amount,
+    resolveCurrencyCode(cluster.currency, defaultCurrency),
+  )
 
   return (
     <Card
@@ -60,10 +69,7 @@ export function ClusterReviewRow({
               <div className="whitespace-nowrap">
                 <span className="text-zinc-500">Total amount</span>{' '}
                 <span className="font-semibold tabular-nums text-zinc-100">
-                  {cluster.total_amount.toLocaleString(undefined, {
-                    style: 'currency',
-                    currency: 'USD',
-                  })}
+                  {totalFormatted}
                 </span>
               </div>
             </div>

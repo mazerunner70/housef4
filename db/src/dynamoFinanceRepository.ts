@@ -53,7 +53,9 @@ export interface FinanceRepository {
     userId: string,
     rows: ImportTransactionInput[],
     transactionFileId: string,
+    fileCurrency?: string,
   ): Promise<ImportIngestResult>;
+  getDefaultCurrencyCode(userId: string): Promise<string>;
   /** Remove CLUSTER# aggregate items whose ids are no longer referenced (import splits/merges). */
   retireClusterAggregates(userId: string, clusterIds: string[]): Promise<void>;
   recordTransactionFile(
@@ -76,6 +78,8 @@ interface ClusterItem {
   suggested_category: string | null;
   assigned_category: string | null;
   pending_review: boolean;
+  /** ISO 4217 from the latest import that set this aggregate, when known. */
+  currency?: string;
 }
 
 function monthBoundsUtcMs(at: number): { start: number; end: number } {
@@ -188,23 +192,28 @@ function parseSourceFromItem(
 }
 
 function parseFormatFromItem(item: Record<string, unknown>): TransactionFileFormat {
+  const out: TransactionFileFormat = {};
   const f = item.format;
   if (f && typeof f === 'object' && !Array.isArray(f)) {
     const o = f as Record<string, unknown>;
     if (o.source_format !== undefined && o.source_format !== null) {
-      return { source_format: String(o.source_format) };
+      out.source_format = String(o.source_format);
+    }
+    if (o.currency !== undefined && o.currency !== null) {
+      out.currency = String(o.currency);
     }
   }
   const fi = item.file_import;
   if (fi && typeof fi === 'object' && !Array.isArray(fi)) {
     const o = fi as Record<string, unknown>;
     if (o.source_format !== undefined && o.source_format !== null) {
-      return { source_format: String(o.source_format) };
+      out.source_format = String(o.source_format);
     }
   }
-  if (item.source_format != null) {
-    return { source_format: String(item.source_format) };
+  if (item.source_format != null && out.source_format === undefined) {
+    out.source_format = String(item.source_format);
   }
+  if (Object.keys(out).length) return out;
   return {};
 }
 
@@ -415,6 +424,19 @@ export class DynamoFinanceRepository implements FinanceRepository {
     };
   }
 
+  async getDefaultCurrencyCode(userId: string): Promise<string> {
+    const profile = await this.doc.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: { PK: userPk(userId), SK: PROFILE_SK },
+      }),
+    );
+    if (profile.Item?.entity_type !== 'PROFILE') return 'USD';
+    const c = profile.Item.default_currency;
+    if (c != null && c !== '' && typeof c === 'string') return c.toUpperCase();
+    return 'USD';
+  }
+
   async listPendingClusters(userId: string): Promise<PendingClusterRecord[]> {
     const pk = userPk(userId);
     const out: PendingClusterRecord[] = [];
@@ -436,7 +458,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
       );
       for (const item of res.Items ?? []) {
         if (item.entity_type !== 'CLUSTER') continue;
-        out.push({
+        const rec: PendingClusterRecord = {
           cluster_id: String(item.cluster_id),
           sample_merchants: (item.sample_merchants as string[]) ?? [],
           total_transactions: Number(item.total_transactions ?? 0),
@@ -445,7 +467,11 @@ export class DynamoFinanceRepository implements FinanceRepository {
             item.suggested_category === undefined
               ? null
               : (item.suggested_category as string | null),
-        });
+        };
+        if (item.currency != null && item.currency !== '') {
+          rec.currency = String(item.currency);
+        }
+        out.push(rec);
       }
       startKey = res.LastEvaluatedKey as Record<string, unknown> | undefined;
     } while (startKey);
@@ -495,6 +521,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
     userId: string,
     rows: ImportTransactionInput[],
     transactionFileId: string,
+    fileCurrency?: string,
   ): Promise<ImportIngestResult> {
     if (rows.length === 0) {
       return {
@@ -584,6 +611,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
         }),
       );
       if (got.Item?.entity_type === 'CLUSTER') {
+        const cur = got.Item.currency;
         existing.set(cid, {
           cluster_id: String(got.Item.cluster_id),
           sample_merchants: (got.Item.sample_merchants as string[]) ?? [],
@@ -598,6 +626,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
               ? null
               : (got.Item.assigned_category as string | null),
           pending_review: Boolean(got.Item.pending_review),
+          ...(cur != null && cur !== '' ? { currency: String(cur) } : {}),
         });
       }
     }
@@ -624,7 +653,12 @@ export class DynamoFinanceRepository implements FinanceRepository {
       const suggested_category =
         batchSuggestion ?? prev?.suggested_category ?? null;
 
-      clusterItems.push({
+      const normalized = fileCurrency?.trim().toUpperCase();
+      const fromFile =
+        normalized && /^[A-Z]{3}$/.test(normalized) ? normalized : undefined;
+      const clusterCurrency = fromFile ?? prev?.currency;
+
+      const clusterItem: Record<string, unknown> = {
         PK: pk,
         SK: clusterSk(clusterId),
         entity_type: 'CLUSTER',
@@ -635,7 +669,11 @@ export class DynamoFinanceRepository implements FinanceRepository {
         suggested_category,
         assigned_category: prev?.assigned_category ?? null,
         pending_review,
-      });
+      };
+      if (clusterCurrency) {
+        clusterItem.currency = clusterCurrency;
+      }
+      clusterItems.push(clusterItem);
     }
 
     await batchWriteAll(this.doc, this.tableName, [...txnItems, ...clusterItems]);

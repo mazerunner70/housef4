@@ -28,7 +28,11 @@ export async function postImportPayload(
   }
 
   const importStartedAt = Date.now();
-  const { rows, format: detectedFormat } = parseImportBuffer(
+  const {
+    rows,
+    format: detectedFormat,
+    currency: importCurrency,
+  } = parseImportBuffer(
     extracted.buffer,
     extracted.filename,
     extracted.mimeType,
@@ -45,6 +49,7 @@ export async function postImportPayload(
     userId,
     enriched.toInsert,
     importFileId,
+    importCurrency,
   );
   await repo.retireClusterAggregates(userId, enriched.retiredClusterIds);
 
@@ -62,8 +67,10 @@ export async function postImportPayload(
       size_bytes: extracted.buffer.length,
       ...(extracted.mimeType && { content_type: extracted.mimeType }),
     },
-    format:
-      detectedFormat === 'unknown' ? {} : { source_format: detectedFormat },
+    format: {
+      ...(detectedFormat === 'unknown' ? {} : { source_format: detectedFormat }),
+      ...(importCurrency && { currency: importCurrency }),
+    },
     timing: {
       started_at: importStartedAt,
       completed_at: importCompletedAt,
