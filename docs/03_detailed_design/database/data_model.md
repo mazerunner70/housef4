@@ -60,7 +60,7 @@ Every application item (except the health system row) includes:
 | `SK` | `TXN#<transaction_id>` |
 | `GSI1PK` | `USER#<user_id>#CLUSTER#<cluster_id>` |
 | `GSI1SK` | `TXN#<transaction_id>` |
-| `GSI2PK` | `USER#<user_id>#FILE#<transaction_file_id>` (set when row is created by an import) |
+| `GSI2PK` | `USER#<user_id>#FILE#<transaction_file_id>`|
 | `GSI2SK` | `TXN#<transaction_id>` |
 
 **Attributes (persisted)** — see `DynamoFinanceRepository.ingestImportBatch` / `patchExistingTransactionsAfterImport` / `listTransactions`.
