@@ -54,6 +54,7 @@ resource "aws_s3_bucket_versioning" "frontend_bucket_versioning" {
 }
 
 # Single-table design: PK/SK for user-scoped entities; GSI1 for cluster → transactions (tag updates).
+# Canonical attribute documentation: docs/03_detailed_design/database/data_model.md
 resource "aws_dynamodb_table" "app_table" {
   name         = "${var.project_id}-${var.environment}-table"
   billing_mode = "PAY_PER_REQUEST"

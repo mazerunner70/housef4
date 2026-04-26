@@ -162,7 +162,7 @@ In short: **user truth lives on stable merchant identity**, not on `-1` or ephem
 | **`USER#…` / `CLUSTER#<cluster_id>`** | `normalized_exemplar`, `assigned_category`, `suggested_category`, `embedding_centroid` (optional), `last_recomputed_at`. |
 | **Transactions** | Keep `cluster_id`, `category`, `status`; optionally `category_confidence`, `match_type` for analytics and UI badges. |
 
-This matches the skill’s single-table pattern without requiring an immediate schema change: the repo can evolve from today’s transaction-only storage to explicit cluster items when needed.
+The **implemented** DynamoDB items (transactions, cluster rows, **transaction file** import-history rows, profile, and GSI1 for cluster-wide updates) are described in [`database/data_model.md`](./database/data_model.md). Optional fields in the table above (e.g. `embedding_centroid` on a cluster) are design extensions; keep this section aligned with that file when the storage model evolves.
 
 ---
 

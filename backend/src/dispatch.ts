@@ -3,6 +3,7 @@ import { postImportPayload } from './handlers/imports';
 import { getMePayload } from './handlers/me';
 import { getMetricsPayload } from './handlers/metrics';
 import { getReviewQueuePayload } from './handlers/reviewQueue';
+import { getTransactionFilesPayload } from './handlers/transactionFiles';
 import { postTagRulePayload } from './handlers/tagRule';
 import { getTransactionsPayload } from './handlers/transactions';
 import { HttpError } from './httpError';
@@ -120,6 +121,12 @@ export async function dispatch(req: InternalRequest): Promise<InternalResponse> 
       if (method === 'GET' && matchesApiTail(path, ['review-queue'])) {
         const body = await getReviewQueuePayload(uid);
         log.info('dispatch.response', { route: 'review-queue', statusCode: 200 });
+        return jsonResponse(200, body);
+      }
+
+      if (method === 'GET' && matchesApiTail(path, ['transaction-files'])) {
+        const body = await getTransactionFilesPayload(uid);
+        log.info('dispatch.response', { route: 'transaction-files', statusCode: 200 });
         return jsonResponse(200, body);
       }
 

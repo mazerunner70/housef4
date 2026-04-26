@@ -12,16 +12,28 @@ export async function getTransactionsPayload(userId: string) {
     count: rows.length,
   });
   return {
-    transactions: rows.map((t) => ({
-      id: t.id,
-      date: t.date,
-      raw_merchant: t.raw_merchant,
-      cleaned_merchant: t.cleaned_merchant ?? cleanMerchantForClustering(t.raw_merchant),
-      amount: t.amount,
-      cluster_id: t.cluster_id,
-      category: t.category,
-      status: t.status,
-      is_recurring: t.is_recurring,
-    })),
+    transactions: rows.map((t) => {
+      const row: Record<string, unknown> = {
+        id: t.id,
+        date: t.date,
+        raw_merchant: t.raw_merchant,
+        cleaned_merchant: t.cleaned_merchant ?? cleanMerchantForClustering(t.raw_merchant),
+        amount: t.amount,
+        cluster_id: t.cluster_id,
+        category: t.category,
+        status: t.status,
+        is_recurring: t.is_recurring,
+      };
+      if (t.suggested_category !== undefined) {
+        row.suggested_category = t.suggested_category;
+      }
+      if (t.category_confidence !== undefined) {
+        row.category_confidence = t.category_confidence;
+      }
+      if (t.match_type !== undefined) {
+        row.match_type = t.match_type;
+      }
+      return row;
+    }),
   };
 }

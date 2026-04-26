@@ -1,8 +1,13 @@
-/** Single-table key helpers: PK = USER#<id>, SK = TXN#... | CLUSTER#... | PROFILE */
+/**
+ * Single-table key helpers: PK = USER#<id>, SK = TXN#... | CLUSTER#... | PROFILE.
+ * See `docs/03_detailed_design/database/data_model.md` for the full key and GSI1 layout.
+ */
 
 export const USER_PREFIX = 'USER#';
 export const TXN_PREFIX = 'TXN#';
 export const CLUSTER_PREFIX = 'CLUSTER#';
+/** User import history entries: `SK` = `FILE#<file_id>`. */
+export const FILE_PREFIX = 'FILE#';
 export const PROFILE_SK = 'PROFILE';
 
 export function userPk(userId: string): string {
@@ -15,6 +20,10 @@ export function txnSk(txnId: string): string {
 
 export function clusterSk(clusterId: string): string {
   return `${CLUSTER_PREFIX}${clusterId}`;
+}
+
+export function fileSk(fileId: string): string {
+  return `${FILE_PREFIX}${fileId}`;
 }
 
 /** GSI1: all transactions for a user under one cluster (tag-rule updates). */

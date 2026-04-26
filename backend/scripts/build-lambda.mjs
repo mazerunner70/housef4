@@ -33,4 +33,6 @@ await esbuild.build({
   outfile: join(root, 'dist-lambda/index.js'),
   logLevel: 'warning',
   plugins: [forbidLocalServer],
+  /** `@xenova/transformers` pulls native/onnx stacks; load from Lambda `node_modules` / layer if used. */
+  external: ['@xenova/transformers'],
 });

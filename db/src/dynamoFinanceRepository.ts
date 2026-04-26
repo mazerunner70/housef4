@@ -1,5 +1,6 @@
 import {
   BatchWriteCommand,
+  DeleteCommand,
   GetCommand,
   PutCommand,
   QueryCommand,
@@ -9,16 +10,24 @@ import {
   clusterSk,
   clusterTxnGsi1Pk,
   clusterTxnGsi1Sk,
+  fileSk,
+  FILE_PREFIX,
   PROFILE_SK,
   txnSk,
   userPk,
 } from './keys';
 import { getDocumentClient, requireTableName } from './dynamoClient';
 import type {
+  ExistingTransactionPatch,
   ImportIngestResult,
   ImportTransactionInput,
   MetricsSnapshot,
   PendingClusterRecord,
+  TransactionFileInput,
+  TransactionFileRecord,
+  TransactionFileSource,
+  TransactionFileFormat,
+  TransactionFileTiming,
   TransactionRecord,
   TransactionStatus,
 } from './types';
@@ -29,10 +38,21 @@ export interface FinanceRepository {
   listTransactions(userId: string): Promise<TransactionRecord[]>;
   getMetrics(userId: string): Promise<MetricsSnapshot>;
   listPendingClusters(userId: string): Promise<PendingClusterRecord[]>;
+  patchExistingTransactionsAfterImport(
+    userId: string,
+    patches: ExistingTransactionPatch[],
+  ): Promise<void>;
   ingestImportBatch(
     userId: string,
     rows: ImportTransactionInput[],
   ): Promise<ImportIngestResult>;
+  /** Remove CLUSTER# aggregate items whose ids are no longer referenced (import splits/merges). */
+  retireClusterAggregates(userId: string, clusterIds: string[]): Promise<void>;
+  recordTransactionFile(
+    userId: string,
+    input: TransactionFileInput,
+  ): Promise<void>;
+  listTransactionFiles(userId: string): Promise<TransactionFileRecord[]>;
   applyTagRule(
     userId: string,
     clusterId: string,
@@ -65,6 +85,20 @@ function monthBoundsUtcMs(at: number): { start: number; end: number } {
   return { start, end };
 }
 
+function bestSuggestedFromRows(rows: ImportTransactionInput[]): string | null {
+  let best: string | null = null;
+  let bestC = -1;
+  for (const r of rows) {
+    if (r.suggested_category == null || r.suggested_category === '') continue;
+    const c = r.category_confidence ?? 0;
+    if (c > bestC) {
+      bestC = c;
+      best = r.suggested_category;
+    }
+  }
+  return best;
+}
+
 function uniqSampleMerchants(merchants: string[], cap: number): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -76,6 +110,107 @@ function uniqSampleMerchants(merchants: string[], cap: number): string[] {
     if (out.length >= cap) break;
   }
   return out;
+}
+
+/** `result` or legacy `ingest` + `row_count`. */
+function parseTransactionFileResult(
+  raw: unknown,
+  legacyIngest: unknown,
+  rowCountFallback: unknown,
+): ImportIngestResult {
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const o = raw as Record<string, unknown>;
+    return {
+      rowCount: Number(o.rowCount ?? rowCountFallback ?? 0),
+      knownMerchants: Number(o.knownMerchants ?? 0),
+      unknownMerchants: Number(o.unknownMerchants ?? 0),
+      existingTransactionsUpdated: Number(o.existingTransactionsUpdated ?? 0),
+      newClustersTouched: Number(o.newClustersTouched ?? 0),
+    };
+  }
+  if (legacyIngest && typeof legacyIngest === 'object' && !Array.isArray(legacyIngest)) {
+    const o = legacyIngest as Record<string, unknown>;
+    return {
+      rowCount: Number(o.rowCount ?? rowCountFallback ?? 0),
+      knownMerchants: Number(o.knownMerchants ?? 0),
+      unknownMerchants: Number(o.unknownMerchants ?? 0),
+      existingTransactionsUpdated: Number(o.existingTransactionsUpdated ?? 0),
+      newClustersTouched: Number(o.newClustersTouched ?? 0),
+    };
+  }
+  const n = Number(rowCountFallback ?? 0);
+  return {
+    rowCount: n,
+    knownMerchants: 0,
+    unknownMerchants: 0,
+    existingTransactionsUpdated: 0,
+    newClustersTouched: 0,
+  };
+}
+
+function parseSourceFromItem(
+  item: Record<string, unknown>,
+  fallbackName: string,
+): TransactionFileSource {
+  const s = item.source;
+  if (s && typeof s === 'object' && !Array.isArray(s)) {
+    const o = s as Record<string, unknown>;
+    return {
+      name: String(o.name ?? fallbackName),
+      size_bytes: Number(o.size_bytes ?? 0),
+      content_type:
+        o.content_type !== undefined && o.content_type !== null
+          ? String(o.content_type)
+          : undefined,
+    };
+  }
+  const fi = item.file_import;
+  if (fi && typeof fi === 'object' && !Array.isArray(fi)) {
+    const o = fi as Record<string, unknown>;
+    return {
+      name: String(o.name ?? fallbackName),
+      size_bytes: Number(o.size_bytes ?? 0),
+      content_type:
+        o.content_type !== undefined && o.content_type !== null
+          ? String(o.content_type)
+          : undefined,
+    };
+  }
+  return { name: fallbackName, size_bytes: 0 };
+}
+
+function parseFormatFromItem(item: Record<string, unknown>): TransactionFileFormat {
+  const f = item.format;
+  if (f && typeof f === 'object' && !Array.isArray(f)) {
+    const o = f as Record<string, unknown>;
+    if (o.source_format !== undefined && o.source_format !== null) {
+      return { source_format: String(o.source_format) };
+    }
+  }
+  const fi = item.file_import;
+  if (fi && typeof fi === 'object' && !Array.isArray(fi)) {
+    const o = fi as Record<string, unknown>;
+    if (o.source_format !== undefined && o.source_format !== null) {
+      return { source_format: String(o.source_format) };
+    }
+  }
+  if (item.source_format != null) {
+    return { source_format: String(item.source_format) };
+  }
+  return {};
+}
+
+function parseTimingFromItem(item: Record<string, unknown>): TransactionFileTiming {
+  const t = item.timing;
+  if (t && typeof t === 'object' && !Array.isArray(t)) {
+    const o = t as Record<string, unknown>;
+    return {
+      started_at: Number(o.started_at ?? 0),
+      completed_at: Number(o.completed_at ?? 0),
+    };
+  }
+  const completed = Number(item.imported_at ?? item.completed_at ?? 0);
+  return { started_at: completed, completed_at: completed };
 }
 
 type PutBatch = Record<
@@ -143,13 +278,33 @@ export class DynamoFinanceRepository implements FinanceRepository {
           date: Number(item.date),
           raw_merchant: String(item.raw_merchant),
           amount: Number(item.amount),
-          cluster_id: String(item.cluster_id),
           category: String(item.category),
           status: item.status as TransactionStatus,
           is_recurring: Boolean(item.is_recurring),
         };
+        if (item.cluster_id != null && item.cluster_id !== '') {
+          rec.cluster_id = String(item.cluster_id);
+        }
         if (item.cleaned_merchant !== undefined && item.cleaned_merchant !== null) {
           rec.cleaned_merchant = String(item.cleaned_merchant);
+        }
+        if (item.merchant_embedding !== undefined && item.merchant_embedding !== null) {
+          const me = item.merchant_embedding as unknown[];
+          if (Array.isArray(me)) {
+            rec.merchant_embedding = me.map((x) => Number(x));
+          }
+        }
+        if (item.suggested_category !== undefined) {
+          rec.suggested_category =
+            item.suggested_category === null
+              ? null
+              : String(item.suggested_category);
+        }
+        if (item.category_confidence !== undefined && item.category_confidence !== null) {
+          rec.category_confidence = Number(item.category_confidence);
+        }
+        if (item.match_type !== undefined && item.match_type !== null) {
+          rec.match_type = String(item.match_type);
         }
         out.push(rec);
       }
@@ -244,12 +399,56 @@ export class DynamoFinanceRepository implements FinanceRepository {
     return out;
   }
 
+  async patchExistingTransactionsAfterImport(
+    userId: string,
+    patches: ExistingTransactionPatch[],
+  ): Promise<void> {
+    if (patches.length === 0) return;
+    const pk = userPk(userId);
+    for (const p of patches) {
+      const gsi1pk = clusterTxnGsi1Pk(userId, p.cluster_id);
+      const gsi1sk = clusterTxnGsi1Sk(p.id);
+      await this.doc.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: { PK: pk, SK: txnSk(p.id) },
+          UpdateExpression:
+            'SET cluster_id = :cid, category = :cat, #st = :st, cleaned_merchant = :cm, ' +
+            'GSI1PK = :gpk, GSI1SK = :gsk, merchant_embedding = :me, ' +
+            'suggested_category = :sg, category_confidence = :cc, #mt = :mt',
+          ExpressionAttributeNames: {
+            '#st': 'status',
+            '#mt': 'match_type',
+          },
+          ExpressionAttributeValues: {
+            ':cid': p.cluster_id,
+            ':cat': p.category,
+            ':st': p.status,
+            ':cm': p.cleaned_merchant,
+            ':gpk': gsi1pk,
+            ':gsk': gsi1sk,
+            ':me': p.merchant_embedding,
+            ':sg': p.suggested_category,
+            ':cc': p.category_confidence,
+            ':mt': p.match_type,
+          },
+        }),
+      );
+    }
+  }
+
   async ingestImportBatch(
     userId: string,
     rows: ImportTransactionInput[],
   ): Promise<ImportIngestResult> {
     if (rows.length === 0) {
-      return { rowCount: 0, knownMerchants: 0, unknownMerchants: 0 };
+      return {
+        rowCount: 0,
+        knownMerchants: 0,
+        unknownMerchants: 0,
+        existingTransactionsUpdated: 0,
+        newClustersTouched: 0,
+      };
     }
 
     for (const r of rows) {
@@ -271,7 +470,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
 
       const gsi1pk = clusterTxnGsi1Pk(r.user_id, r.cluster_id);
       const gsi1sk = clusterTxnGsi1Sk(r.id);
-      txnItems.push({
+      const item: Record<string, unknown> = {
         PK: pk,
         SK: txnSk(r.id),
         GSI1PK: gsi1pk,
@@ -287,7 +486,20 @@ export class DynamoFinanceRepository implements FinanceRepository {
         category: r.category,
         status: r.status,
         is_recurring: r.is_recurring,
-      });
+      };
+      if (r.merchant_embedding?.length) {
+        item.merchant_embedding = r.merchant_embedding;
+      }
+      if (r.suggested_category !== undefined) {
+        item.suggested_category = r.suggested_category;
+      }
+      if (r.category_confidence !== undefined) {
+        item.category_confidence = r.category_confidence;
+      }
+      if (r.match_type !== undefined) {
+        item.match_type = r.match_type;
+      }
+      txnItems.push(item);
     }
 
     const byCluster = new Map<
@@ -350,8 +562,9 @@ export class DynamoFinanceRepository implements FinanceRepository {
         g.rows.some((x) => x.status === 'PENDING_REVIEW') ||
         (prev?.pending_review ?? false);
 
+      const batchSuggestion = bestSuggestedFromRows(g.rows);
       const suggested_category =
-        prev?.suggested_category ?? null;
+        batchSuggestion ?? prev?.suggested_category ?? null;
 
       clusterItems.push({
         PK: pk,
@@ -375,7 +588,93 @@ export class DynamoFinanceRepository implements FinanceRepository {
       rowCount: rows.length,
       knownMerchants,
       unknownMerchants,
+      existingTransactionsUpdated: 0,
+      newClustersTouched: new Set(rows.map((r) => r.cluster_id)).size,
     };
+  }
+
+  async retireClusterAggregates(
+    userId: string,
+    clusterIds: string[],
+  ): Promise<void> {
+    if (clusterIds.length === 0) return;
+    const pk = userPk(userId);
+    for (const clusterId of clusterIds) {
+      if (!clusterId) continue;
+      await this.doc.send(
+        new DeleteCommand({
+          TableName: this.tableName,
+          Key: { PK: pk, SK: clusterSk(clusterId) },
+        }),
+      );
+    }
+  }
+
+  async recordTransactionFile(
+    userId: string,
+    input: TransactionFileInput,
+  ): Promise<void> {
+    const pk = userPk(userId);
+    const item: Record<string, unknown> = {
+      PK: pk,
+      SK: fileSk(input.id),
+      entity_type: 'TRANSACTION_FILE',
+      user_id: userId,
+      id: input.id,
+      source: input.source,
+      format: input.format,
+      timing: input.timing,
+      result: input.result,
+    };
+    await this.doc.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: item,
+      }),
+    );
+  }
+
+  async listTransactionFiles(userId: string): Promise<TransactionFileRecord[]> {
+    const pk = userPk(userId);
+    const out: TransactionFileRecord[] = [];
+    let startKey: Record<string, unknown> | undefined;
+    do {
+      const res = await this.doc.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          KeyConditionExpression: 'PK = :pk AND begins_with(SK, :fp)',
+          ExpressionAttributeValues: {
+            ':pk': pk,
+            ':fp': FILE_PREFIX,
+          },
+          ExclusiveStartKey: startKey,
+        }),
+      );
+      for (const item of res.Items ?? []) {
+        if (item.entity_type !== 'TRANSACTION_FILE') continue;
+        const row = item as Record<string, unknown>;
+        const fallbackName = String(row.name ?? 'import');
+        const source = parseSourceFromItem(row, fallbackName);
+        const result = parseTransactionFileResult(
+          row.result,
+          row.ingest,
+          row.row_count,
+        );
+        const rec: TransactionFileRecord = {
+          user_id: String(row.user_id ?? userId),
+          id: String(row.id),
+          source,
+          format: parseFormatFromItem(row),
+          timing: parseTimingFromItem(row),
+          result,
+        };
+        out.push(rec);
+      }
+      startKey = res.LastEvaluatedKey as Record<string, unknown> | undefined;
+    } while (startKey);
+
+    out.sort((a, b) => b.timing.completed_at - a.timing.completed_at);
+    return out;
   }
 
   private async ensureProfile(userId: string): Promise<void> {

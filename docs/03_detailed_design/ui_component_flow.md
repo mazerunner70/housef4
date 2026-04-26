@@ -8,10 +8,12 @@ To fulfill the "Stage 1: Clarity & Understanding" requirement successfully, the 
 
 * **Route**: `/import`
 * **Page component**: `<DataImportPage />`
+* **Data**: `GET /api/transaction-files` (via `useTransactionFiles`) lists prior imports — each entry includes `source` (upload name, size, MIME), `format` (detected `source_format` when known), `timing` (start/complete), and `result` (row counts and re-cluster stats) for an audit trail; refreshed after a successful `POST /api/imports`. See [`api_contract.md`](./api_contract.md).
 * **Child Components**:
   - `<ImportDropzone />`: Handles HTML5 drag-and-drop file reading (filtered by supported extensions/MIME types).
   - `<UploadProgressIndicator />`: Displays standard processing metrics (e.g., "Parsing 340 transactions...").
   - `<ImportSummaryCard />`: Shows success metrics ("We found 290 known merchants, and 50 unknown").
+  - **Import history** (same page): shows recorded file names and dates from the API.
 
 ## 2. Use Case: "The Baseline Reality Check" (Main Dashboard)
 **Goal**: The core of the MVP. The user logs in to see an undeniable, clear picture of their net worth, cash flow, and where their money goes.
