@@ -8,9 +8,18 @@ export function useTagCluster() {
   return useMutation({
     mutationFn: (body: TagRuleRequest) => postTagRule(body),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['review-queue'] })
-      void queryClient.invalidateQueries({ queryKey: ['transactions'] })
-      void queryClient.invalidateQueries({ queryKey: ['metrics'] })
+      void queryClient.invalidateQueries({
+        queryKey: ['review-queue'],
+        refetchType: 'all',
+      })
+      void queryClient.invalidateQueries({
+        queryKey: ['transactions'],
+        refetchType: 'all',
+      })
+      void queryClient.invalidateQueries({
+        queryKey: ['metrics'],
+        refetchType: 'all',
+      })
     },
   })
 }

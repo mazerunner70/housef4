@@ -108,7 +108,7 @@ export async function postImport(
 }
 
 export async function getMetrics(): Promise<MetricsResponse> {
-  return fetchJson<MetricsResponse>('/api/metrics')
+  return fetchJson<MetricsResponse>('/api/metrics', { cache: 'no-store' })
 }
 
 export type GetTransactionsOptions = {

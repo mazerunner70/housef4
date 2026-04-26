@@ -8,6 +8,8 @@ export type SpendingCategoryRow = {
 }
 
 export type MetricsResponse = {
+  /** Total number of transaction rows in the app (from metrics snapshot). */
+  transaction_count: number
   monthly_cashflow: {
     income: number
     expenses: number

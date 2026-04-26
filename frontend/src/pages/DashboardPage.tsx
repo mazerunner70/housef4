@@ -92,9 +92,17 @@ export function DashboardPage() {
   return (
     <div className="space-y-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm text-zinc-500">
-          Baseline view — net worth, cash flow, and category pacing.
-        </p>
+        <div>
+          <p className="text-sm text-zinc-500">
+            Baseline view — net worth, cash flow, and category pacing.
+          </p>
+          <p className="mt-1 text-sm tabular-nums text-zinc-400">
+            <span className="font-medium text-zinc-200">
+              {metrics.transaction_count.toLocaleString()}
+            </span>{' '}
+            transactions tracked
+          </p>
+        </div>
         <Link
           to="/review-queue"
           className={cn(

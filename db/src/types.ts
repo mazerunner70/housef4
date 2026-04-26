@@ -63,6 +63,8 @@ export interface AccountRecord {
 }
 
 export interface MetricsSnapshot {
+  /** Number of transaction rows the metrics are based on. */
+  transaction_count: number;
   monthly_cashflow: {
     income: number;
     expenses: number;

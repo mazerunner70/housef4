@@ -27,6 +27,7 @@ import {
   computeDashboardMetrics,
   metricsSnapshotLooksAllZero,
   parseStoredDashboardMetrics,
+  StoredDashboardMetricsParseError,
   type DashboardMetricsStored,
 } from './dashboardMetrics';
 import { dbLog } from './structuredLog';
@@ -45,6 +46,39 @@ import type {
   TransactionRecord,
   TransactionStatus,
 } from './types';
+
+/** String field from Dynamo/JSON: avoids `[object Object]` from `String(unknown)`. */
+function wireString(v: unknown, fallback: string = ''): string {
+  if (v == null) return fallback;
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean' || typeof v === 'bigint') {
+    return String(v);
+  }
+  if (typeof v === 'symbol') return v.toString();
+  return fallback;
+}
+
+function applyFormatFromRow(
+  o: Record<string, unknown>,
+  out: TransactionFileFormat,
+) {
+  if (o.source_format != null) {
+    out.source_format = wireString(o.source_format);
+  }
+  if (o.currency != null) {
+    out.currency = wireString(o.currency);
+  }
+}
+
+function metricsItemFallbackReason(
+  rawMetrics: unknown,
+  isMetricsEntity: boolean,
+): 'metrics_item_missing' | 'metrics_item_not_object' | 'wrong_entity_type' | 'stored_payload_invalid' {
+  if (rawMetrics == null) return 'metrics_item_missing';
+  if (typeof rawMetrics !== 'object') return 'metrics_item_not_object';
+  if (!isMetricsEntity) return 'wrong_entity_type';
+  return 'stored_payload_invalid';
+}
 
 const GSI1 = 'GSI1';
 const GSI2 = 'GSI2';
@@ -165,33 +199,31 @@ function parseTransactionFileResult(
   };
 }
 
+function sourceFromNestedRow(
+  o: Record<string, unknown>,
+  fallbackName: string,
+): TransactionFileSource {
+  return {
+    name: wireString(o.name, fallbackName),
+    size_bytes: Number(o.size_bytes ?? 0),
+    content_type:
+      o.content_type != null && o.content_type !== ''
+        ? wireString(o.content_type)
+        : undefined,
+  };
+}
+
 function parseSourceFromItem(
   item: Record<string, unknown>,
   fallbackName: string,
 ): TransactionFileSource {
   const s = item.source;
   if (s && typeof s === 'object' && !Array.isArray(s)) {
-    const o = s as Record<string, unknown>;
-    return {
-      name: String(o.name ?? fallbackName),
-      size_bytes: Number(o.size_bytes ?? 0),
-      content_type:
-        o.content_type !== undefined && o.content_type !== null
-          ? String(o.content_type)
-          : undefined,
-    };
+    return sourceFromNestedRow(s as Record<string, unknown>, fallbackName);
   }
   const fi = item.file_import;
   if (fi && typeof fi === 'object' && !Array.isArray(fi)) {
-    const o = fi as Record<string, unknown>;
-    return {
-      name: String(o.name ?? fallbackName),
-      size_bytes: Number(o.size_bytes ?? 0),
-      content_type:
-        o.content_type !== undefined && o.content_type !== null
-          ? String(o.content_type)
-          : undefined,
-    };
+    return sourceFromNestedRow(fi as Record<string, unknown>, fallbackName);
   }
   return { name: fallbackName, size_bytes: 0 };
 }
@@ -200,23 +232,17 @@ function parseFormatFromItem(item: Record<string, unknown>): TransactionFileForm
   const out: TransactionFileFormat = {};
   const f = item.format;
   if (f && typeof f === 'object' && !Array.isArray(f)) {
-    const o = f as Record<string, unknown>;
-    if (o.source_format !== undefined && o.source_format !== null) {
-      out.source_format = String(o.source_format);
-    }
-    if (o.currency !== undefined && o.currency !== null) {
-      out.currency = String(o.currency);
-    }
+    applyFormatFromRow(f as Record<string, unknown>, out);
   }
   const fi = item.file_import;
   if (fi && typeof fi === 'object' && !Array.isArray(fi)) {
     const o = fi as Record<string, unknown>;
-    if (o.source_format !== undefined && o.source_format !== null) {
-      out.source_format = String(o.source_format);
+    if (o.source_format != null) {
+      out.source_format = wireString(o.source_format);
     }
   }
   if (item.source_format != null && out.source_format === undefined) {
-    out.source_format = String(item.source_format);
+    out.source_format = wireString(item.source_format);
   }
   if (Object.keys(out).length) return out;
   return {};
@@ -269,53 +295,112 @@ async function batchWriteAll(
   }
 }
 
-function transactionItemToRecord(
+function copyMerchantEmbeddingIfPresent(
   item: Record<string, unknown>,
-  userId: string,
-): TransactionRecord | null {
-  if (item.entity_type !== 'TRANSACTION') return null;
-  const tfid = item.transaction_file_id;
-  if (tfid == null || tfid === '') {
-    throw new Error(
-      `TRANSACTION item ${String(item.id ?? '')} is missing transaction_file_id`,
-    );
+  rec: TransactionRecord,
+) {
+  if (item.merchant_embedding === undefined || item.merchant_embedding === null) {
+    return;
   }
-  const rec: TransactionRecord = {
-    user_id: String(item.user_id ?? userId),
-    id: String(item.id),
-    date: Number(item.date),
-    raw_merchant: String(item.raw_merchant),
-    amount: Number(item.amount),
-    category: String(item.category),
-    status: item.status as TransactionStatus,
-    is_recurring: Boolean(item.is_recurring),
-    transaction_file_id: String(tfid),
-  };
-  if (item.cluster_id != null && item.cluster_id !== '') {
-    rec.cluster_id = String(item.cluster_id);
+  const me = item.merchant_embedding as unknown[];
+  if (Array.isArray(me)) {
+    rec.merchant_embedding = me.map(Number);
+  }
+}
+
+function transactionOptionalFields(
+  item: Record<string, unknown>,
+  rec: TransactionRecord,
+) {
+  if (item.cluster_id != null) {
+    const c = wireString(item.cluster_id, '');
+    if (c) rec.cluster_id = c;
   }
   if (item.cleaned_merchant !== undefined && item.cleaned_merchant !== null) {
-    rec.cleaned_merchant = String(item.cleaned_merchant);
+    rec.cleaned_merchant = wireString(item.cleaned_merchant, '');
   }
-  if (item.merchant_embedding !== undefined && item.merchant_embedding !== null) {
-    const me = item.merchant_embedding as unknown[];
-    if (Array.isArray(me)) {
-      rec.merchant_embedding = me.map((x) => Number(x));
-    }
-  }
+  copyMerchantEmbeddingIfPresent(item, rec);
   if (item.suggested_category !== undefined) {
     rec.suggested_category =
       item.suggested_category === null
         ? null
-        : String(item.suggested_category);
+        : wireString(item.suggested_category, '');
   }
   if (item.category_confidence !== undefined && item.category_confidence !== null) {
     rec.category_confidence = Number(item.category_confidence);
   }
   if (item.match_type !== undefined && item.match_type !== null) {
-    rec.match_type = String(item.match_type);
+    rec.match_type = wireString(item.match_type, '');
   }
+}
+
+function transactionItemToRecord(
+  item: Record<string, unknown>,
+  userId: string,
+): TransactionRecord | null {
+  if (item.entity_type !== 'TRANSACTION') return null;
+  const transaction_file_id = wireString(item.transaction_file_id, '');
+  if (!transaction_file_id) {
+    throw new Error(
+      `TRANSACTION item ${wireString(item.id, '')} is missing transaction_file_id`,
+    );
+  }
+  const rec: TransactionRecord = {
+    user_id: wireString(item.user_id, userId),
+    id: wireString(item.id, ''),
+    date: Number(item.date),
+    raw_merchant: wireString(item.raw_merchant, ''),
+    amount: Number(item.amount),
+    category: wireString(item.category, ''),
+    status: item.status as TransactionStatus,
+    is_recurring: Boolean(item.is_recurring),
+    transaction_file_id,
+  };
+  transactionOptionalFields(item, rec);
   return rec;
+}
+
+function importTransactionToDynamoItem(
+  r: ImportTransactionInput,
+  pk: string,
+  userId: string,
+  transactionFileId: string,
+): Record<string, unknown> {
+  const gsi1pk = clusterTxnGsi1Pk(r.user_id, r.cluster_id);
+  const gsi1sk = clusterTxnGsi1Sk(r.id);
+  const item: Record<string, unknown> = {
+    PK: pk,
+    SK: txnSk(r.id),
+    GSI1PK: gsi1pk,
+    GSI1SK: gsi1sk,
+    entity_type: 'TRANSACTION',
+    user_id: r.user_id,
+    id: r.id,
+    date: r.date,
+    raw_merchant: r.raw_merchant,
+    cleaned_merchant: r.cleaned_merchant,
+    amount: r.amount,
+    cluster_id: r.cluster_id,
+    category: r.category,
+    status: r.status,
+    is_recurring: r.is_recurring,
+    transaction_file_id: transactionFileId,
+    GSI2PK: fileTxnGsi2Pk(userId, transactionFileId),
+    GSI2SK: fileTxnGsi2Sk(r.id),
+  };
+  if (r.merchant_embedding?.length) {
+    item.merchant_embedding = r.merchant_embedding;
+  }
+  if (r.suggested_category !== undefined) {
+    item.suggested_category = r.suggested_category;
+  }
+  if (r.category_confidence !== undefined) {
+    item.category_confidence = r.category_confidence;
+  }
+  if (r.match_type !== undefined) {
+    item.match_type = r.match_type;
+  }
+  return item;
 }
 
 export class DynamoFinanceRepository implements FinanceRepository {
@@ -383,6 +468,147 @@ export class DynamoFinanceRepository implements FinanceRepository {
     return out;
   }
 
+  private async buildMetricsSnapshotFromStored(
+    userId: string,
+    rawMetrics: unknown,
+    stored: DashboardMetricsStored,
+    net_worth: number,
+  ): Promise<MetricsSnapshot> {
+    const rawDynamo = rawMetrics as Record<string, unknown>;
+    let s = stored;
+    if (!('transaction_count' in rawDynamo)) {
+      const txns = await this.listTransactions(userId);
+      const withCount: DashboardMetricsStored = {
+        ...s,
+        transaction_count: txns.length,
+      };
+      await this.putDashboardMetricsItem(userId, withCount, txns.length);
+      s = withCount;
+    }
+
+    if (metricsSnapshotLooksAllZero(s)) {
+      const txns = await this.listTransactions(userId);
+      if (txns.length > 0) {
+        const live = computeDashboardMetrics(txns, Date.now());
+        if (!metricsSnapshotLooksAllZero(live)) {
+          dbLog('info', 'metrics.snapshot.healed_stale_zero', {
+            userIdLen: userId.length,
+          });
+          await this.putDashboardMetricsItem(userId, live, txns.length);
+        }
+        return { ...live, net_worth };
+      }
+    }
+
+    const raw = rawMetrics as Record<string, unknown>;
+    dbLog('info', 'metrics.snapshot.read', {
+      source: 'METRICS_ITEM',
+      userIdLen: userId.length,
+      metricsUpdatedAt: raw.metrics_updated_at ?? null,
+      monthly_cashflow: s.monthly_cashflow,
+      cashflowHistory: s.cashflow_history.map((h) => ({
+        label: h.label,
+        net: h.income - h.expenses,
+      })),
+      spendingTop5: s.spending_by_category.slice(0, 5),
+      net_worth,
+    });
+    return { ...s, net_worth };
+  }
+
+  private async fetchExistingClustersForIngest(
+    pk: string,
+    clusterIds: string[],
+  ): Promise<Map<string, ClusterItem>> {
+    const existing = new Map<string, ClusterItem>();
+    for (const cid of clusterIds) {
+      const got = await this.doc.send(
+        new GetCommand({
+          TableName: this.tableName,
+          Key: { PK: pk, SK: clusterSk(cid) },
+        }),
+      );
+      if (got.Item?.entity_type !== 'CLUSTER') {
+        continue;
+      }
+      const d = got.Item;
+      const cur = d.currency;
+      existing.set(cid, {
+        cluster_id: String(d.cluster_id),
+        sample_merchants: (d.sample_merchants as string[]) ?? [],
+        total_transactions: Number(d.total_transactions ?? 0),
+        total_amount: Number(d.total_amount ?? 0),
+        suggested_category:
+          d.suggested_category === undefined
+            ? null
+            : (d.suggested_category as string | null),
+        assigned_category:
+          d.assigned_category === undefined
+            ? null
+            : (d.assigned_category as string | null),
+        pending_review: Boolean(d.pending_review),
+        ...(cur != null && cur !== '' ? { currency: String(cur) } : {}),
+      });
+    }
+    return existing;
+  }
+
+  private buildClusterItemsForIngest(
+    pk: string,
+    byCluster: Map<
+      string,
+      { rows: ImportTransactionInput[]; merchants: string[] }
+    >,
+    existing: Map<string, ClusterItem>,
+    fileCurrency?: string,
+  ): Record<string, unknown>[] {
+    const clusterItems: Record<string, unknown>[] = [];
+    for (const [clusterId, g] of byCluster) {
+      const prev = existing.get(clusterId);
+      let total_transactions = g.rows.length;
+      let total_amount = 0;
+      for (const x of g.rows) total_amount += Math.abs(x.amount);
+      if (prev) {
+        total_transactions += prev.total_transactions;
+        total_amount += prev.total_amount;
+      }
+      const mergedMerchants = uniqSampleMerchants(
+        [...(prev?.sample_merchants ?? []), ...g.merchants],
+        8,
+      );
+      const pending_review =
+        g.rows.some((x) => x.status === 'PENDING_REVIEW') ||
+        (prev?.pending_review ?? false);
+
+      const batchSuggestion = bestSuggestedFromRows(g.rows);
+      const suggested_category =
+        batchSuggestion ?? prev?.suggested_category ?? null;
+
+      const normalized = fileCurrency?.trim().toUpperCase();
+      const fromFile =
+        normalized && /^[A-Z]{3}$/.test(normalized) ? normalized : undefined;
+      const clusterCurrency = fromFile ?? prev?.currency;
+
+      const clusterItem: Record<string, unknown> = {
+        PK: pk,
+        SK: clusterSk(clusterId),
+        entity_type: 'CLUSTER',
+        cluster_id: clusterId,
+        sample_merchants: mergedMerchants.slice(0, 3),
+        total_transactions,
+        total_amount,
+        suggested_category,
+        assigned_category: prev?.assigned_category ?? null,
+        pending_review,
+      };
+      if (clusterCurrency) {
+        clusterItem.currency = clusterCurrency;
+      }
+      clusterItems.push(clusterItem);
+    }
+    return clusterItems;
+  }
+
   async getMetrics(userId: string): Promise<MetricsSnapshot> {
     const pk = userPk(userId);
     const [profile, metricsRow] = await Promise.all([
@@ -406,58 +632,40 @@ export class DynamoFinanceRepository implements FinanceRepository {
         : 0;
 
     const rawMetrics = metricsRow.Item;
-    const isMetricsEntity =
+    const isMetricsEntity = Boolean(
       rawMetrics &&
-      typeof rawMetrics === 'object' &&
-      rawMetrics.entity_type === 'METRICS';
-    const stored = isMetricsEntity
-      ? parseStoredDashboardMetrics(rawMetrics)
-      : null;
-    if (stored) {
-      if (metricsSnapshotLooksAllZero(stored)) {
-        const txns = await this.listTransactions(userId);
-        if (txns.length > 0) {
-          const live = computeDashboardMetrics(txns, Date.now());
-          if (!metricsSnapshotLooksAllZero(live)) {
-            dbLog('info', 'metrics.snapshot.healed_stale_zero', {
-              userIdLen: userId.length,
-            });
-            await this.putDashboardMetricsItem(userId, live, txns.length);
-          }
-          return {
-            ...live,
-            net_worth,
-          };
+        typeof rawMetrics === 'object' &&
+        (rawMetrics as { entity_type?: string }).entity_type === 'METRICS',
+    );
+    let stored: DashboardMetricsStored | null = null;
+    if (isMetricsEntity) {
+      try {
+        stored = parseStoredDashboardMetrics(rawMetrics);
+      } catch (e) {
+        if (e instanceof StoredDashboardMetricsParseError) {
+          dbLog('error', 'metrics.snapshot.stored_parse_failed', {
+            userIdLen: userId.length,
+            path: e.path,
+            message: e.message,
+          });
+        } else {
+          throw e;
         }
       }
-
-      const raw = rawMetrics as Record<string, unknown>;
-      dbLog('info', 'metrics.snapshot.read', {
-        source: 'METRICS_ITEM',
-        userIdLen: userId.length,
-        metricsUpdatedAt: raw.metrics_updated_at ?? null,
-        monthly_cashflow: stored.monthly_cashflow,
-        cashflowHistory: stored.cashflow_history.map((h) => ({
-          label: h.label,
-          net: h.income - h.expenses,
-        })),
-        spendingTop5: stored.spending_by_category.slice(0, 5),
+    }
+    if (stored) {
+      return this.buildMetricsSnapshotFromStored(
+        userId,
+        rawMetrics,
+        stored,
         net_worth,
-      });
-      return {
-        ...stored,
-        net_worth,
-      };
+      );
     }
 
-    const fallbackReason =
-      rawMetrics == null
-        ? 'metrics_item_missing'
-        : typeof rawMetrics !== 'object'
-          ? 'metrics_item_not_object'
-          : !isMetricsEntity
-            ? 'wrong_entity_type'
-            : 'stored_payload_parse_failed';
+    const fallbackReason = metricsItemFallbackReason(
+      rawMetrics,
+      isMetricsEntity,
+    );
     dbLog('warn', 'metrics.snapshot.fallback_compute', {
       userIdLen: userId.length,
       reason: fallbackReason,
@@ -486,6 +694,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
     body: DashboardMetricsStored,
     txnCount: number,
   ): Promise<void> {
+    const validated = parseStoredDashboardMetrics(body);
     const pk = userPk(userId);
     const updatedAt = Date.now();
     const item: Record<string, unknown> = {
@@ -494,13 +703,14 @@ export class DynamoFinanceRepository implements FinanceRepository {
       entity_type: 'METRICS',
       user_id: userId,
       metrics_updated_at: updatedAt,
-      monthly_cashflow: body.monthly_cashflow,
-      spending_by_category: body.spending_by_category,
-      cashflow_history: body.cashflow_history,
-      cashflow_period_label: body.cashflow_period_label,
+      transaction_count: validated.transaction_count,
+      monthly_cashflow: validated.monthly_cashflow,
+      spending_by_category: validated.spending_by_category,
+      cashflow_history: validated.cashflow_history,
+      cashflow_period_label: validated.cashflow_period_label,
     };
-    if (body.net_worth_change_pct !== undefined) {
-      item.net_worth_change_pct = body.net_worth_change_pct;
+    if (validated.net_worth_change_pct !== undefined) {
+      item.net_worth_change_pct = validated.net_worth_change_pct;
     }
     await this.doc.send(
       new PutCommand({
@@ -513,7 +723,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
       userIdLen: userId.length,
       txnCount,
       metrics_updated_at: updatedAt,
-      monthly_cashflow: body.monthly_cashflow,
+      monthly_cashflow: validated.monthly_cashflow,
     });
   }
 
@@ -642,42 +852,9 @@ export class DynamoFinanceRepository implements FinanceRepository {
     for (const r of rows) {
       if (r.known_merchant) knownMerchants += 1;
       else unknownMerchants += 1;
-
-      const gsi1pk = clusterTxnGsi1Pk(r.user_id, r.cluster_id);
-      const gsi1sk = clusterTxnGsi1Sk(r.id);
-      const item: Record<string, unknown> = {
-        PK: pk,
-        SK: txnSk(r.id),
-        GSI1PK: gsi1pk,
-        GSI1SK: gsi1sk,
-        entity_type: 'TRANSACTION',
-        user_id: r.user_id,
-        id: r.id,
-        date: r.date,
-        raw_merchant: r.raw_merchant,
-        cleaned_merchant: r.cleaned_merchant,
-        amount: r.amount,
-        cluster_id: r.cluster_id,
-        category: r.category,
-        status: r.status,
-        is_recurring: r.is_recurring,
-        transaction_file_id: transactionFileId,
-        GSI2PK: fileTxnGsi2Pk(userId, transactionFileId),
-        GSI2SK: fileTxnGsi2Sk(r.id),
-      };
-      if (r.merchant_embedding?.length) {
-        item.merchant_embedding = r.merchant_embedding;
-      }
-      if (r.suggested_category !== undefined) {
-        item.suggested_category = r.suggested_category;
-      }
-      if (r.category_confidence !== undefined) {
-        item.category_confidence = r.category_confidence;
-      }
-      if (r.match_type !== undefined) {
-        item.match_type = r.match_type;
-      }
-      txnItems.push(item);
+      txnItems.push(
+        importTransactionToDynamoItem(r, pk, userId, transactionFileId),
+      );
     }
 
     const byCluster = new Map<
@@ -694,80 +871,16 @@ export class DynamoFinanceRepository implements FinanceRepository {
       g.merchants.push(r.raw_merchant);
     }
 
-    const clusterIds = [...byCluster.keys()];
-    const existing = new Map<string, ClusterItem>();
-    for (const cid of clusterIds) {
-      const got = await this.doc.send(
-        new GetCommand({
-          TableName: this.tableName,
-          Key: { PK: pk, SK: clusterSk(cid) },
-        }),
-      );
-      if (got.Item?.entity_type === 'CLUSTER') {
-        const cur = got.Item.currency;
-        existing.set(cid, {
-          cluster_id: String(got.Item.cluster_id),
-          sample_merchants: (got.Item.sample_merchants as string[]) ?? [],
-          total_transactions: Number(got.Item.total_transactions ?? 0),
-          total_amount: Number(got.Item.total_amount ?? 0),
-          suggested_category:
-            got.Item.suggested_category === undefined
-              ? null
-              : (got.Item.suggested_category as string | null),
-          assigned_category:
-            got.Item.assigned_category === undefined
-              ? null
-              : (got.Item.assigned_category as string | null),
-          pending_review: Boolean(got.Item.pending_review),
-          ...(cur != null && cur !== '' ? { currency: String(cur) } : {}),
-        });
-      }
-    }
-
-    const clusterItems: Record<string, unknown>[] = [];
-    for (const [clusterId, g] of byCluster) {
-      const prev = existing.get(clusterId);
-      let total_transactions = g.rows.length;
-      let total_amount = 0;
-      for (const x of g.rows) total_amount += Math.abs(x.amount);
-      if (prev) {
-        total_transactions += prev.total_transactions;
-        total_amount += prev.total_amount;
-      }
-      const mergedMerchants = uniqSampleMerchants(
-        [...(prev?.sample_merchants ?? []), ...g.merchants],
-        8,
-      );
-      const pending_review =
-        g.rows.some((x) => x.status === 'PENDING_REVIEW') ||
-        (prev?.pending_review ?? false);
-
-      const batchSuggestion = bestSuggestedFromRows(g.rows);
-      const suggested_category =
-        batchSuggestion ?? prev?.suggested_category ?? null;
-
-      const normalized = fileCurrency?.trim().toUpperCase();
-      const fromFile =
-        normalized && /^[A-Z]{3}$/.test(normalized) ? normalized : undefined;
-      const clusterCurrency = fromFile ?? prev?.currency;
-
-      const clusterItem: Record<string, unknown> = {
-        PK: pk,
-        SK: clusterSk(clusterId),
-        entity_type: 'CLUSTER',
-        cluster_id: clusterId,
-        sample_merchants: mergedMerchants.slice(0, 3),
-        total_transactions,
-        total_amount,
-        suggested_category,
-        assigned_category: prev?.assigned_category ?? null,
-        pending_review,
-      };
-      if (clusterCurrency) {
-        clusterItem.currency = clusterCurrency;
-      }
-      clusterItems.push(clusterItem);
-    }
+    const existing = await this.fetchExistingClustersForIngest(
+      pk,
+      [...byCluster.keys()],
+    );
+    const clusterItems = this.buildClusterItemsForIngest(
+      pk,
+      byCluster,
+      existing,
+      fileCurrency,
+    );
 
     await batchWriteAll(this.doc, this.tableName, [...txnItems, ...clusterItems]);
 
@@ -843,20 +956,18 @@ export class DynamoFinanceRepository implements FinanceRepository {
       for (const item of res.Items ?? []) {
         if (item.entity_type !== 'TRANSACTION_FILE') continue;
         const row = item as Record<string, unknown>;
-        const fallbackName = String(row.name ?? 'import');
+        const fallbackName = wireString(row.name, 'import');
         const source = parseSourceFromItem(row, fallbackName);
         const result = parseTransactionFileResult(
           row.result,
           row.ingest,
           row.row_count,
         );
+        const accountId = wireString(row.account_id, '');
         const rec: TransactionFileRecord = {
-          user_id: String(row.user_id ?? userId),
-          id: String(row.id),
-          account_id:
-            row.account_id != null && String(row.account_id).length > 0
-              ? String(row.account_id)
-              : '',
+          user_id: wireString(row.user_id, userId),
+          id: wireString(row.id, ''),
+          account_id: accountId.length > 0 ? accountId : '',
           source,
           format: parseFormatFromItem(row),
           timing: parseTimingFromItem(row),
@@ -891,9 +1002,9 @@ export class DynamoFinanceRepository implements FinanceRepository {
         if (item.entity_type !== 'ACCOUNT') continue;
         const row = item as Record<string, unknown>;
         out.push({
-          user_id: String(row.user_id ?? userId),
-          id: String(row.id),
-          name: String(row.name ?? ''),
+          user_id: wireString(row.user_id, userId),
+          id: wireString(row.id, ''),
+          name: wireString(row.name, ''),
           created_at: Number(row.created_at ?? 0),
         });
       }
@@ -918,9 +1029,9 @@ export class DynamoFinanceRepository implements FinanceRepository {
     if (got.Item?.entity_type !== 'ACCOUNT') return null;
     const row = got.Item as Record<string, unknown>;
     return {
-      user_id: String(row.user_id ?? userId),
-      id: String(row.id),
-      name: String(row.name ?? ''),
+      user_id: wireString(row.user_id, userId),
+      id: wireString(row.id, ''),
+      name: wireString(row.name, ''),
       created_at: Number(row.created_at ?? 0),
     };
   }

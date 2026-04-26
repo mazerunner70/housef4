@@ -10,6 +10,7 @@ export async function getMetricsPayload(userId: string) {
     log.info('metrics.loaded', {
       durationMs: Date.now() - t0,
       userIdLength: userId.length,
+      transaction_count: payload.transaction_count,
       monthly_income: payload.monthly_cashflow.income,
       monthly_expenses: payload.monthly_cashflow.expenses,
       monthly_net: payload.monthly_cashflow.net,

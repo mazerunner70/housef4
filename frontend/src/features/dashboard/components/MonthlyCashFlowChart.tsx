@@ -102,6 +102,15 @@ export function MonthlyCashFlowChart({
     ]
   }, [metrics, fallbackMonthStart])
 
+  /** Recharts can leave stale paths when `data` updates; remount when the series changes. */
+  const lineChartKey = useMemo(
+    () =>
+      (metrics.cashflow_history ?? [])
+        .map((h) => `${h.label}\t${h.income}\t${h.expenses}`)
+        .join('|') || `fallback:${metrics.monthly_cashflow.net}`,
+    [metrics.cashflow_history, metrics.monthly_cashflow.net],
+  )
+
   const yMax = useMemo(() => {
     let m = 0
     for (const row of data) {
@@ -154,6 +163,7 @@ export function MonthlyCashFlowChart({
       >
         {chartReady ? (
           <LineChart
+            key={lineChartKey}
             width={width}
             height={height}
             data={data}
