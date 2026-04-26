@@ -4,7 +4,7 @@ import { getFinanceRepository } from '@housef4/db';
 
 import { HttpError } from '../httpError';
 import { enrichImportRows } from '../services/import/enrichImportRows';
-import { extractMultipartFile } from '../services/import/multipartFile';
+import { extractImportMultipart } from '../services/import/multipartFile';
 import { parseImportBuffer } from '../services/import/parseImportBuffer';
 import { getLog } from '../requestLogContext';
 import type { InternalRequest } from '../types';
@@ -19,11 +19,31 @@ export async function postImportPayload(
     throw new HttpError(400, 'Request body is empty');
   }
 
-  const extracted = await extractMultipartFile(req.headers, buf);
-  if (!extracted?.buffer.length) {
+  const extracted = await extractImportMultipart(req.headers, buf);
+  if (!extracted?.file.buffer.length) {
     throw new HttpError(
       400,
       'Expected multipart/form-data with a non-empty part named "file"',
+    );
+  }
+
+  const repo = getFinanceRepository();
+  const newName = extracted.newAccountName.trim();
+  const existingId = extracted.accountId.trim();
+  let accountId: string;
+  if (newName.length > 0) {
+    const created = await repo.createAccount(userId, newName);
+    accountId = created.id;
+  } else if (existingId.length > 0) {
+    const acc = await repo.getAccount(userId, existingId);
+    if (!acc) {
+      throw new HttpError(400, 'Unknown account_id');
+    }
+    accountId = acc.id;
+  } else {
+    throw new HttpError(
+      400,
+      'Provide new_account_name or a valid account_id for this import',
     );
   }
 
@@ -33,13 +53,12 @@ export async function postImportPayload(
     format: detectedFormat,
     currency: importCurrency,
   } = parseImportBuffer(
-    extracted.buffer,
-    extracted.filename,
-    extracted.mimeType,
+    extracted.file.buffer,
+    extracted.file.filename,
+    extracted.file.mimeType,
   );
 
   const importFileId = randomUUID();
-  const repo = getFinanceRepository();
   const enriched = await enrichImportRows(userId, rows, repo);
   await repo.patchExistingTransactionsAfterImport(
     userId,
@@ -53,7 +72,7 @@ export async function postImportPayload(
   );
   await repo.retireClusterAggregates(userId, enriched.retiredClusterIds);
 
-  const displayName = extracted.filename?.trim() || 'import';
+  const displayName = extracted.file.filename?.trim() || 'import';
   const importCompletedAt = Date.now();
   const ingest = {
     ...result,
@@ -62,10 +81,11 @@ export async function postImportPayload(
   };
   await repo.recordTransactionFile(userId, {
     id: importFileId,
+    account_id: accountId,
     source: {
       name: displayName,
-      size_bytes: extracted.buffer.length,
-      ...(extracted.mimeType && { content_type: extracted.mimeType }),
+      size_bytes: extracted.file.buffer.length,
+      ...(extracted.file.mimeType && { content_type: extracted.file.mimeType }),
     },
     format: {
       ...(detectedFormat === 'unknown' ? {} : { source_format: detectedFormat }),
@@ -81,7 +101,7 @@ export async function postImportPayload(
   log.info('import.complete', {
     rowCount: result.rowCount,
     format: detectedFormat,
-    fileBytes: extracted.buffer.length,
+    fileBytes: extracted.file.buffer.length,
     existingTransactionsUpdated: enriched.existingPatches.length,
     newClustersTouched: enriched.summary.newClustersTouched,
     retiredClusterCount: enriched.retiredClusterIds.length,

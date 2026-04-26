@@ -1,3 +1,4 @@
+import { getAccountsPayload } from './handlers/accounts';
 import { getHealthPayload } from './handlers/health';
 import { postImportPayload } from './handlers/imports';
 import { getMePayload } from './handlers/me';
@@ -36,6 +37,16 @@ function isMetricsPath(normalizedPath: string): boolean {
   if (apiIdx < 0) return false;
   return (
     segments[apiIdx + 1] === 'metrics' && apiIdx + 2 === segments.length
+  );
+}
+
+function isAccountsPath(normalizedPath: string): boolean {
+  const pathname = normalizedPath.split('?')[0] ?? '';
+  const segments = pathname.split('/').filter((s) => s.length > 0);
+  const apiIdx = segments.indexOf('api');
+  if (apiIdx < 0) return false;
+  return (
+    segments[apiIdx + 1] === 'accounts' && apiIdx + 2 === segments.length
   );
 }
 
@@ -103,6 +114,12 @@ export async function dispatch(req: InternalRequest): Promise<InternalResponse> 
       if (method === 'GET' && isMetricsPath(path)) {
         const body = await getMetricsPayload(uid);
         log.info('dispatch.response', { route: 'metrics', statusCode: 200 });
+        return jsonResponse(200, body);
+      }
+
+      if (method === 'GET' && isAccountsPath(path)) {
+        const body = await getAccountsPayload(uid);
+        log.info('dispatch.response', { route: 'accounts', statusCode: 200 });
         return jsonResponse(200, body);
       }
 

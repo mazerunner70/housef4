@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 
@@ -6,12 +6,37 @@ import { Button } from '@/components/ui/Button'
 import { ImportDropzone } from '@/features/import/components/ImportDropzone'
 import { ImportSummaryCard } from '@/features/import/components/ImportSummaryCard'
 import { UploadProgressIndicator } from '@/features/import/components/UploadProgressIndicator'
-import { postImport } from '@/api/client'
+import { postImport, type PostImportAccount } from '@/api/client'
+import { useAccounts } from '@/hooks/useAccounts'
 import { useTransactionFiles } from '@/hooks/useTransactionFiles'
 import type { ImportParseResult } from '@/lib/types'
 import { useAppStore } from '@/store/appStore'
 
+const NEW_ACCOUNT = '__new__'
+
 type Phase = 'idle' | 'parsing' | 'done'
+
+function importSatisfied(
+  accountLoadError: boolean,
+  choice: string,
+  newName: string,
+): boolean {
+  const t = newName.trim()
+  if (accountLoadError) return t.length > 0
+  if (choice === NEW_ACCOUNT) return t.length > 0
+  return choice.length > 0
+}
+
+function importAccountParam(
+  accountLoadError: boolean,
+  choice: string,
+  newName: string,
+): PostImportAccount {
+  if (accountLoadError || choice === NEW_ACCOUNT) {
+    return { newAccountName: newName.trim() }
+  }
+  return { accountId: choice }
+}
 
 export function DataImportPage() {
   const navigate = useNavigate()
@@ -23,14 +48,36 @@ export function DataImportPage() {
   const [summary, setSummary] = useState<ImportParseResult | null>(null)
   const [fileLabel, setFileLabel] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [accountChoice, setAccountChoice] = useState('')
+  const [newAccountName, setNewAccountName] = useState('')
   const fileHistory = useTransactionFiles()
+  const accountsQuery = useAccounts()
+
+  const accountNameById = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const a of accountsQuery.data?.accounts ?? []) {
+      m.set(a.id, a.name)
+    }
+    return m
+  }, [accountsQuery.data?.accounts])
+
+  const accountLoadError = accountsQuery.isError
+  const canImport = importSatisfied(
+    accountLoadError,
+    accountChoice,
+    newAccountName,
+  )
 
   const handleFile = async (file: File) => {
+    if (!canImport) return
     setError(null)
     setPhase('parsing')
     setFileLabel(file.name)
     try {
-      const result = await postImport(file)
+      const result = await postImport(
+        file,
+        importAccountParam(accountLoadError, accountChoice, newAccountName),
+      )
       setSummary(result)
       setLastImportSummary(result)
       setHasUploadedData(true)
@@ -38,6 +85,7 @@ export function DataImportPage() {
       void queryClient.invalidateQueries({ queryKey: ['transactions'] })
       void queryClient.invalidateQueries({ queryKey: ['review-queue'] })
       void queryClient.invalidateQueries({ queryKey: ['transaction-files'] })
+      void queryClient.invalidateQueries({ queryKey: ['accounts'] })
       setPhase('done')
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Import failed'
@@ -83,7 +131,85 @@ export function DataImportPage() {
       )}
 
       {phase === 'idle' && (
-        <ImportDropzone onFileSelected={(f) => void handleFile(f)} />
+        <div className="space-y-6">
+          <div className="max-w-md space-y-2">
+            <label
+              htmlFor="import-account"
+              className="block text-sm font-medium text-zinc-200"
+            >
+              Account
+            </label>
+            {accountsQuery.isPending && (
+              <p className="text-sm text-zinc-500">Loading accounts…</p>
+            )}
+            {accountsQuery.isError && (
+              <div className="space-y-2">
+                <p className="text-sm text-amber-200/90">
+                  Could not load accounts. Enter a new account name to import, or
+                  refresh the page.
+                </p>
+                <input
+                  id="import-new-account-fallback"
+                  type="text"
+                  value={newAccountName}
+                  onChange={(e) => setNewAccountName(e.target.value)}
+                  placeholder="e.g. Chase Checking"
+                  className="w-full rounded-lg border border-white/[0.12] bg-zinc-900/80 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+                />
+              </div>
+            )}
+            {accountsQuery.isSuccess && (
+              <select
+                id="import-account"
+                className="w-full rounded-lg border border-white/[0.12] bg-zinc-900/80 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+                value={accountChoice}
+                onChange={(e) => {
+                  setAccountChoice(e.target.value)
+                  if (e.target.value !== NEW_ACCOUNT) {
+                    setNewAccountName('')
+                  }
+                }}
+              >
+                <option value="" disabled>
+                  Select an account…
+                </option>
+                {accountsQuery.data.accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+                <option value={NEW_ACCOUNT}>New account…</option>
+              </select>
+            )}
+            {accountChoice === NEW_ACCOUNT && (
+              <div className="pt-1">
+                <label
+                  htmlFor="import-new-account"
+                  className="sr-only"
+                >
+                  New account name
+                </label>
+                <input
+                  id="import-new-account"
+                  type="text"
+                  value={newAccountName}
+                  onChange={(e) => setNewAccountName(e.target.value)}
+                  placeholder="e.g. Chase Checking"
+                  className="w-full rounded-lg border border-white/[0.12] bg-zinc-900/80 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+                />
+              </div>
+            )}
+            <p className="text-xs text-zinc-500">
+              Every import is stored against one account. Pick an existing
+              one or name a new account for this file.
+            </p>
+          </div>
+          <ImportDropzone
+            onFileSelected={(f) => void handleFile(f)}
+            disabled={!canImport}
+            disabledMessage="Choose an account (or a new account name) above before uploading a file."
+          />
+        </div>
       )}
 
       {phase === 'parsing' && (
@@ -144,6 +270,12 @@ export function DataImportPage() {
                     <div className="min-w-0 flex-1 space-y-1">
                       <p className="font-medium text-zinc-200">
                         {f.source.name}
+                      </p>
+                      <p className="text-sm text-zinc-400">
+                        Account:{' '}
+                        {f.account_id
+                          ? (accountNameById.get(f.account_id) ?? f.account_id)
+                          : '—'}
                       </p>
                       <p className="text-sm text-zinc-500">
                         <time

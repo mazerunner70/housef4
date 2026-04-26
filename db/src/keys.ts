@@ -8,6 +8,8 @@ export const TXN_PREFIX = 'TXN#';
 export const CLUSTER_PREFIX = 'CLUSTER#';
 /** User import history entries: `SK` = `FILE#<file_id>`. */
 export const FILE_PREFIX = 'FILE#';
+/** One financial account the user labels (e.g. checking). `SK` = `ACCOUNT#<account_id>`. */
+export const ACCOUNT_PREFIX = 'ACCOUNT#';
 export const PROFILE_SK = 'PROFILE';
 
 export function userPk(userId: string): string {
@@ -24,6 +26,10 @@ export function clusterSk(clusterId: string): string {
 
 export function fileSk(fileId: string): string {
   return `${FILE_PREFIX}${fileId}`;
+}
+
+export function accountSk(accountId: string): string {
+  return `${ACCOUNT_PREFIX}${accountId}`;
 }
 
 /** GSI1: all transactions for a user under one cluster (tag-rule updates). */

@@ -75,6 +75,17 @@ export type TagRuleResponse = {
   updated_transactions: number
 }
 
+/** `GET /api/accounts` — user-labeled financial accounts for imports. */
+export type AccountRow = {
+  id: string
+  name: string
+  created_at: number
+}
+
+export type AccountsResponse = {
+  accounts: AccountRow[]
+}
+
 export type ImportParseResult = {
   rowCount: number
   knownMerchants: number
@@ -119,6 +130,8 @@ export type TransactionFileTiming = {
 export type TransactionFile = {
   user_id: string
   id: string
+  /** Import target account; empty when the file predates accounts. */
+  account_id: string
   source: TransactionFileSource
   format: TransactionFileFormat
   timing: TransactionFileTiming
