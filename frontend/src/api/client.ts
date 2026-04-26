@@ -97,15 +97,22 @@ export async function getMetrics(): Promise<MetricsResponse> {
   return fetchJson<MetricsResponse>('/api/metrics')
 }
 
+export type GetTransactionsOptions = {
+  transactionFileId?: string
+  clusterId?: string
+}
+
 export async function getTransactions(
-  transactionFileId?: string,
+  opts?: GetTransactionsOptions,
 ): Promise<TransactionsResponse> {
-  const fid = transactionFileId?.trim()
-  const q =
-    fid && fid.length > 0
-      ? `?transactionFileId=${encodeURIComponent(fid)}`
-      : ''
-  return fetchJson<TransactionsResponse>(`/api/transactions${q}`)
+  const q = new URLSearchParams()
+  const fid = opts?.transactionFileId?.trim()
+  const cid = opts?.clusterId?.trim()
+  if (fid) q.set('transactionFileId', fid)
+  if (cid) q.set('clusterId', cid)
+  const qs = q.toString()
+  const path = qs.length > 0 ? `/api/transactions?${qs}` : '/api/transactions'
+  return fetchJson<TransactionsResponse>(path)
 }
 
 export async function getTransactionFiles(): Promise<TransactionFilesResponse> {

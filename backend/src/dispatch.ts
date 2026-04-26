@@ -115,7 +115,11 @@ export async function dispatch(req: InternalRequest): Promise<InternalResponse> 
       if (method === 'GET' && matchesApiTail(path, ['transactions'])) {
         const transactionFileId =
           req.query?.transactionFileId?.trim() || undefined;
-        const body = await getTransactionsPayload(uid, { transactionFileId });
+        const clusterId = req.query?.clusterId?.trim() || undefined;
+        const body = await getTransactionsPayload(uid, {
+          transactionFileId,
+          clusterId,
+        });
         log.info('dispatch.response', { route: 'transactions', statusCode: 200 });
         return jsonResponse(200, body);
       }

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/cn'
 import { Card } from '@/components/ui/Card'
 import { CategorySelectDropdown } from '@/features/review-queue/components/CategorySelectDropdown'
+import { ClusterMatchingTransactionsDialog } from '@/features/review-queue/components/ClusterMatchingTransactionsDialog'
 import { ConfirmClusterTagButton } from '@/features/review-queue/components/ConfirmClusterTagButton'
 
 type ClusterReviewRowProps = Readonly<{
@@ -87,6 +88,7 @@ export function ClusterReviewRow({
             id={`${baseId}-category`}
             value={category}
             onChange={setCategory}
+            onOpenChange={setCategoryMenuOpen}
             disabled={isSubmitting}
           />
           <ConfirmClusterTagButton
@@ -96,6 +98,12 @@ export function ClusterReviewRow({
           />
         </div>
       </div>
+      {matchingTxOpen ? (
+        <ClusterMatchingTransactionsDialog
+          clusterId={cluster.cluster_id}
+          onClose={() => setMatchingTxOpen(false)}
+        />
+      ) : null}
     </Card>
   )
 }
