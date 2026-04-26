@@ -1,5 +1,4 @@
 import {
-  useCallback,
   useId,
   useLayoutEffect,
   useMemo,
@@ -11,7 +10,6 @@ import {
   Legend,
   Line,
   LineChart,
-  ReferenceLine,
   Tooltip,
   XAxis,
   YAxis,
@@ -72,7 +70,7 @@ export function MonthlyCashFlowChart({
   className,
 }: MonthlyCashFlowChartProps) {
   const { ref, width, height } = useObservedSize<HTMLDivElement>()
-  const filterSuffix = useId().replace(/:/g, '')
+  const filterSuffix = useId().replaceAll(':', '')
   const glowGreenId = `glow-green-${filterSuffix}`
   const glowBlueId = `glow-blue-${filterSuffix}`
 
@@ -123,46 +121,15 @@ export function MonthlyCashFlowChart({
   const { chart } = theme
   const chartReady = width > 0 && height > 0
 
-  const highlightMonthLabel =
-    selectedMonthLabel ?? data.at(-1)?.name ?? null
+  /** Tooltip `defaultIndex` + category pane when nothing explicitly selected */
+  const defaultMonthLabel = data.at(-1)?.name ?? null
 
-  const renderInflowDot = useCallback(
-    (props: { cx?: number; cy?: number; payload?: CashflowChartRow }) => {
-      const { cx, cy, payload } = props
-      const p = payload
-      if (cx == null || cy == null || !p?.name) return null
-      const isSel =
-        highlightMonthLabel != null && p.name === highlightMonthLabel
-      return (
-        <g className="cursor-pointer">
-          {isSel ? (
-            <circle
-              cx={cx}
-              cy={cy}
-              r={14}
-              fill="rgba(250, 204, 21, 0.12)"
-              stroke="rgba(250, 204, 21, 0.55)"
-              strokeWidth={1}
-              pointerEvents="none"
-            />
-          ) : null}
-          <circle
-            cx={cx}
-            cy={cy}
-            r={isSel ? 6 : 4}
-            fill={chart.inflow}
-            stroke={isSel ? '#fbbf24' : 'rgba(255,255,255,0.35)'}
-            strokeWidth={isSel ? 2.5 : 1}
-            onClick={(e) => {
-              e.stopPropagation()
-              onSelectCashflowMonth(p.name)
-            }}
-          />
-        </g>
-      )
-    },
-    [chart.inflow, highlightMonthLabel, onSelectCashflowMonth],
-  )
+  const tooltipDefaultIndex = useMemo(() => {
+    const label = selectedMonthLabel ?? defaultMonthLabel
+    if (!label) return undefined
+    const i = data.findIndex((d) => d.name === label)
+    return i >= 0 ? i : undefined
+  }, [data, selectedMonthLabel, defaultMonthLabel])
 
   return (
     <section
@@ -177,12 +144,12 @@ export function MonthlyCashFlowChart({
         </h2>
         <p className="mt-1 text-sm text-zinc-500">{period}</p>
         <p className="mt-1 text-xs text-zinc-600">
-          Click a month on the chart to show spending by category.
+          Click the chart on a month to show spending by category.
         </p>
       </header>
       <div
         ref={ref}
-        className="min-h-[280px] w-full min-w-0 flex-1"
+        className="min-h-[280px] w-full min-w-0 flex-1 [&_.recharts-tooltip-cursor]:pointer-events-none"
         aria-busy={!chartReady}
       >
         {chartReady ? (
@@ -191,6 +158,11 @@ export function MonthlyCashFlowChart({
             height={height}
             data={data}
             margin={{ top: 12, right: 12, bottom: 4, left: 0 }}
+            onClick={(state) => {
+              const label = state.activeLabel
+              if (label === undefined || label === null || label === '') return
+              onSelectCashflowMonth(String(label))
+            }}
           >
             <defs>
               <filter
@@ -241,6 +213,14 @@ export function MonthlyCashFlowChart({
               }
             />
             <Tooltip
+              shared
+              trigger="click"
+              defaultIndex={tooltipDefaultIndex}
+              cursor={{
+                stroke: 'rgba(255, 255, 255, 0.35)',
+                strokeWidth: 1,
+                fill: 'rgba(255, 255, 255, 0.06)',
+              }}
               formatter={(value, name) => {
                 const n = typeof value === 'number' ? value : Number(value)
                 const label =
@@ -275,8 +255,13 @@ export function MonthlyCashFlowChart({
               stroke={chart.inflow}
               strokeWidth={3}
               filter={`url(#${glowGreenId})`}
-              dot={renderInflowDot}
-              activeDot={false}
+              dot={{ r: 4, fill: chart.inflow, strokeWidth: 0 }}
+              activeDot={{
+                r: 6,
+                stroke: chart.inflow,
+                strokeWidth: 2,
+                fill: chart.dotFill,
+              }}
             />
             <Line
               type="monotone"
@@ -285,7 +270,7 @@ export function MonthlyCashFlowChart({
               stroke={chart.outflow}
               strokeWidth={3}
               filter={`url(#${glowBlueId})`}
-              dot={false}
+              dot={{ r: 4, fill: chart.outflow, strokeWidth: 0 }}
               activeDot={{
                 r: 6,
                 stroke: chart.outflow,
@@ -293,15 +278,6 @@ export function MonthlyCashFlowChart({
                 fill: chart.dotFill,
               }}
             />
-            {highlightMonthLabel != null &&
-            data.some((d) => d.name === highlightMonthLabel) ? (
-              <ReferenceLine
-                x={highlightMonthLabel}
-                stroke="rgba(250, 204, 21, 0.55)"
-                strokeDasharray="5 4"
-                strokeWidth={1.5}
-              />
-            ) : null}
           </LineChart>
         ) : null}
       </div>
