@@ -81,11 +81,28 @@ export function DataImportPage() {
       setSummary(result)
       setLastImportSummary(result)
       setHasUploadedData(true)
-      void queryClient.invalidateQueries({ queryKey: ['metrics'] })
-      void queryClient.invalidateQueries({ queryKey: ['transactions'] })
-      void queryClient.invalidateQueries({ queryKey: ['review-queue'] })
-      void queryClient.invalidateQueries({ queryKey: ['transaction-files'] })
-      void queryClient.invalidateQueries({ queryKey: ['accounts'] })
+      // `refetchType: 'all'` so inactive queries (e.g. dashboard metrics) refetch
+      // while on this route — the default only refetches queries with active observers.
+      void queryClient.invalidateQueries({
+        queryKey: ['metrics'],
+        refetchType: 'all',
+      })
+      void queryClient.invalidateQueries({
+        queryKey: ['transactions'],
+        refetchType: 'all',
+      })
+      void queryClient.invalidateQueries({
+        queryKey: ['review-queue'],
+        refetchType: 'all',
+      })
+      void queryClient.invalidateQueries({
+        queryKey: ['transaction-files'],
+        refetchType: 'all',
+      })
+      void queryClient.invalidateQueries({
+        queryKey: ['accounts'],
+        refetchType: 'all',
+      })
       setPhase('done')
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Import failed'

@@ -1,5 +1,13 @@
 import { dbLog } from './structuredLog';
 import type { TransactionRecord } from './types';
+import type { DashboardMetricsStored } from './dashboardMetricsSchema';
+
+export {
+  dashboardMetricsStoredSchema,
+  parseStoredDashboardMetrics,
+  StoredDashboardMetricsParseError,
+  type DashboardMetricsStored,
+} from './dashboardMetricsSchema';
 
 function utcMonthStartMs(year: number, month0: number): number {
   return Date.UTC(year, month0, 1, 0, 0, 0, 0);
@@ -28,32 +36,6 @@ function monthLabelUtc(year: number, month0: number): string {
   });
 }
 
-/** Parses labels produced by `monthLabelUtc` (en-US, short month, UTC). */
-function monthStartMsFromEnUsShortUtcLabel(label: string): number {
-  const t = label.trim();
-  const m = /^([A-Za-z]{3})\s+(\d{4})$/.exec(t);
-  if (!m) return NaN;
-  const short = m[1].slice(0, 1).toUpperCase() + m[1].slice(1).toLowerCase();
-  const monthIx = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ].indexOf(short);
-  if (monthIx < 0) return NaN;
-  const year = Number(m[2]);
-  if (!Number.isFinite(year)) return NaN;
-  return Date.UTC(year, monthIx, 1, 0, 0, 0, 0);
-}
-
 function utcYearMonthFromMs(ms: number): [number, number] {
   const d = new Date(ms);
   return [d.getUTCFullYear(), d.getUTCMonth()];
@@ -66,7 +48,6 @@ function eachUtcMonthInclusive(
   endY: number,
   endM: number,
 ): [number, number][] {
-  const startIdx = startY * 12 + startM;
   const endIdx = endY * 12 + endM;
   const out: [number, number][] = [];
   let y = startY;
@@ -100,20 +81,6 @@ function aggregateForRange(
   return { income, expenses, categoryTotals };
 }
 
-/** Serializable metrics persisted on the `METRICS` DynamoDB item (excludes live `net_worth`). */
-export type DashboardMetricsStored = {
-  monthly_cashflow: { income: number; expenses: number; net: number };
-  spending_by_category: { category: string; amount: number }[];
-  cashflow_history: {
-    label: string;
-    month_start_ms: number;
-    income: number;
-    expenses: number;
-  }[];
-  cashflow_period_label: string;
-  net_worth_change_pct?: number;
-};
-
 /** True when every month in the snapshot has no inflow/outflow (e.g. stale cache from pre-anchor bug). */
 export function metricsSnapshotLooksAllZero(s: DashboardMetricsStored): boolean {
   const m = s.monthly_cashflow;
@@ -122,6 +89,27 @@ export function metricsSnapshotLooksAllZero(s: DashboardMetricsStored): boolean 
     if (h.income !== 0 || h.expenses !== 0) return false;
   }
   return true;
+}
+
+type CashflowRow = {
+  label: string;
+  month_start_ms: number;
+  income: number;
+  expenses: number;
+};
+
+function netWorthChangePctFromHistory(
+  cashflow_history: CashflowRow[],
+): number | undefined {
+  if (cashflow_history.length < 2) return undefined;
+  const prev = cashflow_history.at(-2);
+  const cur = cashflow_history.at(-1);
+  if (!prev || !cur) return undefined;
+  const prevNet = prev.income - prev.expenses;
+  const curNet = cur.income - cur.expenses;
+  if (prevNet === 0 && curNet === 0) return undefined;
+  const denom = Math.max(Math.abs(prevNet), 1e-6);
+  return (curNet - prevNet) / denom;
 }
 
 function scanTransactionsForDiagnostics(txns: TransactionRecord[]): {
@@ -154,8 +142,8 @@ function scanTransactionsForDiagnostics(txns: TransactionRecord[]): {
     }
   }
   if (txns.length === 0) {
-    txnMinDate = NaN;
-    txnMaxDate = NaN;
+    txnMinDate = Number.NaN;
+    txnMaxDate = Number.NaN;
   }
   return {
     txnMinDate,
@@ -229,27 +217,16 @@ export function computeDashboardMetrics(
   const net = curIncome - curExpenses;
 
   const firstLabel = cashflow_history[0]?.label ?? '';
-  const lastLabel = cashflow_history[cashflow_history.length - 1]?.label ?? '';
+  const lastLabel = cashflow_history.at(-1)?.label ?? '';
   const cashflow_period_label =
     firstLabel && lastLabel && firstLabel !== lastLabel
       ? `${firstLabel} – ${lastLabel}`
       : firstLabel || 'Cash flow';
 
-  let net_worth_change_pct: number | undefined;
-  if (cashflow_history.length >= 2) {
-    const prev = cashflow_history.at(-2);
-    const cur = cashflow_history.at(-1);
-    if (prev && cur) {
-      const prevNet = prev.income - prev.expenses;
-      const curNet = cur.income - cur.expenses;
-      if (prevNet !== 0 || curNet !== 0) {
-        const denom = Math.max(Math.abs(prevNet), 1e-6);
-        net_worth_change_pct = (curNet - prevNet) / denom;
-      }
-    }
-  }
+  const net_worth_change_pct = netWorthChangePctFromHistory(cashflow_history);
 
   const out: DashboardMetricsStored = {
+    transaction_count: txns.length,
     monthly_cashflow: {
       income: curIncome,
       expenses: curExpenses,
@@ -314,74 +291,5 @@ export function computeDashboardMetrics(
     net_worth_change_pct: out.net_worth_change_pct ?? null,
   });
 
-  return out;
-}
-
-export function parseStoredDashboardMetrics(
-  raw: unknown,
-): DashboardMetricsStored | null {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const o = raw as Record<string, unknown>;
-  const mc = o.monthly_cashflow;
-  if (!mc || typeof mc !== 'object' || Array.isArray(mc)) return null;
-  const mco = mc as Record<string, unknown>;
-  const income = Number(mco.income);
-  const expenses = Number(mco.expenses);
-  const net = Number(mco.net);
-  if (!Number.isFinite(income) || !Number.isFinite(expenses) || !Number.isFinite(net)) {
-    return null;
-  }
-  const sbc = o.spending_by_category;
-  if (!Array.isArray(sbc)) return null;
-  const spending_by_category: { category: string; amount: number }[] = [];
-  for (const row of sbc) {
-    if (!row || typeof row !== 'object') return null;
-    const r = row as Record<string, unknown>;
-    const amt = Number(r.amount);
-    if (!Number.isFinite(amt)) return null;
-    spending_by_category.push({
-      category: String(r.category ?? ''),
-      amount: amt,
-    });
-  }
-  const hist = o.cashflow_history;
-  if (!Array.isArray(hist) || hist.length < 1) return null;
-  const cashflow_history: {
-    label: string;
-    month_start_ms: number;
-    income: number;
-    expenses: number;
-  }[] = [];
-  for (const row of hist) {
-    if (!row || typeof row !== 'object') return null;
-    const r = row as Record<string, unknown>;
-    const inc = Number(r.income);
-    const exp = Number(r.expenses);
-    if (!Number.isFinite(inc) || !Number.isFinite(exp)) return null;
-    const label = String(r.label ?? '');
-    const msm = Number(r.month_start_ms);
-    const month_start_ms = Number.isFinite(msm)
-      ? msm
-      : monthStartMsFromEnUsShortUtcLabel(label);
-    if (!Number.isFinite(month_start_ms)) return null;
-    cashflow_history.push({
-      label,
-      month_start_ms,
-      income: inc,
-      expenses: exp,
-    });
-  }
-  if (typeof o.cashflow_period_label !== 'string') return null;
-  const cashflow_period_label = o.cashflow_period_label;
-  const out: DashboardMetricsStored = {
-    monthly_cashflow: { income, expenses, net },
-    spending_by_category,
-    cashflow_history,
-    cashflow_period_label,
-  };
-  if (o.net_worth_change_pct !== undefined && o.net_worth_change_pct !== null) {
-    const p = Number(o.net_worth_change_pct);
-    if (Number.isFinite(p)) out.net_worth_change_pct = p;
-  }
   return out;
 }
