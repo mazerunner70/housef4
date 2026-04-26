@@ -8,7 +8,6 @@ import { ImportSummaryCard } from '@/features/import/components/ImportSummaryCar
 import { UploadProgressIndicator } from '@/features/import/components/UploadProgressIndicator'
 import { postImport } from '@/api/client'
 import { useTransactionFiles } from '@/hooks/useTransactionFiles'
-import { syncLastImportTransactionIds } from '@/lib/lastImportTransactionIds'
 import type { ImportParseResult } from '@/lib/types'
 import { useAppStore } from '@/store/appStore'
 
@@ -19,6 +18,7 @@ export function DataImportPage() {
   const queryClient = useQueryClient()
   const setHasUploadedData = useAppStore((s) => s.setHasUploadedData)
   const setLastImportSummary = useAppStore((s) => s.setLastImportSummary)
+  const lastImportSummary = useAppStore((s) => s.lastImportSummary)
   const [phase, setPhase] = useState<Phase>('idle')
   const [summary, setSummary] = useState<ImportParseResult | null>(null)
   const [fileLabel, setFileLabel] = useState('')
@@ -33,7 +33,6 @@ export function DataImportPage() {
       const result = await postImport(file)
       setSummary(result)
       setLastImportSummary(result)
-      syncLastImportTransactionIds(result.transactionIds)
       setHasUploadedData(true)
       void queryClient.invalidateQueries({ queryKey: ['metrics'] })
       void queryClient.invalidateQueries({ queryKey: ['transactions'] })
@@ -64,7 +63,14 @@ export function DataImportPage() {
           type="button"
           variant="secondary"
           className="shrink-0 self-start"
-          onClick={() => navigate('/import/review-transactions')}
+          disabled={!lastImportSummary?.importFileId}
+          onClick={() => {
+            const id = lastImportSummary?.importFileId
+            if (!id) return
+            navigate(
+              `/import/review-transactions?transactionFileId=${encodeURIComponent(id)}`,
+            )
+          }}
         >
           Review last import
         </Button>
@@ -97,9 +103,9 @@ export function DataImportPage() {
           onContinueDashboard={() => navigate('/dashboard')}
           onReviewUnknown={() => navigate('/review-queue')}
           onReviewTransactions={() =>
-            navigate('/import/review-transactions', {
-              state: { importSummary: summary },
-            })
+            navigate(
+              `/import/review-transactions?transactionFileId=${encodeURIComponent(summary.importFileId)}`,
+            )
           }
         />
       )}
@@ -127,48 +133,76 @@ export function DataImportPage() {
         )}
         {fileHistory.isSuccess && fileHistory.data.transaction_files.length > 0 && (
           <ul className="mt-3 divide-y divide-white/[0.06]">
-            {fileHistory.data.transaction_files.map((f) => (
-              <li
-                key={f.id}
-                className="flex flex-col gap-1 py-3 first:pt-0 sm:flex-row sm:items-baseline sm:justify-between"
-              >
-                <span className="min-w-0 font-medium text-zinc-200">
-                  {f.source.name}
-                </span>
-                <span className="shrink-0 text-sm text-zinc-500">
-                  <time
-                    dateTime={new Date(f.timing.completed_at).toISOString()}
-                  >
-                    {new Date(f.timing.completed_at).toLocaleString()}
-                  </time>
-                  <span className="ml-2 tabular-nums text-zinc-600">
-                    · {f.result.rowCount}{' '}
-                    {f.result.rowCount === 1 ? 'row' : 'rows'}
-                  </span>
-                  {f.format.source_format && (
-                    <span className="ml-1 uppercase">
-                      · {f.format.source_format}
-                    </span>
-                  )}
-                  <span className="ml-2 tabular-nums text-zinc-600">
-                    · {f.source.size_bytes.toLocaleString()} bytes
-                  </span>
-                </span>
-                <p className="mt-1 w-full text-xs text-zinc-500">
-                  {f.result.knownMerchants} known merchants,{' '}
-                  {f.result.unknownMerchants} unknown
-                  {f.result.existingTransactionsUpdated > 0 && (
-                    <>
-                      {' '}
-                      · {f.result.existingTransactionsUpdated} existing updated
-                    </>
-                  )}
-                  {f.source.content_type && (
-                    <span> · {f.source.content_type}</span>
-                  )}
-                </p>
-              </li>
-            ))}
+            {fileHistory.data.transaction_files.map((f) => {
+              const canReview = f.result.rowCount > 0
+              return (
+                <li
+                  key={f.id}
+                  className="flex flex-col gap-2 py-3 first:pt-0"
+                >
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <p className="font-medium text-zinc-200">
+                        {f.source.name}
+                      </p>
+                      <p className="text-sm text-zinc-500">
+                        <time
+                          dateTime={new Date(
+                            f.timing.completed_at,
+                          ).toISOString()}
+                        >
+                          {new Date(f.timing.completed_at).toLocaleString()}
+                        </time>
+                        <span className="ml-2 tabular-nums text-zinc-600">
+                          · {f.result.rowCount}{' '}
+                          {f.result.rowCount === 1 ? 'row' : 'rows'}
+                        </span>
+                        {f.format.source_format && (
+                          <span className="ml-1 uppercase">
+                            · {f.format.source_format}
+                          </span>
+                        )}
+                        <span className="ml-2 tabular-nums text-zinc-600">
+                          · {f.source.size_bytes.toLocaleString()} bytes
+                        </span>
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="shrink-0 self-start"
+                      disabled={!canReview}
+                      title={
+                        canReview
+                          ? undefined
+                          : 'This import recorded no new rows to review.'
+                      }
+                      onClick={() =>
+                        navigate(
+                          `/import/review-transactions?transactionFileId=${encodeURIComponent(f.id)}`,
+                        )
+                      }
+                    >
+                      Review import
+                    </Button>
+                  </div>
+                  <p className="text-xs text-zinc-500">
+                    {f.result.knownMerchants} known merchants,{' '}
+                    {f.result.unknownMerchants} unknown
+                    {f.result.existingTransactionsUpdated > 0 && (
+                      <>
+                        {' '}
+                        · {f.result.existingTransactionsUpdated} existing
+                        updated
+                      </>
+                    )}
+                    {f.source.content_type && (
+                      <span> · {f.source.content_type}</span>
+                    )}
+                  </p>
+                </li>
+              )
+            })}
           </ul>
         )}
       </section>

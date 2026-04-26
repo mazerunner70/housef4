@@ -3,13 +3,21 @@ import { getFinanceRepository } from '@housef4/db';
 import { getLog } from '../requestLogContext';
 import { cleanMerchantForClustering } from '../services/import/merchantNormalize';
 
-export async function getTransactionsPayload(userId: string) {
+export async function getTransactionsPayload(
+  userId: string,
+  opts?: { transactionFileId?: string },
+) {
   const log = getLog();
   const t0 = Date.now();
-  const rows = await getFinanceRepository().listTransactions(userId);
+  const fileId = opts?.transactionFileId?.trim() || undefined;
+  const repo = getFinanceRepository();
+  const rows = fileId
+    ? await repo.listTransactionsByFileId(userId, fileId)
+    : await repo.listTransactions(userId);
   log.info('transactions.loaded', {
     durationMs: Date.now() - t0,
     count: rows.length,
+    byTransactionFile: Boolean(fileId),
   });
   return {
     transactions: rows.map((t) => {
@@ -23,6 +31,7 @@ export async function getTransactionsPayload(userId: string) {
         category: t.category,
         status: t.status,
         is_recurring: t.is_recurring,
+        transaction_file_id: t.transaction_file_id,
       };
       if (t.suggested_category !== undefined) {
         row.suggested_category = t.suggested_category;

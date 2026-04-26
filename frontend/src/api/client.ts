@@ -97,8 +97,15 @@ export async function getMetrics(): Promise<MetricsResponse> {
   return fetchJson<MetricsResponse>('/api/metrics')
 }
 
-export async function getTransactions(): Promise<TransactionsResponse> {
-  return fetchJson<TransactionsResponse>('/api/transactions')
+export async function getTransactions(
+  transactionFileId?: string,
+): Promise<TransactionsResponse> {
+  const fid = transactionFileId?.trim()
+  const q =
+    fid && fid.length > 0
+      ? `?transactionFileId=${encodeURIComponent(fid)}`
+      : ''
+  return fetchJson<TransactionsResponse>(`/api/transactions${q}`)
 }
 
 export async function getTransactionFiles(): Promise<TransactionFilesResponse> {

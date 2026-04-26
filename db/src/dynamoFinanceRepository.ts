@@ -11,6 +11,8 @@ import {
   clusterTxnGsi1Pk,
   clusterTxnGsi1Sk,
   fileSk,
+  fileTxnGsi2Pk,
+  fileTxnGsi2Sk,
   FILE_PREFIX,
   PROFILE_SK,
   txnSk,
@@ -33,9 +35,14 @@ import type {
 } from './types';
 
 const GSI1 = 'GSI1';
+const GSI2 = 'GSI2';
 
 export interface FinanceRepository {
   listTransactions(userId: string): Promise<TransactionRecord[]>;
+  listTransactionsByFileId(
+    userId: string,
+    transactionFileId: string,
+  ): Promise<TransactionRecord[]>;
   getMetrics(userId: string): Promise<MetricsSnapshot>;
   listPendingClusters(userId: string): Promise<PendingClusterRecord[]>;
   patchExistingTransactionsAfterImport(
@@ -45,6 +52,7 @@ export interface FinanceRepository {
   ingestImportBatch(
     userId: string,
     rows: ImportTransactionInput[],
+    transactionFileId: string,
   ): Promise<ImportIngestResult>;
   /** Remove CLUSTER# aggregate items whose ids are no longer referenced (import splits/merges). */
   retireClusterAggregates(userId: string, clusterIds: string[]): Promise<void>;
@@ -247,6 +255,55 @@ async function batchWriteAll(
   }
 }
 
+function transactionItemToRecord(
+  item: Record<string, unknown>,
+  userId: string,
+): TransactionRecord | null {
+  if (item.entity_type !== 'TRANSACTION') return null;
+  const tfid = item.transaction_file_id;
+  if (tfid == null || tfid === '') {
+    throw new Error(
+      `TRANSACTION item ${String(item.id ?? '')} is missing transaction_file_id`,
+    );
+  }
+  const rec: TransactionRecord = {
+    user_id: String(item.user_id ?? userId),
+    id: String(item.id),
+    date: Number(item.date),
+    raw_merchant: String(item.raw_merchant),
+    amount: Number(item.amount),
+    category: String(item.category),
+    status: item.status as TransactionStatus,
+    is_recurring: Boolean(item.is_recurring),
+    transaction_file_id: String(tfid),
+  };
+  if (item.cluster_id != null && item.cluster_id !== '') {
+    rec.cluster_id = String(item.cluster_id);
+  }
+  if (item.cleaned_merchant !== undefined && item.cleaned_merchant !== null) {
+    rec.cleaned_merchant = String(item.cleaned_merchant);
+  }
+  if (item.merchant_embedding !== undefined && item.merchant_embedding !== null) {
+    const me = item.merchant_embedding as unknown[];
+    if (Array.isArray(me)) {
+      rec.merchant_embedding = me.map((x) => Number(x));
+    }
+  }
+  if (item.suggested_category !== undefined) {
+    rec.suggested_category =
+      item.suggested_category === null
+        ? null
+        : String(item.suggested_category);
+  }
+  if (item.category_confidence !== undefined && item.category_confidence !== null) {
+    rec.category_confidence = Number(item.category_confidence);
+  }
+  if (item.match_type !== undefined && item.match_type !== null) {
+    rec.match_type = String(item.match_type);
+  }
+  return rec;
+}
+
 export class DynamoFinanceRepository implements FinanceRepository {
   constructor(
     private readonly doc = getDocumentClient(),
@@ -271,42 +328,39 @@ export class DynamoFinanceRepository implements FinanceRepository {
         }),
       );
       for (const item of res.Items ?? []) {
-        if (item.entity_type !== 'TRANSACTION') continue;
-        const rec: TransactionRecord = {
-          user_id: String(item.user_id ?? userId),
-          id: String(item.id),
-          date: Number(item.date),
-          raw_merchant: String(item.raw_merchant),
-          amount: Number(item.amount),
-          category: String(item.category),
-          status: item.status as TransactionStatus,
-          is_recurring: Boolean(item.is_recurring),
-        };
-        if (item.cluster_id != null && item.cluster_id !== '') {
-          rec.cluster_id = String(item.cluster_id);
-        }
-        if (item.cleaned_merchant !== undefined && item.cleaned_merchant !== null) {
-          rec.cleaned_merchant = String(item.cleaned_merchant);
-        }
-        if (item.merchant_embedding !== undefined && item.merchant_embedding !== null) {
-          const me = item.merchant_embedding as unknown[];
-          if (Array.isArray(me)) {
-            rec.merchant_embedding = me.map((x) => Number(x));
-          }
-        }
-        if (item.suggested_category !== undefined) {
-          rec.suggested_category =
-            item.suggested_category === null
-              ? null
-              : String(item.suggested_category);
-        }
-        if (item.category_confidence !== undefined && item.category_confidence !== null) {
-          rec.category_confidence = Number(item.category_confidence);
-        }
-        if (item.match_type !== undefined && item.match_type !== null) {
-          rec.match_type = String(item.match_type);
-        }
-        out.push(rec);
+        const row = item as Record<string, unknown>;
+        const rec = transactionItemToRecord(row, userId);
+        if (rec) out.push(rec);
+      }
+      startKey = res.LastEvaluatedKey as Record<string, unknown> | undefined;
+    } while (startKey);
+
+    out.sort((a, b) => b.date - a.date);
+    return out;
+  }
+
+  async listTransactionsByFileId(
+    userId: string,
+    transactionFileId: string,
+  ): Promise<TransactionRecord[]> {
+    const pk = fileTxnGsi2Pk(userId, transactionFileId);
+    const out: TransactionRecord[] = [];
+    let startKey: Record<string, unknown> | undefined;
+
+    do {
+      const res = await this.doc.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          IndexName: GSI2,
+          KeyConditionExpression: 'GSI2PK = :pk',
+          ExpressionAttributeValues: { ':pk': pk },
+          ExclusiveStartKey: startKey,
+        }),
+      );
+      for (const item of res.Items ?? []) {
+        const row = item as Record<string, unknown>;
+        const rec = transactionItemToRecord(row, userId);
+        if (rec) out.push(rec);
       }
       startKey = res.LastEvaluatedKey as Record<string, unknown> | undefined;
     } while (startKey);
@@ -440,6 +494,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
   async ingestImportBatch(
     userId: string,
     rows: ImportTransactionInput[],
+    transactionFileId: string,
   ): Promise<ImportIngestResult> {
     if (rows.length === 0) {
       return {
@@ -486,6 +541,9 @@ export class DynamoFinanceRepository implements FinanceRepository {
         category: r.category,
         status: r.status,
         is_recurring: r.is_recurring,
+        transaction_file_id: transactionFileId,
+        GSI2PK: fileTxnGsi2Pk(userId, transactionFileId),
+        GSI2SK: fileTxnGsi2Sk(r.id),
       };
       if (r.merchant_embedding?.length) {
         item.merchant_embedding = r.merchant_embedding;

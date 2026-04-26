@@ -34,7 +34,7 @@ sequenceDiagram
         API->>DB: Upsert cluster; surface in review queue
     end
     API->>DB: Put TRANSACTION_FILE (source, format, timing, result)
-    API-->>UI: ImportParseResult (rowCount, knownMerchants, importFileId?, transactionIds?, sourceFormat?)
+    API-->>UI: ImportParseResult (rowCount, knownMerchants, importFileId, sourceFormat?, …)
 
     Note over UI, API: 3. Dashboard & lists (reflect new data)
     UI->>API: GET /api/metrics

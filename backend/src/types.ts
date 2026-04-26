@@ -5,6 +5,8 @@
 export interface InternalRequest {
   method: string;
   path: string;
+  /** Parsed from the URL query string (e.g. API Gateway `queryStringParameters`). */
+  query?: Record<string, string | undefined>;
   headers: Record<string, string | undefined>;
   /** UTF-8 text; use {@link bodyBuffer} for multipart or binary-safe reads. */
   rawBody: string;

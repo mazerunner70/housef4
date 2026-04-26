@@ -34,3 +34,12 @@ export function clusterTxnGsi1Pk(userId: string, clusterId: string): string {
 export function clusterTxnGsi1Sk(txnId: string): string {
   return txnSk(txnId);
 }
+
+/** GSI2: transactions created in a single import (see `fileSk` / transaction file id). */
+export function fileTxnGsi2Pk(userId: string, fileId: string): string {
+  return `${USER_PREFIX}${userId}#${FILE_PREFIX}${fileId}`;
+}
+
+export function fileTxnGsi2Sk(txnId: string): string {
+  return txnSk(txnId);
+}
