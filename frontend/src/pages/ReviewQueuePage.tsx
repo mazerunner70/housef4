@@ -45,6 +45,7 @@ export function ReviewQueuePage() {
       <QueueStatusHeader pendingCount={clusters.length} />
       <AmbiguousClusterList
         clusters={clusters}
+        defaultCurrency={data.default_currency}
         onConfirm={onConfirm}
         submittingId={submittingId}
       />

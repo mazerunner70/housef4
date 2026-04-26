@@ -3,12 +3,14 @@ import { ClusterReviewRow } from '@/features/review-queue/components/ClusterRevi
 
 type AmbiguousClusterListProps = {
   clusters: PendingCluster[]
+  defaultCurrency: string
   onConfirm: (clusterId: string, category: string) => void
   submittingId?: string | null
 }
 
 export function AmbiguousClusterList({
   clusters,
+  defaultCurrency,
   onConfirm,
   submittingId,
 }: AmbiguousClusterListProps) {
@@ -26,6 +28,7 @@ export function AmbiguousClusterList({
         <li key={cluster.cluster_id}>
           <ClusterReviewRow
             cluster={cluster}
+            defaultCurrency={defaultCurrency}
             onConfirm={onConfirm}
             isSubmitting={submittingId === cluster.cluster_id}
           />

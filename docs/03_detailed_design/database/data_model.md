@@ -103,6 +103,7 @@ Represents a merchant **cluster** row for the review queue, aggregates, and tag 
 | `sample_merchants` | String[] | Sample text for UI (capped/merged in code). |
 | `total_transactions` | Number | Running count. |
 | `total_amount` | Number | Typically sum of abs(amount) contributions. |
+| `currency` | String (optional) | ISO 4217, denormalized from the import when known; preserved on later ingests that do not supply a new code. |
 | `suggested_category` | String or null | From batch / rules. |
 | `assigned_category` | String or null | User or rule assignment. |
 | `pending_review` | Boolean | `true` if still in review (filtered in review-queue listing). |
@@ -126,7 +127,7 @@ Per-upload **import history**: the uploaded file, how it was classified, when pr
 |-----------|------|--------|
 | `id` | String | Same as in `SK` after the `FILE#` prefix. |
 | **`source`** | Map (object) | **§1 — Multipart / upload audit:** `name` (client filename or display default), `size_bytes`, optional `content_type` (part MIME). |
-| **`format`** | Map (object) | **§2 — Import source type for parsing** (set after sniffing): optional `source_format` (e.g. `csv` / `ofx` / `qfx` / `qif`); may be empty if unknown. |
+| **`format`** | Map (object) | **§2 — Import source type for parsing** (set after sniffing): optional `source_format` (e.g. `csv` / `ofx` / `qfx` / `qif`); optional `currency` (ISO 4217) when inferrable (e.g. OFX `CURDEF`); may be empty if unknown. |
 | **`timing`** | Map (object) | **§3 — Clock (epoch ms UTC):** `started_at` (after a successful multipart extract, before parse/enrich/ingest), `completed_at` (when the run finishes and the item is written). **Listing order** (newest first) uses `timing.completed_at`. |
 | **`result`** | Map (object) | **§4 — Batch summary** — full **`ImportIngestResult`**: `rowCount`, `knownMerchants`, `unknownMerchants`, `existingTransactionsUpdated`, `newClustersTouched` (the last two include re-cluster patch effects where applicable; see [`db/src/types.ts`](../../../db/src/types.ts)). |
 
@@ -147,7 +148,7 @@ One item per user for metrics that are **stored** (not only derived in memory). 
 | `PK` | `USER#<user_id>` |
 | `SK` | `PROFILE` (constant, see `PROFILE_SK` in `db/src/keys.ts`) |
 
-**Attributes:** `net_worth` (Number) is written on create (`ensureProfile`); `getMetrics` reads it for the dashboard. Other cashflow and spending breakdowns are **computed** from transaction queries in the current implementation.
+**Attributes:** `net_worth` (Number) is written on create (`ensureProfile`); `getMetrics` reads it for the dashboard. Other cashflow and spending breakdowns are **computed** from transaction queries in the current implementation. Optional `default_currency` (String, ISO 4217) may be set for display; when absent, APIs default to `USD`.
 
 ---
 

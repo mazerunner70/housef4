@@ -44,6 +44,18 @@ export function parseOfxLike(content: string): ParsedImportRow[] {
   return rows;
 }
 
+/**
+ * OFX / QFX often includes `<CURDEF>USD</CURDEF>` (account default) or per-row `<CURRENCY>…`.
+ * Returns a 3-letter code when a single unambiguous value is found.
+ */
+export function extractOfxDefaultCurrency(content: string): string | undefined {
+  const fromCurdef = content.match(/<CURDEF>([A-Z]{3})</i);
+  if (fromCurdef?.[1]) return fromCurdef[1].toUpperCase();
+  const fromCur = content.match(/<CURRENCY>([A-Z]{3})</i);
+  if (fromCur?.[1]) return fromCur[1].toUpperCase();
+  return undefined;
+}
+
 function ofxDateToUtcMs(s: string): number | null {
   const t = s.trim();
   if (t.length < 8) return null;

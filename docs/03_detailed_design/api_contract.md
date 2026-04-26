@@ -199,17 +199,24 @@ Fetches only clusters needing manual user mapping (Active Learning).
 
 ```json
 {
+  "default_currency": "USD",
   "pending_clusters": [
     {
       "cluster_id": "CL_005",
       "sample_merchants": ["SQ * LOCAL COFFEE", "LOCAL COFFE PT"],
       "total_transactions": 14,
       "total_amount": 63.00,
-      "suggested_category": null
+      "suggested_category": null,
+      "currency": "USD"
     }
   ]
 }
 ```
+
+| Field | Type | Notes |
+|--------|------|--------|
+| `default_currency` | string | User profile default (ISO 4217). Used to format amounts when `pending_clusters[].currency` is omitted. |
+| `pending_clusters[].currency` | string (optional) | When set, from the import file metadata (e.g. OFX `CURDEF`) for the batch that last updated the cluster aggregate. |
 
 ## 5. Tag Rule Endpoint
 
