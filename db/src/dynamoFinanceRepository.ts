@@ -17,11 +17,19 @@ import {
   fileTxnGsi2Sk,
   ACCOUNT_PREFIX,
   FILE_PREFIX,
+  METRICS_SK,
   PROFILE_SK,
   txnSk,
   userPk,
 } from './keys';
 import { getDocumentClient, requireTableName } from './dynamoClient';
+import {
+  computeDashboardMetrics,
+  metricsSnapshotLooksAllZero,
+  parseStoredDashboardMetrics,
+  type DashboardMetricsStored,
+} from './dashboardMetrics';
+import { dbLog } from './structuredLog';
 import type {
   AccountRecord,
   ExistingTransactionPatch,
@@ -48,6 +56,8 @@ export interface FinanceRepository {
     transactionFileId: string,
   ): Promise<TransactionRecord[]>;
   getMetrics(userId: string): Promise<MetricsSnapshot>;
+  /** Recompute transaction-derived dashboard fields and persist on the `METRICS` item. */
+  refreshStoredDashboardMetrics(userId: string): Promise<void>;
   listPendingClusters(userId: string): Promise<PendingClusterRecord[]>;
   patchExistingTransactionsAfterImport(
     userId: string,
@@ -90,21 +100,6 @@ interface ClusterItem {
   pending_review: boolean;
   /** ISO 4217 from the latest import that set this aggregate, when known. */
   currency?: string;
-}
-
-function monthBoundsUtcMs(at: number): { start: number; end: number } {
-  const d = new Date(at);
-  const start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0, 0);
-  const end = Date.UTC(
-    d.getUTCFullYear(),
-    d.getUTCMonth() + 1,
-    0,
-    23,
-    59,
-    59,
-    999,
-  );
-  return { start, end };
 }
 
 function bestSuggestedFromRows(rows: ImportTransactionInput[]): string | null {
@@ -389,49 +384,137 @@ export class DynamoFinanceRepository implements FinanceRepository {
   }
 
   async getMetrics(userId: string): Promise<MetricsSnapshot> {
-    const txns = await this.listTransactions(userId);
-    const now = Date.now();
-    const { start, end } = monthBoundsUtcMs(now);
+    const pk = userPk(userId);
+    const [profile, metricsRow] = await Promise.all([
+      this.doc.send(
+        new GetCommand({
+          TableName: this.tableName,
+          Key: { PK: pk, SK: PROFILE_SK },
+        }),
+      ),
+      this.doc.send(
+        new GetCommand({
+          TableName: this.tableName,
+          Key: { PK: pk, SK: METRICS_SK },
+        }),
+      ),
+    ]);
 
-    let income = 0;
-    let expenses = 0;
-    const categoryTotals = new Map<string, number>();
-
-    for (const t of txns) {
-      if (t.date < start || t.date > end) continue;
-      if (t.amount > 0) income += t.amount;
-      else expenses += -t.amount;
-      if (t.amount < 0) {
-        const cat = t.category || 'Uncategorized';
-        categoryTotals.set(
-          cat,
-          (categoryTotals.get(cat) ?? 0) + -t.amount,
-        );
-      }
-    }
-
-    const spending_by_category = [...categoryTotals.entries()].map(
-      ([category, amount]) => ({ category, amount }),
-    );
-    spending_by_category.sort((a, b) => b.amount - a.amount);
-
-    const profile = await this.doc.send(
-      new GetCommand({
-        TableName: this.tableName,
-        Key: { PK: userPk(userId), SK: PROFILE_SK },
-      }),
-    );
     const net_worth =
       profile.Item?.entity_type === 'PROFILE'
         ? Number(profile.Item.net_worth ?? 0)
         : 0;
 
-    const net = income - expenses;
+    const rawMetrics = metricsRow.Item;
+    const isMetricsEntity =
+      rawMetrics &&
+      typeof rawMetrics === 'object' &&
+      rawMetrics.entity_type === 'METRICS';
+    const stored = isMetricsEntity
+      ? parseStoredDashboardMetrics(rawMetrics)
+      : null;
+    if (stored) {
+      if (metricsSnapshotLooksAllZero(stored)) {
+        const txns = await this.listTransactions(userId);
+        if (txns.length > 0) {
+          const live = computeDashboardMetrics(txns, Date.now());
+          if (!metricsSnapshotLooksAllZero(live)) {
+            dbLog('info', 'metrics.snapshot.healed_stale_zero', {
+              userIdLen: userId.length,
+            });
+            await this.putDashboardMetricsItem(userId, live, txns.length);
+          }
+          return {
+            ...live,
+            net_worth,
+          };
+        }
+      }
+
+      const raw = rawMetrics as Record<string, unknown>;
+      dbLog('info', 'metrics.snapshot.read', {
+        source: 'METRICS_ITEM',
+        userIdLen: userId.length,
+        metricsUpdatedAt: raw.metrics_updated_at ?? null,
+        monthly_cashflow: stored.monthly_cashflow,
+        cashflowHistory: stored.cashflow_history.map((h) => ({
+          label: h.label,
+          net: h.income - h.expenses,
+        })),
+        spendingTop5: stored.spending_by_category.slice(0, 5),
+        net_worth,
+      });
+      return {
+        ...stored,
+        net_worth,
+      };
+    }
+
+    const fallbackReason =
+      rawMetrics == null
+        ? 'metrics_item_missing'
+        : typeof rawMetrics !== 'object'
+          ? 'metrics_item_not_object'
+          : !isMetricsEntity
+            ? 'wrong_entity_type'
+            : 'stored_payload_parse_failed';
+    dbLog('warn', 'metrics.snapshot.fallback_compute', {
+      userIdLen: userId.length,
+      reason: fallbackReason,
+      sawEntityType:
+        rawMetrics && typeof rawMetrics === 'object'
+          ? (rawMetrics as Record<string, unknown>).entity_type ?? null
+          : null,
+    });
+
+    const txns = await this.listTransactions(userId);
+    const computed = computeDashboardMetrics(txns, Date.now());
     return {
-      monthly_cashflow: { income, expenses, net },
+      ...computed,
       net_worth,
-      spending_by_category,
     };
+  }
+
+  async refreshStoredDashboardMetrics(userId: string): Promise<void> {
+    const txns = await this.listTransactions(userId);
+    const body = computeDashboardMetrics(txns, Date.now());
+    await this.putDashboardMetricsItem(userId, body, txns.length);
+  }
+
+  private async putDashboardMetricsItem(
+    userId: string,
+    body: DashboardMetricsStored,
+    txnCount: number,
+  ): Promise<void> {
+    const pk = userPk(userId);
+    const updatedAt = Date.now();
+    const item: Record<string, unknown> = {
+      PK: pk,
+      SK: METRICS_SK,
+      entity_type: 'METRICS',
+      user_id: userId,
+      metrics_updated_at: updatedAt,
+      monthly_cashflow: body.monthly_cashflow,
+      spending_by_category: body.spending_by_category,
+      cashflow_history: body.cashflow_history,
+      cashflow_period_label: body.cashflow_period_label,
+    };
+    if (body.net_worth_change_pct !== undefined) {
+      item.net_worth_change_pct = body.net_worth_change_pct;
+    }
+    await this.doc.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: item,
+      }),
+    );
+
+    dbLog('info', 'metrics.snapshot.persisted', {
+      userIdLen: userId.length,
+      txnCount,
+      metrics_updated_at: updatedAt,
+      monthly_cashflow: body.monthly_cashflow,
+    });
   }
 
   async getDefaultCurrencyCode(userId: string): Promise<string> {
@@ -977,6 +1060,8 @@ export class DynamoFinanceRepository implements FinanceRepository {
         }),
       );
     });
+
+    await this.refreshStoredDashboardMetrics(userId);
 
     return updated;
   }

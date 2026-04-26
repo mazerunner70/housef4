@@ -10,6 +10,12 @@ export async function getMetricsPayload(userId: string) {
     log.info('metrics.loaded', {
       durationMs: Date.now() - t0,
       userIdLength: userId.length,
+      monthly_income: payload.monthly_cashflow.income,
+      monthly_expenses: payload.monthly_cashflow.expenses,
+      monthly_net: payload.monthly_cashflow.net,
+      net_worth: payload.net_worth,
+      spending_categories: payload.spending_by_category.length,
+      cashflow_history_months: payload.cashflow_history?.length ?? 0,
     });
     return payload;
   } catch (err) {

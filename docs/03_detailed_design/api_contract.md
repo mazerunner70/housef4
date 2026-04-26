@@ -121,7 +121,9 @@ Returns recorded uploads (one item per successful `POST /api/imports` that wrote
 
 ## 2. Metrics Baseline Endpoint
 
-Provides the aggregated mathematical baseline for the dashboard.
+Provides the aggregated mathematical baseline for the dashboard. Transaction-derived fields are **normally read from** the persisted **`METRICS`** item (`entity_type: METRICS`, `SK: METRICS` — updated after each successful import and after tag-rule application); the server recomputes from transactions when that item is absent or unreadable.
+
+**Rolling windows (UTC):** `monthly_cashflow` and `spending_by_category` reflect the **current UTC calendar month** (wall-clock “today”). `cashflow_history` includes **every UTC calendar month from the earliest stored transaction through the current month**, inclusive (oldest first). Months after the last transaction but up to “today” appear with zero inflow/outflow unless new data arrives.
 
 **`GET /api/metrics`**
 
@@ -156,7 +158,7 @@ The frontend mock and charts may supply additional optional fields; servers may 
 
 | Field | Type | Notes |
 |--------|------|--------|
-| `net_worth_change_pct` | number | Fractional change (e.g. `0.041` → +4.1% in UI). |
+| `net_worth_change_pct` | number | Fractional change (e.g. `0.041` → +4.1% in UI). The server currently fills this as **month-over-month relative change in net cashflow** (not a stored net-worth time series). |
 | `liquid_assets` | number | For extended net-worth breakdowns. |
 | `liabilities` | number | For extended net-worth breakdowns. |
 | `cashflow_period_label` | string | Subtitle for the cash-flow chart (e.g. date range). |

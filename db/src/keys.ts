@@ -1,5 +1,5 @@
 /**
- * Single-table key helpers: PK = USER#<id>, SK = TXN#... | CLUSTER#... | PROFILE.
+ * Single-table key helpers: PK = USER#<id>, SK = TXN#... | CLUSTER#... | PROFILE | METRICS.
  * See `docs/03_detailed_design/database/data_model.md` for the full key and GSI1 layout.
  */
 
@@ -11,6 +11,8 @@ export const FILE_PREFIX = 'FILE#';
 /** One financial account the user labels (e.g. checking). `SK` = `ACCOUNT#<account_id>`. */
 export const ACCOUNT_PREFIX = 'ACCOUNT#';
 export const PROFILE_SK = 'PROFILE';
+/** Stored dashboard aggregates (transaction-derived); one item per user. */
+export const METRICS_SK = 'METRICS';
 
 export function userPk(userId: string): string {
   return `${USER_PREFIX}${userId}`;

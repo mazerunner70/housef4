@@ -13,6 +13,7 @@ This is the **canonical description** of how persisted application data is store
 | [`db/src/types.ts`](../../../db/src/types.ts) | TypeScript record shapes (aligned with the API; omits `PK` / `SK` / `GSI1*`). |
 | [`db/src/keys.ts`](../../../db/src/keys.ts) | Key string helpers: `USER#`, `TXN#`, `CLUSTER#`, `FILE#`, GSI1 composite keys. |
 | [`db/src/dynamoFinanceRepository.ts`](../../../db/src/dynamoFinanceRepository.ts) | Read and write implementation (queries, batch writes, tag rules, `recordTransactionFile` / `listTransactionFiles`). |
+| [`db/src/dashboardMetrics.ts`](../../../db/src/dashboardMetrics.ts) | Pure helpers: `computeDashboardMetrics`, `parseStoredDashboardMetrics` (transaction-derived dashboard snapshot). |
 | [`infrastructure/main.tf`](../../../infrastructure/main.tf) | `aws_dynamodb_table` definition (hash/range, GSI1). |
 | `infrastructure/dynamodb_health_item.tf` | System row `PK=health-check`, `SK=BUILD` for health metadata (out of application domain). |
 
@@ -26,7 +27,7 @@ This is the **canonical description** of how persisted application data is store
 - **Billing:** `PAY_PER_REQUEST` (on-demand).
 - **Base table keys**
   - **`PK`** (String) — partition key. User-scoped application rows use `USER#<user_id>`.
-  - **`SK`** (String) — sort key. Distinguishes entity type and id: `TXN#<transaction_id>`, `CLUSTER#<cluster_id>`, `FILE#<file_id>`, or literal `PROFILE` for the user’s profile.
+  - **`SK`** (String) — sort key. Distinguishes entity type and id: `TXN#<transaction_id>`, `CLUSTER#<cluster_id>`, `FILE#<file_id>`, literal `PROFILE`, literal **`METRICS`** (dashboard aggregates), or `ACCOUNT#…`.
 - **Global secondary index: `GSI1`**
   - **GSI1PK** (String) — `USER#<user_id>#CLUSTER#<cluster_id>` (see `clusterTxnGsi1Pk` in `db/src/keys.ts`). Enables all transactions in a **cluster** for a user to be found without a table scan.
   - **GSI1SK** (String) — `TXN#<transaction_id>` (same as base `SK` for that transaction) via `clusterTxnGsi1Sk`.
@@ -46,7 +47,7 @@ Every application item (except the health system row) includes:
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
-| **`entity_type`** | String | `TRANSACTION`, `CLUSTER`, `TRANSACTION_FILE`, `ACCOUNT`, or `PROFILE`. Used when reading and filtering. |
+| **`entity_type`** | String | `TRANSACTION`, `CLUSTER`, `TRANSACTION_FILE`, `ACCOUNT`, `PROFILE`, or `METRICS`. Used when reading and filtering. |
 
 ---
 
@@ -161,18 +162,31 @@ Created via `POST /api/imports` when the client sends **`new_account_name`**, or
 
 ## 5. Profile (`entity_type: PROFILE`)
 
-One item per user for metrics that are **stored** (not only derived in memory). **Key:**
+One item per user for **user-level settings** (not transaction-derived dashboard aggregates). **Key:**
 
 | Key | Value pattern |
 |-----|----------------|
 | `PK` | `USER#<user_id>` |
 | `SK` | `PROFILE` (constant, see `PROFILE_SK` in `db/src/keys.ts`) |
 
-**Attributes:** `net_worth` (Number) is written on create (`ensureProfile`); `getMetrics` reads it for the dashboard. Other cashflow and spending breakdowns are **computed** from transaction queries in the current implementation. Optional `default_currency` (String, ISO 4217) may be set for display; when absent, APIs default to `USD`.
+**Attributes:** `net_worth` (Number) is written on create (`ensureProfile`); `getMetrics` merges the live `net_worth` into the API response with data read from the **`METRICS`** item (see below). Optional `default_currency` (String, ISO 4217) may be set for display; when absent, APIs default to `USD`.
 
 ---
 
-## 6. Health system row (non-domain)
+## 6. Metrics (`entity_type: METRICS`)
+
+One item per user holding the **cached dashboard snapshot** derived from transactions (same logical shape as transaction-derived fields on **`GET /api/metrics`**, excluding `net_worth`). **Key:**
+
+| Key | Value pattern |
+|-----|----------------|
+| `PK` | `USER#<user_id>` |
+| `SK` | `METRICS` (constant, see `METRICS_SK` in `db/src/keys.ts`) |
+
+**Attributes:** `user_id` (String); **`metrics_updated_at`** (Number, epoch ms UTC); **`monthly_cashflow`** (Map: `income`, `expenses`, `net` — **current UTC month**); **`spending_by_category`** (List of maps: `category`, `amount` — same month); **`cashflow_history`** (List of maps: `label`, `income`, `expenses` — one row per UTC month from **earliest transaction** through **current month**, oldest first); **`cashflow_period_label`** (String); optional **`net_worth_change_pct`** (Number — month-over-month **net cashflow** change ratio). See [`../api_contract.md`](../api_contract.md) §2. Written by `refreshStoredDashboardMetrics` after **`POST /api/imports`** and after **`applyTagRule`**. Does not use GSI1/GSI2. If the item is missing or invalid, `getMetrics` recomputes from a full transaction list (no write).
+
+---
+
+## 7. Health system row (non-domain)
 
 A Terraform-managed item supports build/version health checks. It is **not** a user or application entity. See `infrastructure/dynamodb_health_item.tf` (`PK=health-check`, `SK=BUILD`).
 
