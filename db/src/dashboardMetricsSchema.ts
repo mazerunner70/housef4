@@ -49,10 +49,19 @@ const cashflowRowSchema = z
   .superRefine((row, ctx) => {
     const inc = Number(row.income);
     const exp = Number(row.expenses);
-    if (!Number.isFinite(inc) || !Number.isFinite(exp)) {
-      ctx.addIssue(
-        'income and expenses must be finite numbers',
-      );
+    if (!Number.isFinite(inc)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'income must be a finite number',
+        path: ['income'],
+      });
+    }
+    if (!Number.isFinite(exp)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'expenses must be a finite number',
+        path: ['expenses'],
+      });
     }
     const label = stringFromMetricWire(row.label);
     const msm = Number(row.month_start_ms);
