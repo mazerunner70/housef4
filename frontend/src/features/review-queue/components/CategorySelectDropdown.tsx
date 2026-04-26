@@ -9,6 +9,8 @@ type CategorySelectDropdownProps = {
   onChange: (category: string) => void
   disabled?: boolean
   id?: string
+  /** Fires when the menu opens or closes (e.g. lift parent z-index above sibling cards). */
+  onOpenChange?: (open: boolean) => void
 }
 
 export function CategorySelectDropdown({
@@ -16,10 +18,17 @@ export function CategorySelectDropdown({
   onChange,
   disabled,
   id,
+  onOpenChange,
 }: CategorySelectDropdownProps) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const rootRef = useRef<HTMLDivElement>(null)
+  const onOpenChangeRef = useRef(onOpenChange)
+  onOpenChangeRef.current = onOpenChange
+
+  useEffect(() => {
+    onOpenChangeRef.current?.(open)
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -39,7 +48,7 @@ export function CategorySelectDropdown({
   return (
     <div
       ref={rootRef}
-      className="relative min-w-[min(100%,280px)] flex-1"
+      className="relative min-w-0 flex-1 sm:min-w-[12rem]"
     >
       <button
         id={id}
