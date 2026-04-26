@@ -28,6 +28,32 @@ function monthLabelUtc(year: number, month0: number): string {
   });
 }
 
+/** Parses labels produced by `monthLabelUtc` (en-US, short month, UTC). */
+function monthStartMsFromEnUsShortUtcLabel(label: string): number {
+  const t = label.trim();
+  const m = /^([A-Za-z]{3})\s+(\d{4})$/.exec(t);
+  if (!m) return NaN;
+  const short = m[1].slice(0, 1).toUpperCase() + m[1].slice(1).toLowerCase();
+  const monthIx = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ].indexOf(short);
+  if (monthIx < 0) return NaN;
+  const year = Number(m[2]);
+  if (!Number.isFinite(year)) return NaN;
+  return Date.UTC(year, monthIx, 1, 0, 0, 0, 0);
+}
+
 function utcYearMonthFromMs(ms: number): [number, number] {
   const d = new Date(ms);
   return [d.getUTCFullYear(), d.getUTCMonth()];
@@ -78,7 +104,12 @@ function aggregateForRange(
 export type DashboardMetricsStored = {
   monthly_cashflow: { income: number; expenses: number; net: number };
   spending_by_category: { category: string; amount: number }[];
-  cashflow_history: { label: string; income: number; expenses: number }[];
+  cashflow_history: {
+    label: string;
+    month_start_ms: number;
+    income: number;
+    expenses: number;
+  }[];
   cashflow_period_label: string;
   net_worth_change_pct?: number;
 };
@@ -160,6 +191,7 @@ export function computeDashboardMetrics(
 
   const cashflow_history: {
     label: string;
+    month_start_ms: number;
     income: number;
     expenses: number;
   }[] = [];
@@ -174,6 +206,7 @@ export function computeDashboardMetrics(
     const { income, expenses } = aggregateForRange(txns, start, end);
     cashflow_history.push({
       label: monthLabelUtc(y, m),
+      month_start_ms: start,
       income,
       expenses,
     });
@@ -313,16 +346,27 @@ export function parseStoredDashboardMetrics(
   }
   const hist = o.cashflow_history;
   if (!Array.isArray(hist) || hist.length < 1) return null;
-  const cashflow_history: { label: string; income: number; expenses: number }[] =
-    [];
+  const cashflow_history: {
+    label: string;
+    month_start_ms: number;
+    income: number;
+    expenses: number;
+  }[] = [];
   for (const row of hist) {
     if (!row || typeof row !== 'object') return null;
     const r = row as Record<string, unknown>;
     const inc = Number(r.income);
     const exp = Number(r.expenses);
     if (!Number.isFinite(inc) || !Number.isFinite(exp)) return null;
+    const label = String(r.label ?? '');
+    const msm = Number(r.month_start_ms);
+    const month_start_ms = Number.isFinite(msm)
+      ? msm
+      : monthStartMsFromEnUsShortUtcLabel(label);
+    if (!Number.isFinite(month_start_ms)) return null;
     cashflow_history.push({
-      label: String(r.label ?? ''),
+      label,
+      month_start_ms,
       income: inc,
       expenses: exp,
     });

@@ -21,7 +21,13 @@ export type MetricsResponse = {
   liabilities?: number
   spending_by_category: SpendingCategoryRow[]
   /** Optional series for charts when the API supplies history. */
-  cashflow_history?: { label: string; income: number; expenses: number }[]
+  cashflow_history?: {
+    label: string
+    /** Present on newer API payloads; older rows fall back to parsing `label`. */
+    month_start_ms?: number
+    income: number
+    expenses: number
+  }[]
   /** e.g. "January 1 – June 30" for cash flow card subtitle. */
   cashflow_period_label?: string
 }

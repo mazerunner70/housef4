@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useId,
   useLayoutEffect,
   useMemo,
@@ -10,6 +11,7 @@ import {
   Legend,
   Line,
   LineChart,
+  ReferenceLine,
   Tooltip,
   XAxis,
   YAxis,
@@ -17,10 +19,21 @@ import {
 
 import type { MetricsResponse } from '@/lib/types'
 import { cn } from '@/lib/cn'
+import { monthStartMsFromCashflowLabel } from '@/lib/dashboardSpending'
 import { theme } from '@/lib/theme'
+
+type CashflowChartRow = {
+  name: string
+  month_start_ms: number
+  Inflow: number
+  Outflow: number
+}
 
 type MonthlyCashFlowChartProps = {
   metrics: MetricsResponse
+  /** `cashflow_history[].label` for the focused month; null = latest month on the axis. */
+  selectedMonthLabel: string | null
+  onSelectCashflowMonth: (monthLabel: string) => void
   className?: string
 }
 
@@ -54,6 +67,8 @@ function useObservedSize<T extends HTMLElement>() {
 
 export function MonthlyCashFlowChart({
   metrics,
+  selectedMonthLabel,
+  onSelectCashflowMonth,
   className,
 }: MonthlyCashFlowChartProps) {
   const { ref, width, height } = useObservedSize<HTMLDivElement>()
@@ -61,18 +76,33 @@ export function MonthlyCashFlowChart({
   const glowGreenId = `glow-green-${filterSuffix}`
   const glowBlueId = `glow-blue-${filterSuffix}`
 
-  const data =
-    metrics.cashflow_history?.map((row) => ({
-      name: row.label,
-      Inflow: row.income,
-      Outflow: row.expenses,
-    })) ?? [
+  const fallbackMonthStart = useMemo(() => {
+    const d = new Date()
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0, 0)
+  }, [])
+
+  const data: CashflowChartRow[] = useMemo(() => {
+    const hist = metrics.cashflow_history
+    if (hist?.length) {
+      return hist.map((row) => ({
+        name: row.label,
+        month_start_ms:
+          row.month_start_ms ??
+          monthStartMsFromCashflowLabel(row.label) ??
+          fallbackMonthStart,
+        Inflow: row.income,
+        Outflow: row.expenses,
+      }))
+    }
+    return [
       {
         name: '—',
+        month_start_ms: fallbackMonthStart,
         Inflow: metrics.monthly_cashflow.income,
         Outflow: metrics.monthly_cashflow.expenses,
       },
     ]
+  }, [metrics, fallbackMonthStart])
 
   const yMax = useMemo(() => {
     let m = 0
@@ -93,6 +123,47 @@ export function MonthlyCashFlowChart({
   const { chart } = theme
   const chartReady = width > 0 && height > 0
 
+  const highlightMonthLabel =
+    selectedMonthLabel ?? data.at(-1)?.name ?? null
+
+  const renderInflowDot = useCallback(
+    (props: { cx?: number; cy?: number; payload?: CashflowChartRow }) => {
+      const { cx, cy, payload } = props
+      const p = payload
+      if (cx == null || cy == null || !p?.name) return null
+      const isSel =
+        highlightMonthLabel != null && p.name === highlightMonthLabel
+      return (
+        <g className="cursor-pointer">
+          {isSel ? (
+            <circle
+              cx={cx}
+              cy={cy}
+              r={14}
+              fill="rgba(250, 204, 21, 0.12)"
+              stroke="rgba(250, 204, 21, 0.55)"
+              strokeWidth={1}
+              pointerEvents="none"
+            />
+          ) : null}
+          <circle
+            cx={cx}
+            cy={cy}
+            r={isSel ? 6 : 4}
+            fill={chart.inflow}
+            stroke={isSel ? '#fbbf24' : 'rgba(255,255,255,0.35)'}
+            strokeWidth={isSel ? 2.5 : 1}
+            onClick={(e) => {
+              e.stopPropagation()
+              onSelectCashflowMonth(p.name)
+            }}
+          />
+        </g>
+      )
+    },
+    [chart.inflow, highlightMonthLabel, onSelectCashflowMonth],
+  )
+
   return (
     <section
       className={cn(
@@ -105,6 +176,9 @@ export function MonthlyCashFlowChart({
           Monthly Cash Flow
         </h2>
         <p className="mt-1 text-sm text-zinc-500">{period}</p>
+        <p className="mt-1 text-xs text-zinc-600">
+          Click a month on the chart to show spending by category.
+        </p>
       </header>
       <div
         ref={ref}
@@ -201,13 +275,8 @@ export function MonthlyCashFlowChart({
               stroke={chart.inflow}
               strokeWidth={3}
               filter={`url(#${glowGreenId})`}
-              dot={{ r: 4, fill: chart.inflow, strokeWidth: 0 }}
-              activeDot={{
-                r: 6,
-                stroke: chart.inflow,
-                strokeWidth: 2,
-                fill: chart.dotFill,
-              }}
+              dot={renderInflowDot}
+              activeDot={false}
             />
             <Line
               type="monotone"
@@ -216,7 +285,7 @@ export function MonthlyCashFlowChart({
               stroke={chart.outflow}
               strokeWidth={3}
               filter={`url(#${glowBlueId})`}
-              dot={{ r: 4, fill: chart.outflow, strokeWidth: 0 }}
+              dot={false}
               activeDot={{
                 r: 6,
                 stroke: chart.outflow,
@@ -224,6 +293,15 @@ export function MonthlyCashFlowChart({
                 fill: chart.dotFill,
               }}
             />
+            {highlightMonthLabel != null &&
+            data.some((d) => d.name === highlightMonthLabel) ? (
+              <ReferenceLine
+                x={highlightMonthLabel}
+                stroke="rgba(250, 204, 21, 0.55)"
+                strokeDasharray="5 4"
+                strokeWidth={1.5}
+              />
+            ) : null}
           </LineChart>
         ) : null}
       </div>

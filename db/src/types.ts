@@ -71,7 +71,12 @@ export interface MetricsSnapshot {
   net_worth: number;
   spending_by_category: { category: string; amount: number }[];
   /** UTC calendar months from earliest transaction through current month, oldest-first (see `computeDashboardMetrics`). */
-  cashflow_history?: { label: string; income: number; expenses: number }[];
+  cashflow_history?: {
+    label: string;
+    month_start_ms: number;
+    income: number;
+    expenses: number;
+  }[];
   cashflow_period_label?: string;
   /** Month-over-month relative change in net cashflow (not literal net worth). */
   net_worth_change_pct?: number;
