@@ -39,17 +39,28 @@ function splitNoiseLabels(labels: number[]): number[] {
   return labels.map((L) => (L === -1 ? noiseSeq-- : L));
 }
 
+/**
+ * When cluster identity is conserved, pick the **plurality** category among existing
+ * `CLASSIFIED` rows in the group. If a user (or data drift) left conflicting categories
+ * on the same cluster, the majority wins; ties break lexicographically for stability.
+ */
 function inheritedCategoryForGroup(
   indices: number[],
   sources: SourceRow[],
 ): string | null {
+  const counts = new Map<string, number>();
   for (const i of indices) {
     const s = sources[i]!;
     if (s.kind === 'existing' && s.record.status === 'CLASSIFIED') {
-      return s.record.category;
+      const c = s.record.category;
+      counts.set(c, (counts.get(c) ?? 0) + 1);
     }
   }
-  return null;
+  if (counts.size === 0) return null;
+  const sorted = [...counts.entries()].sort(
+    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+  );
+  return sorted[0]![0];
 }
 
 function categorizeGroup(
