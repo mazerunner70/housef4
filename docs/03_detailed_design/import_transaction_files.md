@@ -8,6 +8,8 @@ phase: Ingestion
 
 This document is the **detailed design** for the server-side import pipeline: how parsed rows become persisted transactions, how **cluster identity** is chosen or revised across imports, and what must be written to the database. It does **not** replace file-to-field rules ([`import_field_mapping.md`](./import_field_mapping.md)), the **HTTP/JSON** contract ([`api_contract.md`](./api_contract.md)), or the **physical** DynamoDB layout ([`database/data_model.md`](./database/data_model.md)); it sits between them and the clustering behaviour already discussed at a high level in [`transaction_analysis_clusters_and_categories.md`](./transaction_analysis_clusters_and_categories.md).
 
+**Raw upload bytes:** Today only metadata is stored on each `TRANSACTION_FILE`; persisting the original file to disk (local dev) or S3 (prod) is specified in [`import_file_blob_storage.md`](./import_file_blob_storage.md).
+
 **Status:** This document specifies **intended** behaviour, including product decisions not yet fully implemented. Implementation should follow it in phases; the repo may still reflect the **legacy** “full re-embed, medoid `CL_*` every import” path until that work is done.
 
 ---

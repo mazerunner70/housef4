@@ -57,3 +57,7 @@ sequenceDiagram
     LocalML->>LocalML: Tune TF-IDF / DBSCAN (example)
     LocalML->>DB: Upload improved heuristics / rules
 ```
+
+## Backup & restore (user-scoped snapshot)
+
+Outside the ingest loop, the user may **`GET /api/backup/export`** (**synchronous** JSON download of **metadata** entities under **`USER#`** — no raw import blobs in V1; see [`database/data_model.md`](../03_detailed_design/database/data_model.md) §8). **`POST /api/backup/restore`** **validates** the file, **materializes** rows into a **DynamoDB restore-staging table**, validates again, then **deletes** the user partition on the **primary** table and **copies** staging → primary (**no merge**; [`api_contract.md`](../03_detailed_design/api_contract.md) §6; PRD [`stage_1_understanding_mvp.md`](../01_discovery/stage_1_understanding_mvp.md) §2). **`POST /api/backup/restore/abort`** clears **`RESTORE_LOCK`** **first**, then the staging partition, after a stuck restore (**cleanup only** — does not cancel an active Lambda; §8.2b). UI: [`ui_component_flow.md`](../03_detailed_design/ui_component_flow.md) §4.
