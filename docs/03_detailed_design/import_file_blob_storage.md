@@ -120,7 +120,7 @@ This avoids collisions across users and imports while keeping a human-readable l
 
 **Canonical documentation** after implementation: update [`database/data_model.md`](./database/data_model.md) §3 and **`TransactionFileInput`** / **`TransactionFileRecord`** in [`db/src/types.ts`](../../../db/src/types.ts).
 
-Add an optional map **`blob`** (omit when storage disabled or write failed — see §8):
+Add an optional map **`blob`** (omit when storage is **`off`**, or after a failed blob write under the **V1 non-fatal policy** — §8):
 
 | Attribute | Type | Notes |
 |-----------|------|--------|
@@ -128,7 +128,7 @@ Add an optional map **`blob`** (omit when storage disabled or write failed — s
 | `key` | string | Full logical key under backend root / bucket (e.g. `imports/<user_id>/<import_file_id>/<file>`). |
 | `bucket` | string (optional) | S3 bucket name when `kind === 's3'`. |
 | `content_sha256` | string | Hex digest at ingest time. |
-| `stored_bytes` | number | Must equal `source.size_bytes` for successful writes; mismatch triggers alarm / failed import policy (§8). |
+| `stored_bytes` | number | Must equal `source.size_bytes` after a successful blob write; mismatch → treat as blob write failure (§8 **non-fatal** policy). |
 
 **Wire format**: extend **`GET /api/transaction-files`** and related TypeScript types so the SPA can show “archived” vs “metadata only” when **`blob`** is present. Optional later endpoint **`GET /api/transaction-files/:id/download`** returns **302** to a **short-lived presigned GET** (S3) or streams from disk (local) — not required for MVP retention slice.
 
@@ -161,10 +161,16 @@ sequenceDiagram
   Parse-->>API: ingest result
   alt feature enabled && ingest succeeded (policy)
     API->>Blob: put(body, importFileId, userId, …)
-    Blob-->>API: ImportBlobRef
-    API->>DDB: recordTransactionFile(..., blob: ref)
+    alt blob Put succeeds
+      Blob-->>API: ImportBlobRef
+      API->>DDB: recordTransactionFile(..., blob: ref)
+    else blob Put fails — V1 non-fatal (§8)
+      Blob-->>API: error
+      API->>DDB: recordTransactionFile(..., omit blob)
+      Note right of API: Still HTTP 200 + ImportParseResult; log + metric import.blob_write_failed
+    end
   else feature disabled or ingest aborted before record
-    Note over Blob,DDB: No blob write; or compensate (§8)
+    Note over Blob,DDB: No blob write; recordTransactionFile without blob when ingest completes
   end
 ```
 
@@ -176,11 +182,20 @@ sequenceDiagram
 
 ## 8. Failure modes
 
+**V1 deterministic policy — blob `Put` failure after successful ingest is non-fatal:** Transaction data and dashboard correctness take precedence over archival. If **`parseImportBatch`** / ingest and **`recordTransactionFile`** would otherwise succeed, a blob **`Put`** failure **must not** change **`POST /api/imports`** to **`5xx`**. Instead:
+
+1. **`recordTransactionFile`** with **metadata only** (omit **`blob`** on the **`TRANSACTION_FILE`** item).
+2. Return **`200 OK`** with the normal **`ImportParseResult`** body ([`api_contract.md`](./api_contract.md) §1).
+3. Emit structured log + metric **`import.blob_write_failed`** (include `importFileId`, `user_id`, storage backend, error class).
+
+Clients infer archival only from **`GET /api/transaction-files`** — presence of **`blob`** on that row — not from import **`200`** alone.
+
 | Scenario | Behaviour |
 |----------|-----------|
-| Blob **Put** fails after ingest succeeded | Return **5xx**; optionally still write `TRANSACTION_FILE` **without** `blob` and log error — or fail entire response until retry policy is defined. **Recommendation:** treat blob failure as **non-fatal** for MVP (persist txn + metadata, log + metric `import.blob_write_failed`) unless compliance requires hard failure. |
-| Dynamo **`recordTransactionFile`** fails after S3 Put | **Delete** object with same key (compensating `DeleteObject` / `unlink`) in `finally` or error path; retry Dynamo once. |
-| Local disk full | Surface **507** or **500** with structured log; do not partially truncate without detection — compare written size to buffer length. |
+| Blob **`Put`** fails after ingest succeeded | **Non-fatal (V1 — mandatory):** **`200`** + **`TRANSACTION_FILE` without `blob`**; log + **`import.blob_write_failed`** — see bullets above. **Do not** return **`5xx`** solely for blob failure (includes throttle, **`AccessDenied`**, disk full during **`Put`**) when the metadata-only **`recordTransactionFile`** succeeds. |
+| Dynamo **`recordTransactionFile`** fails after blob **`Put`** | **Delete** object with same key (compensating `DeleteObject` / `unlink`); retry Dynamo once; **`5xx`** if the **`TRANSACTION_FILE`** row cannot be persisted. |
+
+Detect incomplete **`Put`** (e.g. compare written bytes to buffer length); failed **`Put`** follows the **non-fatal** row above, not a silent partial object.
 
 ---
 
@@ -198,7 +213,7 @@ Terraform: create **`aws_s3_bucket.import_blob_archive`** (or reuse name from in
 
 ## 10. Testing strategy
 
-- **Unit**: mock `ImportBlobStore`; assert handler calls put with expected key and passes `blob` into `recordTransactionFile`.
+- **Unit**: mock `ImportBlobStore`; assert handler calls put with expected key and passes `blob` into `recordTransactionFile` on success; assert **`Put`** failure yields **`recordTransactionFile`** **without** `blob` and **`200`** response (**non-fatal** §8).
 - **Integration (local)**: temp directory store + DynamoDB Local; full `POST /api/imports` round-trip; assert file exists on disk and Dynamo contains `blob.content_sha256`.
 - **Integration (AWS optional)**: ephemeral bucket or prefix in dev account with teardown.
 

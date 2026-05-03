@@ -54,6 +54,14 @@ Optional fields are omitted when not applicable (e.g. `sourceFormat` when unknow
 | `existingTransactionsUpdated` | number (optional) | Existing rows whose cluster or embeddings changed. |
 | `newClustersTouched` | number (optional) | Distinct cluster ids in the new rows. |
 
+### Raw file archival (`IMPORT_BLOB_BACKEND`)
+
+When blob storage is **`filesystem`** or **`s3`** ([`import_file_blob_storage.md`](./import_file_blob_storage.md)), the server attempts to persist upload bytes and attach an optional **`blob`** map on the **`TRANSACTION_FILE`** row.
+
+**V1 policy — blob write failure is non-fatal:** If ingest succeeds but blob **`Put`** fails, **`POST /api/imports`** **still returns `200 OK`** with the same **`ImportParseResult`** shape above. The **`TRANSACTION_FILE`** item is written **without** **`blob`** (metadata only). The server **must** log and emit metric **`import.blob_write_failed`**. **`200` does not imply** raw bytes were archived — clients check **`GET /api/transaction-files`** for a **`blob`** field on the matching import row.
+
+When **`IMPORT_BLOB_BACKEND`** is **`off`**, no blob is attempted (legacy behaviour).
+
 After a successful import, subsequent **`GET /api/metrics`**, **`GET /api/transactions`**, **`GET /api/review-queue`**, **`GET /api/accounts`**, and **`GET /api/transaction-files`** responses must reflect the new data (including any new account).
 
 ### Accounts listing
@@ -117,7 +125,7 @@ Returns recorded uploads (one item per successful `POST /api/imports` that wrote
 
 | Field | Type | Notes |
 |--------|------|--------|
-| `transaction_files` | array | Each item matches **`TransactionFileRecord`** in [`db/src/types.ts`](../../../db/src/types.ts). **`user_id`**, **`id`**, **`account_id`** (string; empty for legacy files before accounts), **`source`** (upload: `name`, `size_bytes`, optional `content_type`), **`format`** (optional `source_format` when detected), **`timing`** (`started_at` / `completed_at`, epoch **ms** UTC), **`result`** (**camelCase** — same shape as `POST /api/imports` batch summary: `ImportIngestResult`). Newest first by `timing.completed_at`. |
+| `transaction_files` | array | Each item matches **`TransactionFileRecord`** in [`db/src/types.ts`](../../../db/src/types.ts). **`user_id`**, **`id`**, **`account_id`** (string; empty for legacy files before accounts), **`source`** (upload: `name`, `size_bytes`, optional `content_type`), **`format`** (optional `source_format` when detected), **`timing`** (`started_at` / `completed_at`, epoch **ms** UTC), **`result`** (**camelCase** — same shape as `POST /api/imports` batch summary: `ImportIngestResult`). Optional **`blob`** when raw archival succeeded ([`import_file_blob_storage.md`](./import_file_blob_storage.md)); omitted after a **non-fatal** blob **`Put`** failure on import (**`200`** still returned — see §1 **Raw file archival**). Newest first by `timing.completed_at`. |
 
 ## 2. Metrics Baseline Endpoint
 
@@ -356,7 +364,7 @@ Replaces **all** application-owned rows for the authenticated user with the cont
 | **403** | Backup **`app_user_id`** (or equivalent identity field in §8) does not match the authenticated user — restore rejected to prevent cross-user data injection. |
 | **401** | Unauthenticated. |
 | **409** | Restore already in progress: **`RESTORE_LOCK`** row exists on primary (**`SYSTEM#RESTORE_LOCK`** — [`database/data_model.md`](./database/data_model.md) §8.2a). |
-| **500** | Restore failed mid-workflow — see §8.2 **recovery** (retry copy from staging or ops intervention); clients should advise refresh after support confirms repair. |
+| **500** | Restore failed mid-workflow — see [`database/data_model.md`](./database/data_model.md) §8.2 (**Operational caveats** / **Why two tables**: retry staging→primary copy while staging still holds data; do not clear staging until primary copy succeeds). If **`RESTORE_LOCK`** remains, caller may use **`POST /api/backup/restore/abort`** ([Abort restore cleanup](#abort-restore-cleanup-unlock-after-failure)); advise refresh after cleanup or ops confirms repair. |
 
 #### Client obligations after success
 
