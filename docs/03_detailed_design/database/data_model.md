@@ -226,7 +226,7 @@ Explicit **single-flight** marker on the **primary** table so **`POST /api/backu
 | `PK` | `USER#<user_id>` |
 | `SK` | **`SYSTEM#RESTORE_LOCK`** (constant — add e.g. `RESTORE_LOCK_SK` in `db/src/keys.ts`) |
 
-**Attributes (suggested):** `user_id` (String); **`restore_started_at`** (Number, epoch ms UTC); optional **`backup_schema_version`** (Number). Does **not** use GSI1/GSI2.
+**Attributes (suggested):** `user_id` (String); **`restore_started_at`** (Number, epoch ms UTC — readers should tolerate absence on legacy/corrupt items); optional **`backup_schema_version`** (Number). Does **not** use GSI1/GSI2.
 
 **Lifecycle**
 

@@ -88,7 +88,8 @@ export interface MetricsSnapshot {
 export interface RestoreLockRecord {
   entity_type: 'RESTORE_LOCK';
   user_id: string;
-  restore_started_at: number;
+  /** Epoch ms UTC; omitted when the row is missing this attribute or it is unreadable (legacy/corrupt). */
+  restore_started_at?: number;
   backup_schema_version?: number;
 }
 

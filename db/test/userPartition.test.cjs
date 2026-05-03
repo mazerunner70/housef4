@@ -128,7 +128,7 @@ test('collectUserPartitionItems concatenates pages', async (t) => {
   assert.equal(all.length, 2);
 });
 
-test('deleteUserPartition skips RESTORE_LOCK when excludeRestoreLock defaults true', async (t) => {
+test('deleteUserPartition skips RESTORE_LOCK on primary when option omitted', async (t) => {
   withEnv(t, { DYNAMODB_TABLE_NAME: 'tbl' });
   const deleted = [];
   const docClient = {
@@ -183,9 +183,41 @@ test('deleteUserPartition on restore_staging uses DYNAMODB_RESTORE_STAGING_TABLE
     docClient,
     dataset: 'restore_staging',
     userId: 'u',
-    excludeRestoreLock: false,
   });
   assert.equal(queryTable, 'staging-tbl');
+});
+
+test('deleteUserPartition on restore_staging deletes RESTORE_LOCK SK if present', async (t) => {
+  withEnv(t, {
+    DYNAMODB_RESTORE_STAGING_TABLE_NAME: 'staging-tbl',
+  });
+  const deleted = [];
+  const docClient = {
+    send(cmd) {
+      if (cmd instanceof QueryCommand) {
+        return Promise.resolve({
+          Items: [
+            { PK: userPk('u'), SK: 'PROFILE' },
+            { PK: userPk('u'), SK: RESTORE_LOCK_SK },
+          ],
+        });
+      }
+      if (cmd instanceof BatchWriteCommand) {
+        const reqs = cmd.input.RequestItems?.['staging-tbl'] ?? [];
+        for (const r of reqs) {
+          deleted.push(String(r.DeleteRequest?.Key?.SK ?? ''));
+        }
+        return Promise.resolve({});
+      }
+      assert.fail('unexpected command');
+    },
+  };
+  await deleteUserPartition({
+    docClient,
+    dataset: 'restore_staging',
+    userId: 'u',
+  });
+  assert.deepEqual(deleted.sort(), [RESTORE_LOCK_SK, 'PROFILE'].sort());
 });
 
 test('deleteUserPartition rejects when staging env is missing', async (t) => {
@@ -209,35 +241,6 @@ test('deleteUserPartition rejects when staging env is missing', async (t) => {
       }),
     /DYNAMODB_RESTORE_STAGING_TABLE_NAME/,
   );
-});
-
-test('deleteUserPartition includes RESTORE_LOCK when excludeRestoreLock is false', async (t) => {
-  withEnv(t, { DYNAMODB_TABLE_NAME: 'tbl' });
-  const deleted = [];
-  const docClient = {
-    send(cmd) {
-      if (cmd instanceof QueryCommand) {
-        return Promise.resolve({
-          Items: [{ PK: userPk('z'), SK: RESTORE_LOCK_SK }],
-        });
-      }
-      if (cmd instanceof BatchWriteCommand) {
-        const reqs = cmd.input.RequestItems?.tbl ?? [];
-        for (const r of reqs) {
-          deleted.push(String(r.DeleteRequest?.Key?.SK ?? ''));
-        }
-        return Promise.resolve({});
-      }
-      assert.fail('unexpected command');
-    },
-  };
-  await deleteUserPartition({
-    docClient,
-    dataset: 'primary',
-    userId: 'z',
-    excludeRestoreLock: false,
-  });
-  assert.deepEqual(deleted, [RESTORE_LOCK_SK]);
 });
 
 test('acquireRestoreLock succeeds on conditional put against DYNAMODB_TABLE_NAME', async (t) => {
@@ -293,6 +296,30 @@ test('releaseRestoreLock sends DeleteCommand with primary table from env', async
     SK: RESTORE_LOCK_SK,
   });
   assert.equal(got.input.TableName, 'prim');
+});
+
+test('getRestoreLock omits restore_started_at when missing or invalid', async (t) => {
+  withEnv(t, { DYNAMODB_TABLE_NAME: 't-rest' });
+  for (const item of [{ restore_started_at: 'nope' }, {}]) {
+    const docClient = {
+      send() {
+        return Promise.resolve({
+          Item: {
+            entity_type: 'RESTORE_LOCK',
+            user_id: 'u99',
+            ...item,
+            PK: userPk('u99'),
+            SK: RESTORE_LOCK_SK,
+          },
+        });
+      },
+    };
+    const row = await getRestoreLock(docClient, 'u99');
+    assert.deepEqual(row, {
+      entity_type: 'RESTORE_LOCK',
+      user_id: 'u99',
+    });
+  }
 });
 
 test('getRestoreLock parses saved row using DYNAMODB_TABLE_NAME', async (t) => {

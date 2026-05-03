@@ -134,20 +134,17 @@ export interface DeleteUserPartitionOptions {
   docClient: DynamoDBDocumentClient;
   dataset: UserPartitionDataset;
   userId: string;
-  /**
-   * When true, skip `SK = RESTORE_LOCK_SK` deletes (primary partition wipe mid-restore).
-   * @default true — matches `data_model.md` 8.2a preservation during destructive primary steps.
-   */
-  excludeRestoreLock?: boolean;
   pageLimit?: number;
 }
 
 /**
  * Deletes every item under `PK = USER#<userId>` using paginated `Query` + `BatchWriteItem`
- * deletes. Safe for staging full-partition clears and primary wipes (with exclude lock).
+ * deletes. On **`primary`**, omits `RESTORE_LOCK_SK` so the single-flight lock survives
+ * mid-restore wipes (`data_model.md` 8.2a); use **`releaseRestoreLock`** to remove it. On
+ * **`restore_staging`**, deletes every sort key under the partition.
  */
 export async function deleteUserPartition(opts: DeleteUserPartitionOptions): Promise<void> {
-  const excludeLock = opts.excludeRestoreLock ?? true;
+  const excludeLock = opts.dataset === 'primary';
   const pk = userPk(opts.userId);
   const pageLimit = opts.pageLimit ?? 1000;
   const tableName = resolveUserPartitionDataset(opts.dataset);
@@ -255,12 +252,14 @@ export async function getRestoreLock(
   const item = res.Item as Record<string, unknown> | undefined;
   if (item?.entity_type !== 'RESTORE_LOCK') return null;
   const persistedUserId = item.user_id;
+  const restore_started_at = parseOptionalFiniteNumber(item.restore_started_at);
+  const backup_schema_version = parseOptionalFiniteNumber(
+    item.backup_schema_version,
+  );
   return {
     entity_type: 'RESTORE_LOCK',
     user_id: typeof persistedUserId === 'string' ? persistedUserId : userId,
-    restore_started_at: Number(item.restore_started_at ?? 0),
-    backup_schema_version: parseOptionalFiniteNumber(
-      item.backup_schema_version,
-    ),
+    ...(restore_started_at === undefined ? {}: { restore_started_at } ),
+    ...(backup_schema_version === undefined ? {}: { backup_schema_version } ),
   };
 }
