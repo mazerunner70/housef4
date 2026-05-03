@@ -273,3 +273,149 @@ Confirms a match from the review queue.
 | Field | Type | Notes |
 |--------|------|--------|
 | `updated_transactions` | number | Count of transaction rows updated by applying the rule. |
+
+## 6. Backup & restore (user data safety)
+
+Product requirements: **[`docs/01_discovery/stage_1_understanding_mvp.md`](../../01_discovery/stage_1_understanding_mvp.md)** §2 **Backup & restore**. Export creates a **portable snapshot** of the authenticated user’s **persisted application metadata** (DynamoDB entities — **not** raw import file bytes in V1); restore **fully replaces** all user-scoped application data covered by the backup — **no merge**, **no union** with existing rows (see [`database/data_model.md`](./database/data_model.md) §8).
+
+**V1 engineering decisions (locked):**
+
+| Topic | Decision |
+|-------|-----------|
+| Export transport | **Synchronous only** — `GET /api/backup/export` builds the full JSON in the Lambda/request lifecycle (no job queue in V1). |
+| Payload scope | **Metadata / structured store only** — same entities as §8.1; **`transaction_files`** rows without embedding raw upload bytes (optional **`blob`** descriptors may be omitted). |
+| Restore durability | **Staging table** — validate backup → write **staging** DynamoDB table → validate → delete user **partition** on **primary** (excluding lock row) → copy staging → primary → clear staging (§8.2). |
+| Staging table name | Includes **`restores_in_progress`** — e.g. **`${project_id}-${environment}-restores-in-progress`** ([`database/data_model.md`](./database/data_model.md) §8.4). |
+| Single-flight restore | **`RESTORE_LOCK`** item on **primary**, **`SK = SYSTEM#RESTORE_LOCK`** — **409** if lock already exists ([`database/data_model.md`](./database/data_model.md) §8.2a). |
+| Worst-case size | **~15,000 transactions** per user (+ smaller entity counts); size Lambda/API timeouts and parallel **`BatchWriteItem`** accordingly ([`database/data_model.md`](./database/data_model.md) §8.2). |
+| Abort stuck restore | **`POST /api/backup/restore/abort`** — **`RESTORE_LOCK`** on primary **first**, then staging partition ([`database/data_model.md`](./database/data_model.md) §8.2b); **does not** cancel an actively executing Lambda. |
+
+### Backup export
+
+**`GET /api/backup/export`**
+
+Returns a single downloadable artifact representing the user’s restorable state (**synchronous** — caller waits until the JSON body is complete).
+
+#### Response
+
+- **Success:** **`200 OK`** with body **`application/json`** (UTF-8). Clients should persist it as a file (e.g. `housef4-backup-<timestamp>.json`). Optionally the server may send **`Content-Disposition: attachment`** with a suggested filename.
+- **Headers:** `Content-Type: application/json; charset=utf-8`.
+
+The JSON document MUST conform to the **logical backup snapshot** schema in [`database/data_model.md`](./database/data_model.md) §8 (`backup_schema_version`, `exported_at`, entity arrays). Field names inside entity records follow the same **`snake_case`** conventions as **`GET /api/transactions`**, **`GET /api/accounts`**, **`GET /api/transaction-files`**, and **`GET /api/review-queue`**—extended with any persisted attributes omitted from read APIs today only where required for a **lossless round-trip** (document those extensions in the data model).
+
+#### Errors
+
+| Status | Meaning |
+|--------|---------|
+| **401** | Unauthenticated. |
+| **500** | Export failed (partial response body must not be sent as success — fail the request). |
+
+**Limits:** V1 targets **up to ~15,000 transactions** per user (plus other entities). **`GET /api/backup/export`** must complete within Lambda/API limits — raise integration timeouts where supported; **parallelize** JSON assembly only if measured necessary. Async export remains **out of scope** until required.
+
+---
+
+### Restore (full overwrite)
+
+**`POST /api/backup/restore`**
+
+Replaces **all** application-owned rows for the authenticated user with the contents encoded in the uploaded backup file. Implementation follows **`database/data_model.md`** §8.2 **staging workflow** (validate → staging table → replace primary partition).
+
+#### Request
+
+- **`multipart/form-data`** with a single part **`backup`** — the **exact** JSON file bytes previously obtained from **`GET /api/backup/export`** (same `backup_schema_version` the server supports).
+- **`Content-Type`** of the part should be `application/json` or `application/octet-stream`.
+
+#### Response payload
+
+```json
+{
+  "success": true,
+  "restored": {
+    "accounts": 2,
+    "transactions": 340,
+    "clusters": 12,
+    "transaction_files": 5,
+    "profile": true,
+    "metrics": true
+  },
+  "completed_at": 1775044800000
+}
+```
+
+| Field | Type | Notes |
+|--------|------|--------|
+| `success` | boolean | `true` when the **staging workflow** completed: primary table’s user partition matches the restored snapshot (see [`database/data_model.md`](./database/data_model.md) §8.2). |
+| `restored` | object | Counts of rows written per collection; `profile` / `metrics` are booleans when those singleton items exist in the backup. |
+| `completed_at` | number | Epoch **ms** UTC when restore finished. |
+
+#### Errors
+
+| Status | Meaning |
+|--------|---------|
+| **400** | Missing **`backup`** part, malformed JSON, unsupported **`backup_schema_version`**, failed semantic validation (e.g. transaction references unknown `transaction_file_id`). |
+| **403** | Backup **`app_user_id`** (or equivalent identity field in §8) does not match the authenticated user — restore rejected to prevent cross-user data injection. |
+| **401** | Unauthenticated. |
+| **409** | Restore already in progress: **`RESTORE_LOCK`** row exists on primary (**`SYSTEM#RESTORE_LOCK`** — [`database/data_model.md`](./database/data_model.md) §8.2a). |
+| **500** | Restore failed mid-workflow — see §8.2 **recovery** (retry copy from staging or ops intervention); clients should advise refresh after support confirms repair. |
+
+#### Client obligations after success
+
+Invalidate all cached queries (**transactions**, **metrics**, **review-queue**, **accounts**, **transaction-files**) and refetch or reload the SPA — identifiers from before restore may no longer exist.
+
+---
+
+### Abort restore cleanup (unlock after failure)
+
+**`POST /api/backup/restore/abort`**
+
+When **`RESTORE_LOCK`** is present (**restore flagged in progress**), the user may call this endpoint to **clear** that state and **delete their partition on the staging table**, so a **new** **`POST /api/backup/restore`** can run (**409** would otherwise block).
+
+**V1 assumption:** This endpoint performs **cleanup only**. It **does not** signal or terminate a Lambda execution that is still processing a restore. Product stance for now: use abort **after** a restore attempt **already failed or stalled** (e.g. **500**, timeout, incomplete UI state leaving the lock behind — [`database/data_model.md`](./database/data_model.md) §8.2b).
+
+**Processing order (mandatory):** **`DeleteItem`** **`RESTORE_LOCK`** on **primary** **first**, **then** paginated deletes on the **staging** partition ([`database/data_model.md`](./database/data_model.md) §8.2b). Rationale: **`409`** clears immediately; staging cleanup can span many batches without delaying unlock.
+
+#### Request
+
+- Empty body; **`POST`** with usual session **`Authorization`**.
+
+#### Response payload
+
+```json
+{
+  "success": true,
+  "restore_lock_cleared": true,
+  "staging_partition_cleared": true,
+  "completed_at": 1775044800000
+}
+```
+
+Example body when staging cleanup fails **after** lock removal (**`500`** status — **`success`** reflects outcome):
+
+```json
+{
+  "success": false,
+  "restore_lock_cleared": true,
+  "staging_partition_cleared": false,
+  "completed_at": 1775044800000
+}
+```
+
+| Field | Type | Notes |
+|--------|------|--------|
+| `success` | boolean | **`true`** only on **`200`** when **both** lock handling (delete or absent) **and** staging cleanup **finished successfully**. **`false`** when returned with **`500`** partial failure body (see below). |
+| `restore_lock_cleared` | boolean | **`true`** if **`RESTORE_LOCK`** (**`SYSTEM#RESTORE_LOCK`**) existed on primary and was deleted; **`false`** if there was no lock (**idempotent**). May be **`true`** on a **`500`** response if staging cleanup failed **after** the lock was removed (see below). |
+| `staging_partition_cleared` | boolean | **`true`** only when staging **`Query`/`BatchWriteItem`** deletes **completed** for **`PK = USER#<user_id>`**. **`false`** on **`500`** if cleanup stopped mid-way (retry abort). |
+| `completed_at` | number | Epoch **ms** UTC when abort cleanup finished (**includes partial attempts** — set when the handler exits). |
+
+**Partial failure:** Because the lock is cleared **before** staging partition deletes finish, a timeout or throttle **during** staging cleanup may yield **`500`** **after** **`RESTORE_LOCK`** is already gone. Implementations **SHOULD** return a JSON body when practical with **`success`: `false`**, **`restore_lock_cleared`: `true`**, **`staging_partition_cleared`: `false`** so clients know **`409`** is lifted and they may **retry** **`POST /api/backup/restore/abort`** (**idempotent**) until **`200`** with **`staging_partition_cleared`: `true`** (staging empty). **`POST /api/backup/restore`** may proceed once **`restore_lock_cleared`** is effective even if staging still holds debris — the next restore’s step 2 **clears staging** before writing.
+
+#### Errors
+
+| Status | Meaning |
+|--------|---------|
+| **401** | Unauthenticated. |
+| **500** | Unexpected failure **during lock delete and/or staging cleanup**. Retry abort (**idempotent**). If **`RESTORE_LOCK`** was already deleted, **`409`** will **not** apply on **`POST /api/backup/restore`**; retry abort until staging is drained if **`staging_partition_cleared`** remains **`false`**. |
+
+### Alignment with discovery PRD
+
+Restore semantics are **full overwrite only**: merging backup data with current DynamoDB rows is **explicitly out of scope** unless the PRD is revised.
