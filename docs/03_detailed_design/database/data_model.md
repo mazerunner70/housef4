@@ -14,6 +14,7 @@ This is the **canonical description** of how persisted application data is store
 | [`db/src/keys.ts`](../../../db/src/keys.ts) | Key string helpers: `USER#`, `TXN#`, `CLUSTER#`, `FILE#`, GSI1 composite keys. |
 | [`db/src/dynamoFinanceRepository.ts`](../../../db/src/dynamoFinanceRepository.ts) | Read and write implementation (queries, batch writes, tag rules, `recordTransactionFile` / `listTransactionFiles`). |
 | [`db/src/dashboardMetrics.ts`](../../../db/src/dashboardMetrics.ts) | Pure helpers: `computeDashboardMetrics`, `parseStoredDashboardMetrics` (transaction-derived dashboard snapshot). |
+| [`db/src/userPartition.ts`](../../../db/src/userPartition.ts) | Paginated user-partition `Query` / batch deletes (`dataset` selects `DYNAMODB_TABLE_NAME` vs `DYNAMODB_RESTORE_STAGING_TABLE_NAME`); restore lock helpers target **primary** only. |
 | [`infrastructure/main.tf`](../../../infrastructure/main.tf) | `aws_dynamodb_table` definition (hash/range, GSI1). |
 | `infrastructure/dynamodb_health_item.tf` | System row `PK=health-check`, `SK=BUILD` for health metadata (out of application domain). |
 
