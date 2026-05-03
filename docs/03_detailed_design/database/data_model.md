@@ -14,6 +14,7 @@ This is the **canonical description** of how persisted application data is store
 | [`db/src/keys.ts`](../../../db/src/keys.ts) | Key string helpers: `USER#`, `TXN#`, `CLUSTER#`, `FILE#`, GSI1 composite keys. |
 | [`db/src/dynamoFinanceRepository.ts`](../../../db/src/dynamoFinanceRepository.ts) | Read and write implementation (queries, batch writes, tag rules, `recordTransactionFile` / `listTransactionFiles`). |
 | [`db/src/dashboardMetrics.ts`](../../../db/src/dashboardMetrics.ts) | Pure helpers: `computeDashboardMetrics`, `parseStoredDashboardMetrics` (transaction-derived dashboard snapshot). |
+| [`db/src/userPartition.ts`](../../../db/src/userPartition.ts) | Paginated user-partition `Query` / batch deletes (`dataset` selects `DYNAMODB_TABLE_NAME` vs `DYNAMODB_RESTORE_STAGING_TABLE_NAME`); restore lock helpers target **primary** only. |
 | [`infrastructure/main.tf`](../../../infrastructure/main.tf) | `aws_dynamodb_table` definition (hash/range, GSI1). |
 | `infrastructure/dynamodb_health_item.tf` | System row `PK=health-check`, `SK=BUILD` for health metadata (out of application domain). |
 
@@ -225,7 +226,7 @@ Explicit **single-flight** marker on the **primary** table so **`POST /api/backu
 | `PK` | `USER#<user_id>` |
 | `SK` | **`SYSTEM#RESTORE_LOCK`** (constant — add e.g. `RESTORE_LOCK_SK` in `db/src/keys.ts`) |
 
-**Attributes (suggested):** `user_id` (String); **`restore_started_at`** (Number, epoch ms UTC); optional **`backup_schema_version`** (Number). Does **not** use GSI1/GSI2.
+**Attributes (suggested):** `user_id` (String); **`restore_started_at`** (Number, epoch ms UTC — readers should tolerate absence on legacy/corrupt items); optional **`backup_schema_version`** (Number). Does **not** use GSI1/GSI2.
 
 **Lifecycle**
 

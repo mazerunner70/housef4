@@ -84,6 +84,15 @@ export interface MetricsSnapshot {
   net_worth_change_pct?: number;
 }
 
+/** Transient marker on primary table during `POST /api/backup/restore` (see `database/data_model.md` 8.2a). */
+export interface RestoreLockRecord {
+  entity_type: 'RESTORE_LOCK';
+  user_id: string;
+  /** Epoch ms UTC; omitted when the row is missing this attribute or it is unreadable (legacy/corrupt). */
+  restore_started_at?: number;
+  backup_schema_version?: number;
+}
+
 /** One normalized row produced by import parsing before persistence. */
 export interface ImportTransactionInput {
   /** Must match the `userId` passed to `ingestImportBatch`. */

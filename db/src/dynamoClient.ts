@@ -54,3 +54,14 @@ export function requireTableName(): string {
   }
   return name;
 }
+
+/** Restore-staging replica of the primary key design (`lambda_api.tf` → `DYNAMODB_RESTORE_STAGING_TABLE_NAME`). */
+export function requireRestoreStagingTableName(): string {
+  const name = process.env.DYNAMODB_RESTORE_STAGING_TABLE_NAME?.trim();
+  if (!name) {
+    throw new Error(
+      'DYNAMODB_RESTORE_STAGING_TABLE_NAME must be set when using the restore staging table',
+    );
+  }
+  return name;
+}

@@ -5,8 +5,8 @@ resource "aws_dynamodb_table_item" "health_check" {
   range_key  = aws_dynamodb_table.app_table.range_key
 
   item = jsonencode({
-    PK = { S = "health-check" }
-    SK = { S = "BUILD" }
+    PK   = { S = "health-check" }
+    SK   = { S = "BUILD" }
     text = { S = var.health_check_build_label }
   })
 }

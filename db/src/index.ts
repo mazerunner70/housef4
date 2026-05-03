@@ -1,8 +1,9 @@
 export * from './types';
 export * from './keys';
+export * from './userPartition';
 export type { FinanceRepository } from './dynamoFinanceRepository';
 export { DynamoFinanceRepository } from './dynamoFinanceRepository';
-export { getDocumentClient, requireTableName } from './dynamoClient';
+export { getDocumentClient, requireRestoreStagingTableName, requireTableName } from './dynamoClient';
 export {
   HEALTH_CHECK_PK,
   HEALTH_CHECK_SK,

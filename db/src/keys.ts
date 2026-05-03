@@ -1,7 +1,11 @@
 /**
- * Single-table key helpers: PK = USER#<id>, SK = TXN#... | CLUSTER#... | PROFILE | METRICS.
+ * Single-table key helpers: PK = USER#<id>, SK = TXN#... | CLUSTER#... | PROFILE | METRICS |
+ * SYSTEM#RESTORE_LOCK (see `RESTORE_LOCK_SK`).
  * See `docs/03_detailed_design/database/data_model.md` for the full key and GSI1 layout.
  */
+
+/** Prefix for synthetic system rows on a user partition (restore single-flight lock). */
+export const SYSTEM_PREFIX = 'SYSTEM#';
 
 export const USER_PREFIX = 'USER#';
 export const TXN_PREFIX = 'TXN#';
@@ -13,6 +17,8 @@ export const ACCOUNT_PREFIX = 'ACCOUNT#';
 export const PROFILE_SK = 'PROFILE';
 /** Stored dashboard aggregates (transaction-derived); one item per user. */
 export const METRICS_SK = 'METRICS';
+/** In-progress restore lock; `entity_type`: `RESTORE_LOCK` (see `data_model.md` 8.2a). */
+export const RESTORE_LOCK_SK = `${SYSTEM_PREFIX}RESTORE_LOCK`;
 
 export function userPk(userId: string): string {
   return `${USER_PREFIX}${userId}`;
