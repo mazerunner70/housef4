@@ -63,6 +63,23 @@ resource "aws_iam_role_policy" "api_lambda_dynamodb" {
           aws_dynamodb_table.app_table.arn,
           "${aws_dynamodb_table.app_table.arn}/index/*",
         ]
+      },
+      {
+        Sid    = "RestoreStagingTable"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Query",
+          "dynamodb:BatchGetItem",
+          "dynamodb:BatchWriteItem",
+        ]
+        Resource = [
+          aws_dynamodb_table.restore_staging.arn,
+          "${aws_dynamodb_table.restore_staging.arn}/index/*",
+        ]
       }
     ]
   })
@@ -81,8 +98,9 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = {
-      APP_ENV             = var.app_env
-      DYNAMODB_TABLE_NAME = aws_dynamodb_table.app_table.name
+      APP_ENV                             = var.app_env
+      DYNAMODB_TABLE_NAME                 = aws_dynamodb_table.app_table.name
+      DYNAMODB_RESTORE_STAGING_TABLE_NAME = aws_dynamodb_table.restore_staging.name
     }
   }
 

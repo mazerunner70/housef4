@@ -13,6 +13,16 @@ output "dynamodb_app_table_arn" {
   value       = aws_dynamodb_table.app_table.arn
 }
 
+output "dynamodb_restore_staging_table_name" {
+  description = "Restore staging DynamoDB table name (backup/restore workflow; data_model.md §8.4)"
+  value       = aws_dynamodb_table.restore_staging.name
+}
+
+output "dynamodb_restore_staging_table_arn" {
+  description = "Restore staging DynamoDB table ARN"
+  value       = aws_dynamodb_table.restore_staging.arn
+}
+
 output "lambda_api_function_name" {
   description = "API Lambda function name"
   value       = aws_lambda_function.api.function_name
