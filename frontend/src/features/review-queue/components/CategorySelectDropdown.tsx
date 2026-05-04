@@ -19,12 +19,15 @@ export function CategorySelectDropdown({
   disabled,
   id,
   onOpenChange,
-}: CategorySelectDropdownProps) {
+}: Readonly<CategorySelectDropdownProps>) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const rootRef = useRef<HTMLDivElement>(null)
   const onOpenChangeRef = useRef(onOpenChange)
-  onOpenChangeRef.current = onOpenChange
+
+  useEffect(() => {
+    onOpenChangeRef.current = onOpenChange
+  }, [onOpenChange])
 
   useEffect(() => {
     onOpenChangeRef.current?.(open)
@@ -45,6 +48,8 @@ export function CategorySelectDropdown({
     return TAXONOMY_CATEGORIES.filter((c) => c.toLowerCase().includes(q))
   }, [query])
 
+  const listId = `${id ?? 'cat'}-category-suggestions`
+
   return (
     <div
       ref={rootRef}
@@ -59,8 +64,9 @@ export function CategorySelectDropdown({
           'flex w-full items-center justify-between gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-left text-sm text-[var(--color-text-strong)]',
           disabled && 'opacity-50',
         )}
-        aria-haspopup="listbox"
+        aria-haspopup="true"
         aria-expanded={open}
+        aria-controls={open ? listId : undefined}
       >
         <span className="truncate">{value || 'Choose category'}</span>
         <Search className="size-4 shrink-0 opacity-60" aria-hidden />
@@ -68,7 +74,6 @@ export function CategorySelectDropdown({
       {open && (
         <div
           className="absolute z-20 mt-1 w-full overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg"
-          role="listbox"
         >
           <div className="border-b border-[var(--color-border)] p-2">
             <label className="sr-only" htmlFor={`${id ?? 'cat'}-search`}>
@@ -83,11 +88,12 @@ export function CategorySelectDropdown({
               className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-2 py-1.5 text-sm text-[var(--color-text-strong)] outline-none focus:ring-2 focus:ring-[var(--color-accent)]"
             />
           </div>
-          <ul className="max-h-48 overflow-auto py-1">
+          <ul id={listId} className="max-h-48 overflow-auto py-1">
             {filtered.map((cat) => (
-              <li key={cat} role="option" aria-selected={cat === value}>
+              <li key={cat} className="list-none">
                 <button
                   type="button"
+                  aria-current={cat === value ? true : undefined}
                   className={cn(
                     'w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-accent-soft)]',
                     cat === value && 'bg-[var(--color-accent-soft)] font-medium',

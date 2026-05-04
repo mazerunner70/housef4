@@ -22,7 +22,7 @@ function formatAmount(n: number): string {
 export function ClusterMatchingTransactionsDialog({
   clusterId,
   onClose,
-}: ClusterMatchingTransactionsDialogProps) {
+}: Readonly<ClusterMatchingTransactionsDialogProps>) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const titleId = useId()
   const query = useTransactionsByCluster(clusterId, true)
@@ -31,7 +31,7 @@ export function ClusterMatchingTransactionsDialog({
     const d = dialogRef.current
     if (d && !d.open) d.showModal()
     return () => {
-      dialogRef.current?.close()
+      d?.close()
     }
   }, [])
 

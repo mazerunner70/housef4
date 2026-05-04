@@ -5,6 +5,9 @@ export type { FinanceRepository } from './dynamoFinanceRepository';
 export { DynamoFinanceRepository } from './dynamoFinanceRepository';
 export {
   BackupRestoreClientError,
+  RestoreAbortStagingCleanupError,
+  RESTORE_ABORT_STAGING_CLEANUP_CODE,
+  runRestoreAbortWorkflow,
   runRestoreBackupWorkflow,
   validateBackupSnapshotForRestore,
 } from './backupRestore';

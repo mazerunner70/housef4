@@ -1,6 +1,6 @@
 import { getAccountsPayload } from './handlers/accounts';
 import { getBackupExportPayload } from './handlers/backupExport';
-import { postBackupRestorePayload } from './handlers/backupRestore';
+import { postBackupRestoreAbortPayload, postBackupRestorePayload } from './handlers/backupRestore';
 import { getHealthPayload } from './handlers/health';
 import { postImportPayload } from './handlers/imports';
 import { getMePayload } from './handlers/me';
@@ -145,6 +145,12 @@ const authenticatedPostRoutes: AuthenticatedPostRoute[] = [
     routeLog: 'backup/restore',
     handler: async (uid, req) =>
       jsonResponse(200, await postBackupRestorePayload(uid, req)),
+  },
+  {
+    tail: ['backup', 'restore', 'abort'],
+    routeLog: 'backup/restore/abort',
+    handler: async (uid) =>
+      jsonResponse(200, await postBackupRestoreAbortPayload(uid)),
   },
 ];
 

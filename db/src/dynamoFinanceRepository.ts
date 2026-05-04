@@ -23,7 +23,7 @@ import {
   userPk,
 } from './keys';
 import { getDocumentClient, requireTableName } from './dynamoClient';
-import { runRestoreBackupWorkflow } from './backupRestore';
+import { runRestoreAbortWorkflow, runRestoreBackupWorkflow } from './backupRestore';
 import { collectUserPartitionItems } from './userPartition';
 import {
   computeDashboardMetrics,
@@ -320,6 +320,11 @@ export interface FinanceRepository {
     userId: string,
     snapshot: BackupSnapshotV1,
   ): Promise<BackupRestoreCounts>;
+  /**
+   * Clear restore lock on primary then staging partition (`api_contract.md` §6 abort).
+   * On staging cleanup failure after lock handling, rejects with `RestoreAbortStagingCleanupError`.
+   */
+  abortRestoreCleanup(userId: string): Promise<{ restore_lock_cleared: boolean }>;
 }
 
 interface ClusterItem {
@@ -1435,5 +1440,11 @@ export class DynamoFinanceRepository implements FinanceRepository {
       snapshot,
       refreshMetrics: () => this.refreshStoredDashboardMetrics(userId),
     });
+  }
+
+  async abortRestoreCleanup(
+    userId: string,
+  ): Promise<{ restore_lock_cleared: boolean }> {
+    return runRestoreAbortWorkflow({ doc: this.doc, userId });
   }
 }

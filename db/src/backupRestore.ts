@@ -29,10 +29,32 @@ import {
 } from './types';
 import {
   acquireRestoreLock,
+  deleteRestoreLockIfPresent,
   deleteUserPartition,
   queryUserPartitionPages,
   releaseRestoreLock,
 } from './userPartition';
+
+/** Discriminant for {@link RestoreAbortStagingCleanupError} (stable across duplicate package installs). */
+export const RESTORE_ABORT_STAGING_CLEANUP_CODE =
+  'RESTORE_ABORT_STAGING_CLEANUP' as const;
+
+/** Staging partition cleanup failed after the primary lock step (`api_contract.md` §6 abort partial failure). */
+export class RestoreAbortStagingCleanupError extends Error {
+  readonly code = RESTORE_ABORT_STAGING_CLEANUP_CODE;
+
+  constructor(
+    readonly restore_lock_cleared: boolean,
+    cause?: unknown,
+  ) {
+    const message =
+      cause instanceof Error
+        ? cause.message
+        : 'Staging partition cleanup failed during restore abort';
+    super(message, cause instanceof Error ? { cause } : undefined);
+    this.name = 'RestoreAbortStagingCleanupError';
+  }
+}
 
 /** Client errors mapped to HTTP 400 / 403 before or after lock acquire (with lock released when safe). */
 export class BackupRestoreClientError extends Error {
@@ -627,6 +649,29 @@ export interface RunRestoreBackupWorkflowOptions {
   userId: string;
   snapshot: BackupSnapshotV1;
   refreshMetrics: () => Promise<void>;
+}
+
+/**
+ * Restore abort (`api_contract.md` §6): **`RESTORE_LOCK`** on primary first, then staging partition deletes.
+ */
+export async function runRestoreAbortWorkflow(opts: {
+  doc: DynamoDBDocumentClient;
+  userId: string;
+}): Promise<{ restore_lock_cleared: boolean }> {
+  const restore_lock_cleared = await deleteRestoreLockIfPresent(
+    opts.doc,
+    opts.userId,
+  );
+  try {
+    await deleteUserPartition({
+      docClient: opts.doc,
+      dataset: 'restore_staging',
+      userId: opts.userId,
+    });
+  } catch (e) {
+    throw new RestoreAbortStagingCleanupError(restore_lock_cleared, e);
+  }
+  return { restore_lock_cleared };
 }
 
 /**

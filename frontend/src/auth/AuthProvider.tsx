@@ -8,7 +8,7 @@ import { isCognitoConfigured } from './cognitoConfig'
 import { getAuthUiMode, getLocalUserId } from './authUiMode'
 import { emailFromIdToken } from './jwtPayload'
 
-export function AuthProvider({ children }: { children: ReactNode }) {
+export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
   const authUiMode = getAuthUiMode()
   const localUserId = getLocalUserId()
   const cognitoConfigured = isCognitoConfigured()
@@ -25,17 +25,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (authUiMode === 'local') {
       setBearerTokenResolver(undefined)
-      setReady(true)
-      setIsAuthenticated(false)
-      setUserEmail(undefined)
+      queueMicrotask(() => {
+        setReady(true)
+        setIsAuthenticated(false)
+        setUserEmail(undefined)
+      })
       return
     }
 
     if (!cognitoConfigured) {
       setBearerTokenResolver(undefined)
-      setReady(true)
-      setIsAuthenticated(false)
-      setUserEmail(undefined)
+      queueMicrotask(() => {
+        setReady(true)
+        setIsAuthenticated(false)
+        setUserEmail(undefined)
+      })
       return
     }
 

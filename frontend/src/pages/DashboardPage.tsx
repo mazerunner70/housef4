@@ -29,7 +29,10 @@ export function DashboardPage() {
   >(null)
 
   const metrics = metricsQuery.data
-  const transactions = transactionsQuery.data?.transactions ?? []
+  const transactions = useMemo(
+    () => transactionsQuery.data?.transactions ?? [],
+    [transactionsQuery.data],
+  )
 
   const categoryPane = useMemo((): {
     categories: SpendingCategoryRow[]
