@@ -97,6 +97,8 @@ export async function postBackupRestorePayload(
     log.error('backup.restore.handler_failed', {
       userIdLen: userId.length,
       err: e instanceof Error ? e.message : String(e),
+      errName: e instanceof Error ? e.name : undefined,
+      stack: e instanceof Error ? e.stack : undefined,
     });
     throw new HttpError(500, 'Restore failed', { error: 'Restore failed' });
   }
