@@ -5,7 +5,8 @@ import { formatCurrencyAmount, resolveCurrencyCode } from '@/lib/formatCurrency'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/cn'
 import { Card } from '@/components/ui/Card'
-import { CategorySelectDropdown } from '@/features/review-queue/components/CategorySelectDropdown'
+import { SearchableSelect } from '@/components/ui/SearchableSelect'
+import { TAXONOMY_CATEGORIES } from '@/lib/taxonomy'
 import { ClusterMatchingTransactionsDialog } from '@/features/review-queue/components/ClusterMatchingTransactionsDialog'
 import { ConfirmClusterTagButton } from '@/features/review-queue/components/ConfirmClusterTagButton'
 
@@ -84,10 +85,14 @@ export function ClusterReviewRow({
           </Button>
         </div>
         <div className="flex min-w-0 w-full flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end lg:max-w-full">
-          <CategorySelectDropdown
+          <SearchableSelect
             id={`${baseId}-category`}
+            options={TAXONOMY_CATEGORIES}
             value={category}
             onChange={setCategory}
+            placeholder="Choose category"
+            searchPlaceholder="Search categories…"
+            searchLabel="Filter categories"
             onOpenChange={setCategoryMenuOpen}
             disabled={isSubmitting}
           />

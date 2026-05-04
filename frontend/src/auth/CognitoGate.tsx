@@ -5,14 +5,13 @@ import { Spinner } from '@/components/ui/Spinner'
 import { useAuth } from './useAuth'
 
 /**
- * `VITE_AUTH_UI=local` (default in Vite dev): no login.
- * `VITE_AUTH_UI=cognito` + Cognito build vars (prod deploy): require a session.
+ * When `getAppAuthMode()` is `local`, the gate is a no-op. Otherwise a Cognito session is required.
  */
 export function CognitoGate() {
-  const { ready, cognitoEnabled, isAuthenticated } = useAuth()
+  const { ready, appAuthMode, isAuthenticated } = useAuth()
   const location = useLocation()
 
-  if (!cognitoEnabled) {
+  if (appAuthMode === 'local') {
     return <Outlet />
   }
 

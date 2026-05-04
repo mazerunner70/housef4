@@ -68,8 +68,7 @@ function initialsFromUserLabel(label: string): string {
 
 export function AppLayout() {
   const location = useLocation()
-  const { authUiMode, localUserId, cognitoEnabled, userEmail, logout } =
-    useAuth()
+  const { appAuthMode, localUserId, userEmail, logout } = useAuth()
 
   return (
     <div className="dashboard-ambient flex min-h-svh text-zinc-300">
@@ -195,7 +194,7 @@ export function AppLayout() {
                 <span className="ui-notify-dot absolute right-2 top-2 size-2 rounded-full bg-red-500" />
               </button>
               <div className="flex flex-wrap items-center gap-2">
-                {authUiMode === 'local' ? (
+                {appAuthMode === 'local' ? (
                   <div className="ui-surface-input flex items-center gap-2 rounded-full py-1 pl-1 pr-3">
                     <div
                       className="flex size-8 items-center justify-center rounded-full bg-teal-500/15 text-xs font-semibold uppercase tracking-wide text-teal-200"
@@ -208,7 +207,7 @@ export function AppLayout() {
                     </span>
                     <span className="sr-only">Local build (no login)</span>
                   </div>
-                ) : cognitoEnabled && userEmail ? (
+                ) : userEmail ? (
                   <>
                     <div className="ui-surface-input flex items-center gap-2 rounded-full py-1 pl-1 pr-3">
                       <div
