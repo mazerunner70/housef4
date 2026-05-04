@@ -241,7 +241,7 @@ export function RestoreWizard({
     <div className="space-y-8">
       <div className="flex flex-wrap items-center gap-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
         <span
-          className={step >= 1 ? 'text-[var(--color-accent)]' : undefined}
+          className={step >= 1 ? 'text-(--color-accent)' : undefined}
           aria-current={step === 1 ? 'step' : undefined}
         >
           1 · File
