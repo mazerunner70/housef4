@@ -69,6 +69,25 @@ function stripReservedWireKeys(
   return out;
 }
 
+/**
+ * If the wire row carries `user_id`, it must match the caller (`app_user_id` / Cognito sub).
+ */
+function assertWireUserIdMatchesLoggedInUser(
+  row: Record<string, unknown>,
+  userId: string,
+  entityLabel: string,
+): void {
+  if (row.user_id === undefined || row.user_id === null) return;
+  const w = wireString(row.user_id, '');
+  if (w === '') return;
+  if (w !== userId) {
+    throw new BackupRestoreClientError(
+      403,
+      `Invalid backup: ${entityLabel} user_id does not match authenticated user`,
+    );
+  }
+}
+
 function copyMerchantEmbeddingIfPresent(
   item: Record<string, unknown>,
   rec: TransactionRecord,
@@ -80,6 +99,14 @@ function copyMerchantEmbeddingIfPresent(
   if (Array.isArray(me)) {
     rec.merchant_embedding = me.map(Number);
   }
+}
+
+function transactionWireStatus(row: Record<string, unknown>): TransactionStatus {
+  const status = row.status as TransactionStatus;
+  if (status !== 'CLASSIFIED' && status !== 'PENDING_REVIEW') {
+    throw new BackupRestoreClientError(400, 'Invalid backup: bad transaction status');
+  }
+  return status;
 }
 
 function transactionWireToRecord(
@@ -103,10 +130,7 @@ function transactionWireToRecord(
       'Invalid backup: every transaction must include cluster_id',
     );
   }
-  const status = row.status as TransactionStatus;
-  if (status !== 'CLASSIFIED' && status !== 'PENDING_REVIEW') {
-    throw new BackupRestoreClientError(400, 'Invalid backup: bad transaction status');
-  }
+  const status = transactionWireStatus(row);
   const id = wireString(row.id, '');
   if (!id) {
     throw new BackupRestoreClientError(400, 'Invalid backup: transaction missing id');
@@ -116,8 +140,9 @@ function transactionWireToRecord(
   if (!Number.isFinite(date) || !Number.isFinite(amount)) {
     throw new BackupRestoreClientError(400, 'Invalid backup: transaction date/amount');
   }
+  assertWireUserIdMatchesLoggedInUser(row, userId, 'transaction');
   const rec: TransactionRecord = {
-    user_id: wireString(row.user_id, userId),
+    user_id: userId,
     id,
     date,
     raw_merchant: wireString(row.raw_merchant, ''),
@@ -235,19 +260,15 @@ async function batchWriteItemsParallel(
     for (;;) {
       const i = next++;
       if (i >= chunks.length) return;
-      await flushBatchWritePut(doc, table, chunks[i]!);
+      const batch = chunks[i];
+      if (batch === undefined) return;
+      await flushBatchWritePut(doc, table, batch);
     }
   }
   await Promise.all(Array.from({ length: workers }, () => worker()));
 }
 
-/**
- * Validate backup JSON for restore (no Dynamo writes). Call **before** acquiring `RESTORE_LOCK`.
- */
-export function validateBackupSnapshotForRestore(
-  userId: string,
-  raw: unknown,
-): BackupSnapshotV1 {
+function parseBackupSnapshotRoot(userId: string, raw: unknown): BackupSnapshotV1 {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new BackupRestoreClientError(400, 'Invalid backup: root must be an object');
   }
@@ -293,7 +314,7 @@ export function validateBackupSnapshotForRestore(
     throw new BackupRestoreClientError(400, 'Invalid backup: metrics must be object or null');
   }
 
-  const snapshot: BackupSnapshotV1 = {
+  return {
     backup_schema_version: BACKUP_SCHEMA_VERSION_V1,
     exported_at,
     app_user_id,
@@ -304,7 +325,12 @@ export function validateBackupSnapshotForRestore(
     clusters: root.clusters as Record<string, unknown>[],
     transaction_files: root.transaction_files as Record<string, unknown>[],
   };
+}
 
+function validateBackupAccountRows(
+  snapshot: BackupSnapshotV1,
+  userId: string,
+): Set<string> {
   const accountIds = new Set<string>();
   for (const row of snapshot.accounts) {
     if (typeof row !== 'object' || row === null || Array.isArray(row)) {
@@ -313,6 +339,7 @@ export function validateBackupSnapshotForRestore(
     if (wireString(row.entity_type, '') !== 'ACCOUNT') {
       throw new BackupRestoreClientError(400, 'Invalid backup: account entity_type');
     }
+    assertWireUserIdMatchesLoggedInUser(row, userId, 'account');
     const id = wireString(row.id, '');
     if (!id) throw new BackupRestoreClientError(400, 'Invalid backup: account id');
     if (accountIds.has(id)) {
@@ -324,7 +351,13 @@ export function validateBackupSnapshotForRestore(
       throw new BackupRestoreClientError(400, 'Invalid backup: account created_at');
     }
   }
+  return accountIds;
+}
 
+function validateBackupClusterRows(
+  snapshot: BackupSnapshotV1,
+  userId: string,
+): Set<string> {
   const clusterIds = new Set<string>();
   for (const row of snapshot.clusters) {
     if (typeof row !== 'object' || row === null || Array.isArray(row)) {
@@ -333,6 +366,7 @@ export function validateBackupSnapshotForRestore(
     if (wireString(row.entity_type, '') !== 'CLUSTER') {
       throw new BackupRestoreClientError(400, 'Invalid backup: cluster entity_type');
     }
+    assertWireUserIdMatchesLoggedInUser(row, userId, 'cluster');
     const cid = wireString(row.cluster_id, '');
     if (!cid) throw new BackupRestoreClientError(400, 'Invalid backup: cluster_id');
     if (clusterIds.has(cid)) {
@@ -340,7 +374,14 @@ export function validateBackupSnapshotForRestore(
     }
     clusterIds.add(cid);
   }
+  return clusterIds;
+}
 
+function validateBackupTransactionFileRows(
+  snapshot: BackupSnapshotV1,
+  userId: string,
+  accountIds: Set<string>,
+): Set<string> {
   const fileIds = new Set<string>();
   for (const row of snapshot.transaction_files) {
     if (typeof row !== 'object' || row === null || Array.isArray(row)) {
@@ -349,6 +390,7 @@ export function validateBackupSnapshotForRestore(
     if (wireString(row.entity_type, '') !== 'TRANSACTION_FILE') {
       throw new BackupRestoreClientError(400, 'Invalid backup: transaction_file entity_type');
     }
+    assertWireUserIdMatchesLoggedInUser(row, userId, 'transaction_file');
     const fid = wireString(row.id, '');
     if (!fid) throw new BackupRestoreClientError(400, 'Invalid backup: transaction_file id');
     if (fileIds.has(fid)) {
@@ -363,12 +405,25 @@ export function validateBackupSnapshotForRestore(
       );
     }
   }
+  return fileIds;
+}
 
+function validateBackupTransactionRows(
+  snapshot: BackupSnapshotV1,
+  userId: string,
+  fileIds: Set<string>,
+  clusterIds: Set<string>,
+): void {
+  const transactionIds = new Set<string>();
   for (const row of snapshot.transactions) {
     if (typeof row !== 'object' || row === null || Array.isArray(row)) {
       throw new BackupRestoreClientError(400, 'Invalid backup: transaction row shape');
     }
     const rec = transactionWireToRecord(row, userId);
+    if (transactionIds.has(rec.id)) {
+      throw new BackupRestoreClientError(400, 'Invalid backup: duplicate transaction id');
+    }
+    transactionIds.add(rec.id);
     const fid = rec.transaction_file_id;
     if (!fileIds.has(fid)) {
       throw new BackupRestoreClientError(
@@ -384,17 +439,24 @@ export function validateBackupSnapshotForRestore(
       );
     }
   }
+}
 
+function validateBackupProfileAndMetrics(
+  snapshot: BackupSnapshotV1,
+  userId: string,
+): void {
   if (snapshot.profile !== null) {
     if (wireString(snapshot.profile.entity_type, '') !== 'PROFILE') {
       throw new BackupRestoreClientError(400, 'Invalid backup: profile entity_type');
     }
+    assertWireUserIdMatchesLoggedInUser(snapshot.profile, userId, 'profile');
   }
 
   if (snapshot.metrics !== null) {
     if (wireString(snapshot.metrics.entity_type, '') !== 'METRICS') {
       throw new BackupRestoreClientError(400, 'Invalid backup: metrics entity_type');
     }
+    assertWireUserIdMatchesLoggedInUser(snapshot.metrics, userId, 'metrics');
     try {
       parseStoredDashboardMetrics(snapshot.metrics);
     } catch (e) {
@@ -404,7 +466,21 @@ export function validateBackupSnapshotForRestore(
       throw e;
     }
   }
+}
 
+/**
+ * Validate backup JSON for restore (no Dynamo writes). Call **before** acquiring `RESTORE_LOCK`.
+ */
+export function validateBackupSnapshotForRestore(
+  userId: string,
+  raw: unknown,
+): BackupSnapshotV1 {
+  const snapshot = parseBackupSnapshotRoot(userId, raw);
+  const accountIds = validateBackupAccountRows(snapshot, userId);
+  const clusterIds = validateBackupClusterRows(snapshot, userId);
+  const fileIds = validateBackupTransactionFileRows(snapshot, userId, accountIds);
+  validateBackupTransactionRows(snapshot, userId, fileIds, clusterIds);
+  validateBackupProfileAndMetrics(snapshot, userId);
   return snapshot;
 }
 
@@ -420,7 +496,7 @@ function materializeBackupItems(
     const sk = it.SK;
     const pkVal = it.PK;
     if (typeof sk !== 'string' || typeof pkVal !== 'string') {
-      throw new Error('materialize: missing PK/SK');
+      throw new TypeError('materialize: missing PK/SK');
     }
     const key = `${pkVal}|${sk}`;
     if (seenSk.has(key)) {
@@ -431,7 +507,7 @@ function materializeBackupItems(
   }
 
   for (const row of snapshot.accounts) {
-    const r = stripReservedWireKeys(row as Record<string, unknown>);
+    const r = stripReservedWireKeys(row);
     const id = wireString(r.id, '');
     addItem({
       ...r,
@@ -446,7 +522,7 @@ function materializeBackupItems(
   }
 
   for (const row of snapshot.clusters) {
-    const r = stripReservedWireKeys(row as Record<string, unknown>);
+    const r = stripReservedWireKeys(row);
     const cluster_id = wireString(r.cluster_id, '');
     const base: Record<string, unknown> = {
       ...r,
@@ -459,7 +535,7 @@ function materializeBackupItems(
   }
 
   for (const row of snapshot.transaction_files) {
-    const r = stripReservedWireKeys(row as Record<string, unknown>);
+    const r = stripReservedWireKeys(row);
     const id = wireString(r.id, '');
     addItem({
       ...r,
@@ -477,7 +553,7 @@ function materializeBackupItems(
   }
 
   for (const row of snapshot.transactions) {
-    const rec = transactionWireToRecord(row as Record<string, unknown>, userId);
+    const rec = transactionWireToRecord(row, userId);
     addItem(transactionRecordToDynamoItem(rec, pk));
   }
 
@@ -538,7 +614,8 @@ function validateMaterializedStaging(
   const sampleTxn = items.find((i) => i.entity_type === 'TRANSACTION');
   if (sampleTxn) {
     for (const k of ['PK', 'SK', 'GSI1PK', 'GSI1SK', 'GSI2PK', 'GSI2SK']) {
-      if (typeof sampleTxn[k] !== 'string' || !(sampleTxn[k] as string).length) {
+      const v = sampleTxn[k];
+      if (typeof v !== 'string' || v.length === 0) {
         throw new Error(`restore staging verify: transaction missing ${k}`);
       }
     }
@@ -547,7 +624,6 @@ function validateMaterializedStaging(
 
 export interface RunRestoreBackupWorkflowOptions {
   doc: DynamoDBDocumentClient;
-  primaryTable: string;
   userId: string;
   snapshot: BackupSnapshotV1;
   refreshMetrics: () => Promise<void>;
@@ -559,9 +635,9 @@ export interface RunRestoreBackupWorkflowOptions {
 export async function runRestoreBackupWorkflow(
   opts: RunRestoreBackupWorkflowOptions,
 ): Promise<BackupRestoreCounts> {
-  const { doc, primaryTable, userId, snapshot, refreshMetrics } = opts;
+  const { doc, userId, snapshot, refreshMetrics } = opts;
   const stagingTable = requireRestoreStagingTableName();
-  requireTableName();
+  const primaryTable = requireTableName();
 
   const items = materializeBackupItems(userId, snapshot);
   validateMaterializedStaging(items, snapshot);

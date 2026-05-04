@@ -4,7 +4,10 @@ import { getFinanceRepository } from '@housef4/db';
 
 import { HttpError } from '../httpError';
 import { enrichImportRows } from '../services/import/enrichImportRows';
-import { extractImportMultipart } from '../services/import/multipartFile';
+import {
+  extractImportMultipart,
+  MultipartFileTooLargeError,
+} from '../services/import/multipartFile';
 import { parseImportBuffer } from '../services/import/parseImportBuffer';
 import { getLog } from '../requestLogContext';
 import type { InternalRequest } from '../types';
@@ -19,7 +22,19 @@ export async function postImportPayload(
     throw new HttpError(400, 'Request body is empty');
   }
 
-  const extracted = await extractImportMultipart(req.headers, buf);
+  let extracted;
+  try {
+    extracted = await extractImportMultipart(req.headers, buf);
+  } catch (e) {
+    if (e instanceof MultipartFileTooLargeError) {
+      throw new HttpError(413, e.message, {
+        error: 'Import file exceeds maximum size',
+        max_bytes: e.maxBytes,
+        field: e.fieldName,
+      });
+    }
+    throw e;
+  }
   if (!extracted?.file.buffer.length) {
     throw new HttpError(
       400,

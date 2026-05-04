@@ -5,7 +5,10 @@ import {
   validateBackupSnapshotForRestore,
 } from '@housef4/db';
 
-import { extractBackupMultipart } from '../services/import/multipartFile';
+import {
+  extractBackupMultipart,
+  MultipartFileTooLargeError,
+} from '../services/import/multipartFile';
 import { HttpError } from '../httpError';
 import { getLog } from '../requestLogContext';
 import type { InternalRequest } from '../types';
@@ -20,7 +23,19 @@ export async function postBackupRestorePayload(
     throw new HttpError(400, 'Request body is empty');
   }
 
-  const part = await extractBackupMultipart(req.headers, buf);
+  let part;
+  try {
+    part = await extractBackupMultipart(req.headers, buf);
+  } catch (e) {
+    if (e instanceof MultipartFileTooLargeError) {
+      throw new HttpError(413, e.message, {
+        error: 'Backup file exceeds maximum size',
+        max_bytes: e.maxBytes,
+        field: e.fieldName,
+      });
+    }
+    throw e;
+  }
   if (!part?.buffer.length) {
     throw new HttpError(
       400,

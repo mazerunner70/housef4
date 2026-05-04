@@ -1431,7 +1431,6 @@ export class DynamoFinanceRepository implements FinanceRepository {
   ): Promise<BackupRestoreCounts> {
     return runRestoreBackupWorkflow({
       doc: this.doc,
-      primaryTable: this.tableName,
       userId,
       snapshot,
       refreshMetrics: () => this.refreshStoredDashboardMetrics(userId),
