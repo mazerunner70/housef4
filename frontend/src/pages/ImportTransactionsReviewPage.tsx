@@ -132,7 +132,10 @@ export function ImportTransactionsReviewPage() {
 
   const query = useTransactionsByImportFile(transactionFileId)
 
-  const batch: Transaction[] = query.data?.transactions ?? []
+  const batch = useMemo(
+    () => query.data?.transactions ?? [],
+    [query.data],
+  )
 
   const sortedByDate = useMemo(() => {
     const copy = [...batch]
@@ -253,14 +256,10 @@ export function ImportTransactionsReviewPage() {
         </button>
       </header>
 
-      <div
-        className="flex flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-white/[0.02] p-4"
-        role="group"
-        aria-label="How to group this import"
-      >
-        <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+      <fieldset className="flex min-w-0 flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-white/[0.02] p-4">
+        <legend className="text-xs font-medium uppercase tracking-wide text-zinc-500">
           View
-        </p>
+        </legend>
         <div className="flex flex-wrap gap-2">
           <ToggleButton
             pressed={viewMode === 'date'}
@@ -282,14 +281,10 @@ export function ImportTransactionsReviewPage() {
           </ToggleButton>
         </div>
         {viewMode === 'date' && (
-          <div
-            className="flex flex-col gap-2 border-t border-[var(--color-border)] pt-3"
-            role="group"
-            aria-label="Date order"
-          >
-            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+          <fieldset className="mt-0 flex min-w-0 flex-col gap-2 border-0 border-t border-[var(--color-border)] pt-3">
+            <legend className="text-xs font-medium uppercase tracking-wide text-zinc-500">
               Date order
-            </p>
+            </legend>
             <div className="flex flex-wrap gap-2">
               <ToggleButton
                 pressed={dateOrder === 'asc'}
@@ -304,9 +299,9 @@ export function ImportTransactionsReviewPage() {
                 Newest first
               </ToggleButton>
             </div>
-          </div>
+          </fieldset>
         )}
-      </div>
+      </fieldset>
 
       {viewMode === 'date' && (
         <ul className="space-y-1 rounded-xl border border-[var(--color-border)] bg-white/[0.03] p-4">

@@ -14,6 +14,7 @@ const {
   deleteUserPartition,
   acquireRestoreLock,
   releaseRestoreLock,
+  deleteRestoreLockIfPresent,
   getRestoreLock,
   RestoreLockConflictError,
 } = require('../dist/userPartition');
@@ -155,7 +156,10 @@ test('deleteUserPartition skips RESTORE_LOCK on primary when option omitted', as
   };
 
   await deleteUserPartition({ docClient, dataset: 'primary', userId: 'u42' });
-  assert.deepEqual(deleted.sort(), ['TXN#a']);
+  const sortedDeleted = [...deleted].sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: 'base' }),
+  );
+  assert.deepEqual(sortedDeleted, ['TXN#a']);
 });
 
 test('deleteUserPartition on restore_staging uses DYNAMODB_RESTORE_STAGING_TABLE_NAME', async (t) => {
@@ -217,7 +221,13 @@ test('deleteUserPartition on restore_staging deletes RESTORE_LOCK SK if present'
     dataset: 'restore_staging',
     userId: 'u',
   });
-  assert.deepEqual(deleted.sort(), [RESTORE_LOCK_SK, 'PROFILE'].sort());
+  const sortedDeleted = [...deleted].sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: 'base' }),
+  );
+  const expected = [RESTORE_LOCK_SK, 'PROFILE'].sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: 'base' }),
+  );
+  assert.deepEqual(sortedDeleted, expected);
 });
 
 test('deleteUserPartition rejects when staging env is missing', async (t) => {
@@ -296,6 +306,32 @@ test('releaseRestoreLock sends DeleteCommand with primary table from env', async
     SK: RESTORE_LOCK_SK,
   });
   assert.equal(got.input.TableName, 'prim');
+});
+
+test('deleteRestoreLockIfPresent returns true when Delete returns Attributes', async (t) => {
+  withEnv(t, { DYNAMODB_TABLE_NAME: 'prim' });
+  const docClient = {
+    send(cmd) {
+      assert.ok(cmd instanceof DeleteCommand);
+      assert.equal(cmd.input.ReturnValues, 'ALL_OLD');
+      return Promise.resolve({
+        Attributes: { PK: userPk('u8'), SK: RESTORE_LOCK_SK },
+      });
+    },
+  };
+  const cleared = await deleteRestoreLockIfPresent(docClient, 'u8');
+  assert.equal(cleared, true);
+});
+
+test('deleteRestoreLockIfPresent returns false when lock was absent', async (t) => {
+  withEnv(t, { DYNAMODB_TABLE_NAME: 'prim' });
+  const docClient = {
+    send() {
+      return Promise.resolve({});
+    },
+  };
+  const cleared = await deleteRestoreLockIfPresent(docClient, 'u8');
+  assert.equal(cleared, false);
 });
 
 test('getRestoreLock omits restore_started_at when missing or invalid', async (t) => {

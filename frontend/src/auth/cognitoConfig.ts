@@ -15,7 +15,3 @@ export function getCognitoConfig(): CognitoPublicConfig | null {
   if (!region || !userPoolId || !clientId) return null
   return { region, userPoolId, clientId }
 }
-
-export function isCognitoConfigured(): boolean {
-  return getCognitoConfig() !== null
-}

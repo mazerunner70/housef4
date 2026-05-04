@@ -1,6 +1,8 @@
 import {
-  BackupRestoreClientError,
   getFinanceRepository,
+  BackupRestoreClientError,
+  RESTORE_ABORT_STAGING_CLEANUP_CODE,
+  RestoreAbortStagingCleanupError,
   RestoreLockConflictError,
   validateBackupSnapshotForRestore,
 } from '@housef4/db';
@@ -12,6 +14,19 @@ import {
 import { HttpError } from '../httpError';
 import { getLog } from '../requestLogContext';
 import type { InternalRequest } from '../types';
+
+function isRestoreAbortStagingCleanupError(
+  e: unknown,
+): e is RestoreAbortStagingCleanupError {
+  if (e instanceof RestoreAbortStagingCleanupError) return true;
+  return (
+    typeof e === 'object' &&
+    e !== null &&
+    (e as { code?: string }).code === RESTORE_ABORT_STAGING_CLEANUP_CODE &&
+    typeof (e as { restore_lock_cleared?: unknown }).restore_lock_cleared ===
+      'boolean'
+  );
+}
 
 export async function postBackupRestorePayload(
   userId: string,
@@ -77,6 +92,41 @@ export async function postBackupRestorePayload(
     if (e instanceof RestoreLockConflictError) {
       throw new HttpError(409, 'Restore already in progress', {
         error: 'Restore already in progress',
+      });
+    }
+    throw e;
+  }
+}
+
+export async function postBackupRestoreAbortPayload(
+  userId: string,
+): Promise<Record<string, unknown>> {
+  const log = getLog();
+  const repo = getFinanceRepository();
+  try {
+    const { restore_lock_cleared } = await repo.abortRestoreCleanup(userId);
+    const completed_at = Date.now();
+    log.info('backup.restore.abort.ok', {
+      userIdLen: userId.length,
+      restore_lock_cleared,
+    });
+    return {
+      success: true,
+      restore_lock_cleared,
+      staging_partition_cleared: true,
+      completed_at,
+    };
+  } catch (e) {
+    if (isRestoreAbortStagingCleanupError(e)) {
+      log.warn('backup.restore.abort.staging_failed', {
+        userIdLen: userId.length,
+        restore_lock_cleared: e.restore_lock_cleared,
+      });
+      throw new HttpError(500, 'Restore abort cleanup incomplete', {
+        success: false,
+        restore_lock_cleared: e.restore_lock_cleared,
+        staging_partition_cleared: false,
+        completed_at: Date.now(),
       });
     }
     throw e;

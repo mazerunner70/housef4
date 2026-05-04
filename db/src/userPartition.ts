@@ -238,6 +238,25 @@ export async function releaseRestoreLock(
   );
 }
 
+/**
+ * Deletes **`RESTORE_LOCK`** on **primary** if present. Returns **`true`** when a row was removed
+ * (`restore_lock_cleared` in **`POST /api/backup/restore/abort`**).
+ */
+export async function deleteRestoreLockIfPresent(
+  docClient: DynamoDBDocumentClient,
+  userId: string,
+): Promise<boolean> {
+  const res = await docClient.send(
+    new DeleteCommand({
+      TableName: requireTableName(),
+      Key: { [PK]: userPk(userId), [SK]: RESTORE_LOCK_SK },
+      ReturnValues: 'ALL_OLD',
+    }),
+  );
+  const attrs = res.Attributes as Record<string, unknown> | undefined;
+  return attrs != null && Object.keys(attrs).length > 0;
+}
+
 /** Reads the lock row on **primary** if present (e.g. `restore_in_progress`). */
 export async function getRestoreLock(
   docClient: DynamoDBDocumentClient,
@@ -259,7 +278,11 @@ export async function getRestoreLock(
   return {
     entity_type: 'RESTORE_LOCK',
     user_id: typeof persistedUserId === 'string' ? persistedUserId : userId,
-    ...(restore_started_at === undefined ? {}: { restore_started_at } ),
-    ...(backup_schema_version === undefined ? {}: { backup_schema_version } ),
+    ...(restore_started_at === undefined
+      ? {}
+      : { restore_started_at }),
+    ...(backup_schema_version === undefined
+      ? {}
+      : { backup_schema_version }),
   };
 }

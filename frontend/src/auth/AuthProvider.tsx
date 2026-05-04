@@ -1,41 +1,24 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 import { setBearerTokenResolver } from '@/api/client'
+import { getAppAuthMode, getLocalUserId } from '@/lib/appEnvironment'
 
 import { AuthContext } from './auth-context'
 import { cognitoSignIn, cognitoSignOut, getIdTokenJwt } from './cognitoSession'
-import { isCognitoConfigured } from './cognitoConfig'
-import { getAuthUiMode, getLocalUserId } from './authUiMode'
 import { emailFromIdToken } from './jwtPayload'
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const authUiMode = getAuthUiMode()
+export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
+  const appAuthMode = getAppAuthMode()
   const localUserId = getLocalUserId()
-  const cognitoConfigured = isCognitoConfigured()
-  const cognitoEnabled = authUiMode === 'cognito' && cognitoConfigured
+  const isLocal = appAuthMode === 'local'
 
-  const [ready, setReady] = useState(
-    () =>
-      authUiMode === 'local' ||
-      (authUiMode === 'cognito' && !cognitoConfigured),
-  )
+  const [ready, setReady] = useState(() => isLocal)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [userEmail, setUserEmail] = useState<string | undefined>(undefined)
 
   useEffect(() => {
-    if (authUiMode === 'local') {
+    if (isLocal) {
       setBearerTokenResolver(undefined)
-      setReady(true)
-      setIsAuthenticated(false)
-      setUserEmail(undefined)
-      return
-    }
-
-    if (!cognitoConfigured) {
-      setBearerTokenResolver(undefined)
-      setReady(true)
-      setIsAuthenticated(false)
-      setUserEmail(undefined)
       return
     }
 
@@ -58,7 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [authUiMode, cognitoConfigured])
+  }, [isLocal])
 
   const login = useCallback(async (email: string, password: string) => {
     await cognitoSignIn(email, password)
@@ -75,20 +58,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo(
     () => ({
-      authUiMode,
+      appAuthMode,
       localUserId,
       ready,
-      cognitoEnabled,
       isAuthenticated,
       userEmail,
       login,
       logout,
     }),
     [
-      authUiMode,
+      appAuthMode,
       localUserId,
       ready,
-      cognitoEnabled,
       isAuthenticated,
       userEmail,
       login,
