@@ -125,3 +125,31 @@ test('GET /api/transactions with userId without DYNAMODB_TABLE_NAME returns 500'
     if (prev !== undefined) process.env.DYNAMODB_TABLE_NAME = prev;
   }
 });
+
+test('GET /api/backup/export without userId returns 401', async () => {
+  const res = await dispatch({
+    method: 'GET',
+    path: '/api/backup/export',
+    headers: {},
+    rawBody: '',
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+test('GET /api/backup/export with userId without DYNAMODB_TABLE_NAME returns 500', async () => {
+  const prev = process.env.DYNAMODB_TABLE_NAME;
+  delete process.env.DYNAMODB_TABLE_NAME;
+  try {
+    const res = await dispatch({
+      method: 'GET',
+      path: '/api/backup/export',
+      headers: {},
+      rawBody: '',
+      userId: 'user-1',
+    });
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(res.body, { error: 'Internal Server Error' });
+  } finally {
+    if (prev !== undefined) process.env.DYNAMODB_TABLE_NAME = prev;
+  }
+});

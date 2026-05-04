@@ -167,3 +167,23 @@ export interface TransactionFileInput {
 
 /** Stored row: same sections as {@link TransactionFileInput} plus `user_id`. */
 export type TransactionFileRecord = TransactionFileInput & { user_id: string };
+
+/**
+ * Logical backup artifact schema version **1**.
+ * Detailed wire dictionary: `docs/03_detailed_design/backup-schema/v1.md`.
+ * High-level envelope + Dynamo mapping: `docs/03_detailed_design/database/data_model.md` §8.
+ */
+export const BACKUP_SCHEMA_VERSION_V1 = 1 as const;
+
+/** Body for `GET /api/backup/export` / input for restore (excluding raw import blobs). */
+export interface BackupSnapshotV1 {
+  backup_schema_version: typeof BACKUP_SCHEMA_VERSION_V1;
+  exported_at: number;
+  app_user_id: string;
+  accounts: Record<string, unknown>[];
+  profile: Record<string, unknown> | null;
+  metrics: Record<string, unknown> | null;
+  transactions: Record<string, unknown>[];
+  clusters: Record<string, unknown>[];
+  transaction_files: Record<string, unknown>[];
+}

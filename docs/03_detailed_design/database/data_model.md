@@ -197,6 +197,8 @@ A Terraform-managed item supports build/version health checks. It is **not** a u
 
 Backups are **artifacts** (JSON files on disk after download), not rows in this table. This section defines what a **[`GET /api/backup/export`](../api_contract.md)** produces and what **`POST /api/backup/restore`** must reinstantiate as Dynamo items under **`PK = USER#<user_id>`**.
 
+**Versioned field dictionary:** per-schema details (v1 and future) live under **[`../backup-schema/`](../backup-schema/README.md)** — start with [`../backup-schema/v1.md`](../backup-schema/v1.md).
+
 **Product rule ([PRD](../../01_discovery/stage_1_understanding_mvp.md)):** restore **fully overwrites** user-scoped application data — **no merge** with existing items.
 
 **V1 scope:** backups contain **structured DynamoDB-round-trippable metadata only** — **not** raw bytes of original bank uploads. Omit **`blob`** / object-storage payloads from `TRANSACTION_FILE` entries in the JSON (optional descriptors may be added in a later schema version when blob export is implemented).
@@ -295,6 +297,7 @@ Lambda IAM: **`dynamodb:Query`**, **`BatchWriteItem`**, **`DeleteItem`**, **`Put
 
 - [`../import_transaction_files.md`](../import_transaction_files.md) — import pipeline, cluster id lifecycle, splits/merges, write-back, and **§7.5** import file history (`TRANSACTION_FILE`).
 - [`../api_contract.md`](../api_contract.md) — wire JSON and endpoints (`POST /api/imports`, `GET /api/transaction-files`, **`GET /api/backup/export`**, **`POST /api/backup/restore`**, **`POST /api/backup/restore/abort`** §6).
+- [`../backup-schema/`](../backup-schema/README.md) — versioned backup artifact field specs (e.g. [`v1.md`](../backup-schema/v1.md)).
 - [`../import_field_mapping.md`](../import_field_mapping.md) — from file fields to normalized import rows.
 - [`../transaction_analysis_clusters_and_categories.md`](../transaction_analysis_clusters_and_categories.md) — merchant clustering and category behaviour; logical “optional extension” table should stay consistent with the **implemented** items above.
 - [`../../02_architecture/02_data_flow.md`](../../02_architecture/02_data_flow.md) — ingestion, classification, and backup/restore snapshot flow.

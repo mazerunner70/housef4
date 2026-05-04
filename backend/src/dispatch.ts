@@ -1,4 +1,5 @@
 import { getAccountsPayload } from './handlers/accounts';
+import { getBackupExportPayload } from './handlers/backupExport';
 import { getHealthPayload } from './handlers/health';
 import { postImportPayload } from './handlers/imports';
 import { getMePayload } from './handlers/me';
@@ -19,34 +20,6 @@ function isHealthPath(normalizedPath: string): boolean {
   if (apiIdx < 0) return false;
   return (
     segments[apiIdx + 1] === 'health' && apiIdx + 2 === segments.length
-  );
-}
-
-function isMePath(normalizedPath: string): boolean {
-  const pathname = normalizedPath.split('?')[0] ?? '';
-  const segments = pathname.split('/').filter((s) => s.length > 0);
-  const apiIdx = segments.indexOf('api');
-  if (apiIdx < 0) return false;
-  return segments[apiIdx + 1] === 'me' && apiIdx + 2 === segments.length;
-}
-
-function isMetricsPath(normalizedPath: string): boolean {
-  const pathname = normalizedPath.split('?')[0] ?? '';
-  const segments = pathname.split('/').filter((s) => s.length > 0);
-  const apiIdx = segments.indexOf('api');
-  if (apiIdx < 0) return false;
-  return (
-    segments[apiIdx + 1] === 'metrics' && apiIdx + 2 === segments.length
-  );
-}
-
-function isAccountsPath(normalizedPath: string): boolean {
-  const pathname = normalizedPath.split('?')[0] ?? '';
-  const segments = pathname.split('/').filter((s) => s.length > 0);
-  const apiIdx = segments.indexOf('api');
-  if (apiIdx < 0) return false;
-  return (
-    segments[apiIdx + 1] === 'accounts' && apiIdx + 2 === segments.length
   );
 }
 
@@ -83,6 +56,116 @@ function jsonResponse(
   };
 }
 
+interface AuthenticatedGetRoute {
+  tail: string[];
+  routeLog: string;
+  handler: (uid: string, req: InternalRequest) => Promise<InternalResponse>;
+}
+
+const authenticatedGetRoutes: AuthenticatedGetRoute[] = [
+  {
+    tail: ['me'],
+    routeLog: 'me',
+    handler: async (uid) => jsonResponse(200, getMePayload(uid)),
+  },
+  {
+    tail: ['metrics'],
+    routeLog: 'metrics',
+    handler: async (uid) =>
+      jsonResponse(200, await getMetricsPayload(uid)),
+  },
+  {
+    tail: ['accounts'],
+    routeLog: 'accounts',
+    handler: async (uid) =>
+      jsonResponse(200, await getAccountsPayload(uid)),
+  },
+  {
+    tail: ['transactions'],
+    routeLog: 'transactions',
+    handler: async (uid, req) => {
+      const transactionFileId =
+        req.query?.transactionFileId?.trim() || undefined;
+      const clusterId = req.query?.clusterId?.trim() || undefined;
+      const body = await getTransactionsPayload(uid, {
+        transactionFileId,
+        clusterId,
+      });
+      return jsonResponse(200, body);
+    },
+  },
+  {
+    tail: ['review-queue'],
+    routeLog: 'review-queue',
+    handler: async (uid) =>
+      jsonResponse(200, await getReviewQueuePayload(uid)),
+  },
+  {
+    tail: ['transaction-files'],
+    routeLog: 'transaction-files',
+    handler: async (uid) =>
+      jsonResponse(200, await getTransactionFilesPayload(uid)),
+  },
+  {
+    tail: ['backup', 'export'],
+    routeLog: 'backup/export',
+    handler: async (uid) => {
+      const body = await getBackupExportPayload(uid);
+      const filename = `housef4-backup-${body.exported_at}.json`;
+      return jsonResponse(200, body, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+      });
+    },
+  },
+];
+
+interface AuthenticatedPostRoute {
+  tail: string[];
+  routeLog: string;
+  handler: (uid: string, req: InternalRequest) => Promise<InternalResponse>;
+}
+
+const authenticatedPostRoutes: AuthenticatedPostRoute[] = [
+  {
+    tail: ['imports'],
+    routeLog: 'imports',
+    handler: async (uid, req) =>
+      jsonResponse(200, await postImportPayload(uid, req)),
+  },
+  {
+    tail: ['rules', 'tag'],
+    routeLog: 'rules/tag',
+    handler: async (uid, req) =>
+      jsonResponse(200, await postTagRulePayload(uid, req.rawBody)),
+  },
+];
+
+async function matchAuthenticatedRoute(
+  method: string,
+  path: string,
+  uid: string,
+  req: InternalRequest,
+): Promise<{ response: InternalResponse; routeLog: string } | null> {
+  if (method === 'GET') {
+    for (const r of authenticatedGetRoutes) {
+      if (matchesApiTail(path, r.tail)) {
+        const response = await r.handler(uid, req);
+        return { response, routeLog: r.routeLog };
+      }
+    }
+  }
+  if (method === 'POST') {
+    for (const r of authenticatedPostRoutes) {
+      if (matchesApiTail(path, r.tail)) {
+        const response = await r.handler(uid, req);
+        return { response, routeLog: r.routeLog };
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * Single application router. Lambda and local HTTP both call this with a normalized request.
  */
@@ -106,57 +189,13 @@ export async function dispatch(req: InternalRequest): Promise<InternalResponse> 
         return jsonResponse(401, { error: 'Unauthorized' });
       }
 
-      if (method === 'GET' && isMePath(path)) {
-        log.info('dispatch.response', { route: 'me', statusCode: 200 });
-        return jsonResponse(200, getMePayload(uid));
-      }
-
-      if (method === 'GET' && isMetricsPath(path)) {
-        const body = await getMetricsPayload(uid);
-        log.info('dispatch.response', { route: 'metrics', statusCode: 200 });
-        return jsonResponse(200, body);
-      }
-
-      if (method === 'GET' && isAccountsPath(path)) {
-        const body = await getAccountsPayload(uid);
-        log.info('dispatch.response', { route: 'accounts', statusCode: 200 });
-        return jsonResponse(200, body);
-      }
-
-      if (method === 'POST' && matchesApiTail(path, ['imports'])) {
-        const body = await postImportPayload(uid, req);
-        log.info('dispatch.response', { route: 'imports', statusCode: 200 });
-        return jsonResponse(200, body);
-      }
-
-      if (method === 'GET' && matchesApiTail(path, ['transactions'])) {
-        const transactionFileId =
-          req.query?.transactionFileId?.trim() || undefined;
-        const clusterId = req.query?.clusterId?.trim() || undefined;
-        const body = await getTransactionsPayload(uid, {
-          transactionFileId,
-          clusterId,
+      const matched = await matchAuthenticatedRoute(method, path, uid, req);
+      if (matched) {
+        log.info('dispatch.response', {
+          route: matched.routeLog,
+          statusCode: matched.response.statusCode,
         });
-        log.info('dispatch.response', { route: 'transactions', statusCode: 200 });
-        return jsonResponse(200, body);
-      }
-
-      if (method === 'GET' && matchesApiTail(path, ['review-queue'])) {
-        const body = await getReviewQueuePayload(uid);
-        log.info('dispatch.response', { route: 'review-queue', statusCode: 200 });
-        return jsonResponse(200, body);
-      }
-
-      if (method === 'GET' && matchesApiTail(path, ['transaction-files'])) {
-        const body = await getTransactionFilesPayload(uid);
-        log.info('dispatch.response', { route: 'transaction-files', statusCode: 200 });
-        return jsonResponse(200, body);
-      }
-
-      if (method === 'POST' && matchesApiTail(path, ['rules', 'tag'])) {
-        const body = await postTagRulePayload(uid, req.rawBody);
-        log.info('dispatch.response', { route: 'rules/tag', statusCode: 200 });
-        return jsonResponse(200, body);
+        return matched.response;
       }
 
       log.info('dispatch.notFound', { method, path, authenticated: true });
