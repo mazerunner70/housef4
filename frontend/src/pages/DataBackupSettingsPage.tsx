@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   downloadBlobAsFile,
@@ -6,11 +6,69 @@ import {
 } from '@/api/client'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
+import { RestoreStuckBanner } from '@/features/backup/components/RestoreStuckBanner'
+import { RestoreWizard } from '@/features/backup/components/RestoreWizard'
+import { RESTORE_STUCK_BANNER_STORAGE_KEY } from '@/features/backup/constants'
+
+function readStuckBannerFlag(): boolean {
+  try {
+    return sessionStorage.getItem(RESTORE_STUCK_BANNER_STORAGE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function clearStuckBannerFlag() {
+  try {
+    sessionStorage.removeItem(RESTORE_STUCK_BANNER_STORAGE_KEY)
+  } catch {
+    /* ignore */
+  }
+}
 
 export function DataBackupSettingsPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+
+  const [stuckBannerOpen, setStuckBannerOpen] = useState(() =>
+    readStuckBannerFlag(),
+  )
+  const [abortNotice, setAbortNotice] = useState<string | null>(null)
+  const abortNoticeDismissRef = useRef<ReturnType<
+    typeof globalThis.setTimeout
+  > | null>(null)
+
+  const showAbortNotice = useCallback((message: string) => {
+    if (abortNoticeDismissRef.current !== null) {
+      globalThis.clearTimeout(abortNoticeDismissRef.current)
+    }
+    setAbortNotice(message)
+    abortNoticeDismissRef.current = globalThis.setTimeout(() => {
+      abortNoticeDismissRef.current = null
+      setAbortNotice(null)
+    }, 8000)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (abortNoticeDismissRef.current !== null) {
+        globalThis.clearTimeout(abortNoticeDismissRef.current)
+      }
+    }
+  }, [])
+
+  const handleAbortSucceeded = useCallback(() => {
+    clearStuckBannerFlag()
+    setStuckBannerOpen(false)
+    showAbortNotice(
+      'Restore lock cleared. Refresh if anything looks stale, then try again.',
+    )
+  }, [showAbortNotice])
+
+  const handleRestoreLockUncertainty = useCallback(() => {
+    setStuckBannerOpen(true)
+  }, [])
 
   const handleDownload = async () => {
     setError(null)
@@ -40,6 +98,21 @@ export function DataBackupSettingsPage() {
           encrypted disk.
         </p>
       </header>
+
+      {abortNotice && (
+        <output
+          className="block rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100"
+          aria-live="polite"
+          aria-label="Restore cleanup status"
+        >
+          {abortNotice}
+        </output>
+      )}
+
+      <RestoreStuckBanner
+        open={stuckBannerOpen}
+        onAbortSucceeded={handleAbortSucceeded}
+      />
 
       <section
         className="rounded-2xl border border-white/[0.08] bg-zinc-900/40 p-6 sm:p-8"
@@ -82,6 +155,7 @@ export function DataBackupSettingsPage() {
           <output
             className="mt-4 block rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100"
             aria-live="polite"
+            aria-label="Backup download status"
           >
             Backup downloaded.
           </output>
@@ -106,6 +180,28 @@ export function DataBackupSettingsPage() {
             </Button>
           </div>
         )}
+      </section>
+
+      <section
+        className="rounded-2xl border border-amber-500/25 bg-amber-950/20 p-6 sm:p-8"
+        aria-labelledby="restore-heading"
+      >
+        <h2
+          id="restore-heading"
+          className="text-lg font-semibold text-amber-50"
+        >
+          Restore (destructive)
+        </h2>
+        <p className="mt-2 text-sm text-amber-100/85">
+          Upload a backup you exported from this app. Restore replaces{' '}
+          <strong className="font-semibold text-amber-50">everything</strong>{' '}
+          stored for your account — there is no merge.
+        </p>
+        <div className="mt-8 border-t border-amber-500/15 pt-8">
+          <RestoreWizard
+            onRestoreLockUncertainty={handleRestoreLockUncertainty}
+          />
+        </div>
       </section>
     </div>
   )
