@@ -70,6 +70,65 @@ export function AppLayout() {
   const location = useLocation()
   const { appAuthMode, localUserId, userEmail, logout } = useAuth()
 
+  function headerUserRegion() {
+    if (appAuthMode === 'local') {
+      return (
+        <div className="ui-surface-input flex items-center gap-2 rounded-full py-1 pl-1 pr-3">
+          <div
+            className="flex size-8 items-center justify-center rounded-full bg-teal-500/15 text-xs font-semibold uppercase tracking-wide text-teal-200"
+            aria-hidden
+          >
+            {initialsFromUserLabel(localUserId ?? 'Local')}
+          </div>
+          <span className="hidden max-w-[12rem] truncate text-sm font-medium text-zinc-200 sm:inline">
+            {localUserId ?? 'Local dev'}
+          </span>
+          <span className="sr-only">Local build (no login)</span>
+        </div>
+      )
+    }
+    if (userEmail) {
+      return (
+        <>
+          <div className="ui-surface-input flex items-center gap-2 rounded-full py-1 pl-1 pr-3">
+            <div
+              className="flex size-8 items-center justify-center rounded-full bg-teal-500/15 text-xs font-semibold uppercase tracking-wide text-teal-200"
+              aria-hidden
+            >
+              {initialsFromEmail(userEmail)}
+            </div>
+            <span className="hidden max-w-[10rem] truncate text-sm font-medium text-zinc-200 sm:inline">
+              {userEmail}
+            </span>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            className="shrink-0 gap-1.5 px-2 py-2 text-xs text-zinc-400"
+            aria-label="Sign out"
+            onClick={() => logout()}
+          >
+            <LogOut className="size-4" aria-hidden />
+            <span className="hidden sm:inline">Sign out</span>
+          </Button>
+        </>
+      )
+    }
+    return (
+      <div className="ui-surface-input flex items-center gap-2 rounded-full py-1 pl-1 pr-3">
+        <div
+          className="flex size-8 items-center justify-center rounded-full bg-teal-500/15 text-xs font-semibold uppercase tracking-wide text-teal-200"
+          aria-label="Alex R. avatar"
+        >
+          AR
+        </div>
+        <span className="hidden text-sm font-medium text-zinc-200 sm:inline">
+          Alex R.
+        </span>
+      </div>
+    )
+  }
+
   return (
     <div className="dashboard-ambient flex min-h-svh text-zinc-300">
       <aside
@@ -116,13 +175,32 @@ export function AppLayout() {
             )
           })}
         </nav>
-        <button
-          type="button"
-          className="mt-auto flex size-11 items-center justify-center rounded-xl text-zinc-600 hover:bg-white/5 hover:text-zinc-400"
-          aria-label="Settings"
+        <NavLink
+          to="/settings/data"
+          title="Settings"
+          className="relative mt-auto flex w-full justify-center rounded-xl py-2 transition"
+          aria-current={
+            location.pathname.startsWith('/settings') ? 'page' : undefined
+          }
         >
-          <Settings className="size-5" />
-        </button>
+          {location.pathname.startsWith('/settings') && (
+            <span
+              className="ui-nav-glow-indicator absolute left-0 top-1/2 z-0 h-8 w-1 -translate-y-1/2 rounded-r-full bg-[var(--color-nav-accent)]"
+              aria-hidden
+            />
+          )}
+          <span
+            className={cn(
+              'relative z-10 flex size-11 items-center justify-center rounded-xl transition',
+              location.pathname.startsWith('/settings')
+                ? 'bg-teal-500/20 text-teal-300 ui-nav-glow-icon'
+                : 'text-zinc-600 hover:bg-white/5 hover:text-zinc-400',
+            )}
+          >
+            <Settings className="size-5" aria-hidden />
+          </span>
+          <span className="sr-only">Settings</span>
+        </NavLink>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -194,56 +272,7 @@ export function AppLayout() {
                 <span className="ui-notify-dot absolute right-2 top-2 size-2 rounded-full bg-red-500" />
               </button>
               <div className="flex flex-wrap items-center gap-2">
-                {appAuthMode === 'local' ? (
-                  <div className="ui-surface-input flex items-center gap-2 rounded-full py-1 pl-1 pr-3">
-                    <div
-                      className="flex size-8 items-center justify-center rounded-full bg-teal-500/15 text-xs font-semibold uppercase tracking-wide text-teal-200"
-                      aria-hidden
-                    >
-                      {initialsFromUserLabel(localUserId ?? 'Local')}
-                    </div>
-                    <span className="hidden max-w-[12rem] truncate text-sm font-medium text-zinc-200 sm:inline">
-                      {localUserId ?? 'Local dev'}
-                    </span>
-                    <span className="sr-only">Local build (no login)</span>
-                  </div>
-                ) : userEmail ? (
-                  <>
-                    <div className="ui-surface-input flex items-center gap-2 rounded-full py-1 pl-1 pr-3">
-                      <div
-                        className="flex size-8 items-center justify-center rounded-full bg-teal-500/15 text-xs font-semibold uppercase tracking-wide text-teal-200"
-                        aria-hidden
-                      >
-                        {initialsFromEmail(userEmail)}
-                      </div>
-                      <span className="hidden max-w-[10rem] truncate text-sm font-medium text-zinc-200 sm:inline">
-                        {userEmail}
-                      </span>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="shrink-0 gap-1.5 px-2 py-2 text-xs text-zinc-400"
-                      aria-label="Sign out"
-                      onClick={() => logout()}
-                    >
-                      <LogOut className="size-4" aria-hidden />
-                      <span className="hidden sm:inline">Sign out</span>
-                    </Button>
-                  </>
-                ) : (
-                  <div className="ui-surface-input flex items-center gap-2 rounded-full py-1 pl-1 pr-3">
-                    <div
-                      className="flex size-8 items-center justify-center rounded-full bg-teal-500/15 text-xs font-semibold uppercase tracking-wide text-teal-200"
-                      aria-label="Alex R. avatar"
-                    >
-                      AR
-                    </div>
-                    <span className="hidden text-sm font-medium text-zinc-200 sm:inline">
-                      Alex R.
-                    </span>
-                  </div>
-                )}
+                {headerUserRegion()}
               </div>
             </div>
           </div>

@@ -150,3 +150,10 @@ export type TransactionFile = {
 export type TransactionFilesResponse = {
   transaction_files: TransactionFile[]
 }
+
+/** Result of `GET /api/backup/export` before triggering a browser save-as. */
+export type BackupExportDownload = {
+  blob: Blob
+  /** From `Content-Disposition` when present; else a safe default. */
+  filename: string
+}
