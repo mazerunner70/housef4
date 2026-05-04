@@ -85,3 +85,54 @@ export async function extractImportMultipart(
     Readable.from(bodyBuffer).pipe(bb);
   });
 }
+
+/**
+ * `multipart/form-data` for `POST /api/backup/restore`: single part `backup` (JSON file body).
+ */
+export async function extractBackupMultipart(
+  headers: Record<string, string | undefined>,
+  bodyBuffer: Buffer,
+): Promise<ExtractedUpload | null> {
+  const ct =
+    headers['content-type'] ??
+    headers['Content-Type'] ??
+    headers['CONTENT-TYPE'];
+  if (!ct?.toLowerCase().includes('multipart/form-data')) {
+    return null;
+  }
+
+  return new Promise((resolve, reject) => {
+    const bb = busboy({
+      headers: { 'content-type': ct },
+      limits: { files: 1, fileSize: 80 * 1024 * 1024 },
+    });
+    let fileFound: ExtractedUpload | null = null;
+
+    bb.on('file', (name, file, info) => {
+      if (name !== 'backup') {
+        file.resume();
+        return;
+      }
+      const chunks: Buffer[] = [];
+      file.on('data', (d: Buffer) => {
+        chunks.push(d);
+      });
+      file.on('limit', () => {
+        file.resume();
+      });
+      file.on('end', () => {
+        fileFound = {
+          filename: info.filename,
+          buffer: Buffer.concat(chunks),
+          mimeType: info.mimeType,
+        };
+      });
+    });
+
+    bb.on('finish', () => {
+      resolve(fileFound);
+    });
+    bb.on('error', reject);
+    Readable.from(bodyBuffer).pipe(bb);
+  });
+}

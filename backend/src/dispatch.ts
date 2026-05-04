@@ -1,5 +1,6 @@
 import { getAccountsPayload } from './handlers/accounts';
 import { getBackupExportPayload } from './handlers/backupExport';
+import { postBackupRestorePayload } from './handlers/backupRestore';
 import { getHealthPayload } from './handlers/health';
 import { postImportPayload } from './handlers/imports';
 import { getMePayload } from './handlers/me';
@@ -138,6 +139,12 @@ const authenticatedPostRoutes: AuthenticatedPostRoute[] = [
     routeLog: 'rules/tag',
     handler: async (uid, req) =>
       jsonResponse(200, await postTagRulePayload(uid, req.rawBody)),
+  },
+  {
+    tail: ['backup', 'restore'],
+    routeLog: 'backup/restore',
+    handler: async (uid, req) =>
+      jsonResponse(200, await postBackupRestorePayload(uid, req)),
   },
 ];
 
