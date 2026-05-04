@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 
 import { Button } from '@/components/ui/Button'
@@ -122,6 +122,15 @@ export function DataImportPage() {
             Upload a bank export (CSV, OFX, QFX, or QIF). The server parses the
             file via <code className="text-zinc-300">POST /api/imports</code>{' '}
             and returns a summary of ingested rows.
+          </p>
+          <p className="mt-3 text-sm">
+            <Link
+              className="font-medium text-teal-400/90 underline-offset-4 hover:text-teal-300 hover:underline"
+              to="/settings/data"
+            >
+              Download all my data
+            </Link>
+            <span className="text-zinc-600"> — backup & restore</span>
           </p>
         </div>
         <Button

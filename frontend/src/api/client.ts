@@ -1,5 +1,6 @@
 import type {
   AccountsResponse,
+  BackupExportDownload,
   ImportParseResult,
   MetricsResponse,
   ReviewQueueResponse,
@@ -58,6 +59,62 @@ async function authorizationHeader(): Promise<Record<string, string>> {
   return { Authorization: `Bearer ${raw}` }
 }
 
+const DEFAULT_BACKUP_FILENAME = 'housef4-backup.json'
+
+function parseContentDispositionFilename(
+  contentDisposition: string | null,
+): string | undefined {
+  if (!contentDisposition) return undefined
+  const star = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(contentDisposition)
+  if (star?.[1]) {
+    const raw = star[1].trim().replaceAll(/^["']|["']$/g, '')
+    try {
+      return decodeURIComponent(raw)
+    } catch {
+      return raw
+    }
+  }
+  const quoted = /filename="([^"]+)"/i.exec(contentDisposition)
+  if (quoted?.[1]) return quoted[1]
+  const loose = /filename=([^;\s]+)/i.exec(contentDisposition)
+  if (loose?.[1]) return loose[1].replaceAll(/^["']|["']$/g, '')
+  return undefined
+}
+
+/** Save a blob with a suggested filename (object URL + programmatic click). */
+export function downloadBlobAsFile(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+/**
+ * `GET /api/backup/export` — authenticated JSON snapshot; returns a blob and
+ * filename for {@link downloadBlobAsFile}.
+ */
+export async function getBackupExport(): Promise<BackupExportDownload> {
+  const auth = await authorizationHeader()
+  const res = await fetch('/api/backup/export', {
+    method: 'GET',
+    cache: 'no-store',
+    headers: { ...auth },
+  })
+  if (!res.ok) {
+    throw new Error(`${res.status} ${res.statusText}`)
+  }
+  const blob = await res.blob()
+  const filename =
+    parseContentDispositionFilename(res.headers.get('Content-Disposition')) ??
+    DEFAULT_BACKUP_FILENAME
+  return { blob, filename }
+}
+
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const isFormData = init?.body instanceof FormData
   const auth = await authorizationHeader()
@@ -99,10 +156,10 @@ export async function postImport(
 ): Promise<ImportParseResult> {
   const body = new FormData()
   body.append('file', file)
-  if (account.newAccountName !== undefined) {
-    body.append('new_account_name', account.newAccountName)
-  } else {
+  if (typeof account.accountId === 'string') {
     body.append('account_id', account.accountId)
+  } else {
+    body.append('new_account_name', account.newAccountName)
   }
   return fetchJson<ImportParseResult>('/api/imports', { method: 'POST', body })
 }

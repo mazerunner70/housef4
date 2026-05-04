@@ -2,13 +2,14 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 
 import { CognitoGate } from '@/auth/CognitoGate'
 import { AppLayout } from '@/components/layout/AppLayout'
-import { DataImportPage } from '@/pages/DataImportPage'
-import { ImportTransactionsReviewPage } from '@/pages/ImportTransactionsReviewPage'
 import { DashboardPage } from '@/pages/DashboardPage'
+import { DataBackupSettingsPage } from '@/pages/DataBackupSettingsPage.tsx'
+import { DataImportPage } from '@/pages/DataImportPage'
+import { HealthCheckPage } from '@/pages/HealthCheckPage'
 import { HomeRedirect } from '@/pages/HomeRedirect'
+import { ImportTransactionsReviewPage } from '@/pages/ImportTransactionsReviewPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { ReviewQueuePage } from '@/pages/ReviewQueuePage'
-import { HealthCheckPage } from '@/pages/HealthCheckPage'
 
 export default function App() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
           />
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="review-queue" element={<ReviewQueuePage />} />
+          <Route path="settings/data" element={<DataBackupSettingsPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
