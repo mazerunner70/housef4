@@ -127,14 +127,14 @@ export function RestoreWizard({
       )
       return
     }
-    const parsed = parseHousef4BackupManifest(text)
-    if (!parsed) {
+    const manifest = parseHousef4BackupManifest(text)
+    if (!manifest) {
       setManifestParseError(
         'This file doesn’t look like a Housef4 backup. Use a JSON file exported from this app (schema version 1).',
       )
       return
     }
-    setManifest(parsed)
+    setManifest(manifest)
     setStep(2)
   }
 

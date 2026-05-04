@@ -49,7 +49,7 @@ export function RestoreStuckBanner({
     } catch (e) {
       let message = 'Abort failed'
       if (e instanceof ApiHttpError) {
-        message = `${e.status} ${e.message}`
+        message = `${e.message}`
       } else if (e instanceof Error) {
         message = e.message
       }

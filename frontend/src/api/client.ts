@@ -193,7 +193,9 @@ export async function postBackupRestoreAbortWithRetries(
           ABORT_RETRY_DELAYS_MS[
             Math.min(attempt, ABORT_RETRY_DELAYS_MS.length - 1)
           ]
-        await new Promise((r) => setTimeout(r, delayMs))
+        if (attempt < maxAttempts-1) {
+          await new Promise((r) => setTimeout(r, delayMs))
+        }
         continue
       }
       throw e

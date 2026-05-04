@@ -1,4 +1,4 @@
-import { safeParse, z } from 'zod'
+import { z } from 'zod'
 
 /** Matches **`BACKUP_SCHEMA_VERSION_V1`** in db (`backup-schema/v1.md`). */
 export const HOUSEF4_BACKUP_SCHEMA_VERSION_V1 = 1 as const
@@ -30,20 +30,14 @@ const manifestEnvelopeSchema = z
 
 export type BackupManifestPreview = z.infer<typeof manifestEnvelopeSchema>
 
-/**
- * Lightweight client-side check before **`POST /api/backup/restore`** — counts only, no PII tables.
- */
+/** Client-side v1 envelope check before restore — counts only. */
 export function parseHousef4BackupManifest(
   jsonText: string,
 ): BackupManifestPreview | null {
-  let parsedJson: unknown
   try {
-    parsedJson = JSON.parse(jsonText)
+    const parsed = manifestEnvelopeSchema.safeParse(JSON.parse(jsonText))
+    return parsed.success ? parsed.data : null
   } catch {
     return null
   }
-
-  const parsed = safeParse(manifestEnvelopeSchema, parsedJson)
-  if (!parsed.success) return null
-  return parsed.data
 }
