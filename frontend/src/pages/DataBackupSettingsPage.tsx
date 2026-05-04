@@ -89,7 +89,10 @@ export function DataBackupSettingsPage() {
 
         {error && (
           <div className="mt-4 space-y-3">
-            <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+            <p
+              role="alert"
+              className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200"
+            >
               Could not prepare backup ({error}). Check your connection and try
               again.
             </p>
