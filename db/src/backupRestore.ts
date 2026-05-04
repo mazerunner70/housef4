@@ -45,13 +45,12 @@ export class RestoreAbortStagingCleanupError extends Error {
 
   constructor(
     readonly restore_lock_cleared: boolean,
-    cause?: unknown,
+    cause?: Error,
   ) {
     const message =
-      cause instanceof Error
-        ? cause.message
-        : 'Staging partition cleanup failed during restore abort';
-    super(message, cause instanceof Error ? { cause } : undefined);
+      cause?.message ||
+      'Staging partition cleanup failed during restore abort';
+    super(message, cause ? { cause } : undefined);
     this.name = 'RestoreAbortStagingCleanupError';
   }
 }
@@ -669,7 +668,10 @@ export async function runRestoreAbortWorkflow(opts: {
       userId: opts.userId,
     });
   } catch (e) {
-    throw new RestoreAbortStagingCleanupError(restore_lock_cleared, e);
+    throw new RestoreAbortStagingCleanupError(
+      restore_lock_cleared,
+      e instanceof Error ? e : new Error(String(e)),
+    );
   }
   return { restore_lock_cleared };
 }

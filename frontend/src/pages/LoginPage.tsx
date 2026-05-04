@@ -9,6 +9,7 @@ import { useAuth } from '@/auth/useAuth'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Spinner } from '@/components/ui/Spinner'
+import { postLoginRedirectPath } from '@/lib/postLoginRedirectPath'
 
 type FormSubmit = NonNullable<ComponentProps<'form'>['onSubmit']>
 
@@ -491,9 +492,7 @@ function LoginModePanel({
 export function LoginPage() {
   const { appAuthMode, ready, isAuthenticated, login } = useAuth()
   const location = useLocation()
-  const from =
-    (location.state as { from?: { pathname?: string } } | undefined)?.from
-      ?.pathname ?? '/'
+  const from = postLoginRedirectPath(location.state)
 
   const [mode, setMode] = useState<LoginMode>('signin')
   const [email, setEmail] = useState('')
