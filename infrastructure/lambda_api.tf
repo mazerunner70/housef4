@@ -149,6 +149,16 @@ resource "aws_apigatewayv2_integration" "lambda" {
   payload_format_version = "1.0"
 }
 
+/** Max integration wait (30s) for synchronous restore staging workflow (`api_contract.md` §6; HOU-20). */
+resource "aws_apigatewayv2_integration" "lambda_restore" {
+  api_id                 = aws_apigatewayv2_api.http.id
+  integration_type       = "AWS_PROXY"
+  integration_method     = "POST"
+  integration_uri        = aws_lambda_function.api.invoke_arn
+  payload_format_version = "1.0"
+  timeout_milliseconds   = 30000
+}
+
 resource "aws_apigatewayv2_route" "health" {
   api_id    = aws_apigatewayv2_api.http.id
   route_key = "GET /api/health"
@@ -161,6 +171,15 @@ resource "aws_apigatewayv2_route" "health_head" {
   route_key = "HEAD /api/health"
 
   target = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
+resource "aws_apigatewayv2_route" "backup_restore_post" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "POST /api/backup/restore"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+
+  target = "integrations/${aws_apigatewayv2_integration.lambda_restore.id}"
 }
 
 resource "aws_apigatewayv2_route" "api_proxy" {

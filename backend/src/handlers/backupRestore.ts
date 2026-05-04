@@ -43,7 +43,7 @@ export async function postBackupRestorePayload(
     part = await extractBackupMultipart(req.headers, buf);
   } catch (e) {
     if (e instanceof MultipartFileTooLargeError) {
-      throw new HttpError(413, e.message, {
+      throw new HttpError(400, e.message, {
         error: 'Backup file exceeds maximum size',
         max_bytes: e.maxBytes,
         field: e.fieldName,
@@ -94,7 +94,13 @@ export async function postBackupRestorePayload(
         error: 'Restore already in progress',
       });
     }
-    throw e;
+    log.error('backup.restore.handler_failed', {
+      userIdLen: userId.length,
+      err: e instanceof Error ? e.message : String(e),
+      errName: e instanceof Error ? e.name : undefined,
+      stack: e instanceof Error ? e.stack : undefined,
+    });
+    throw new HttpError(500, 'Restore failed', { error: 'Restore failed' });
   }
 }
 

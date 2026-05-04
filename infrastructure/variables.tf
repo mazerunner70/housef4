@@ -40,9 +40,9 @@ variable "lambda_memory_size" {
 }
 
 variable "lambda_timeout" {
-  description = "Lambda timeout in seconds"
+  description = "Lambda timeout in seconds (30 matches HTTP API max integration wait; backup restore staging workflow needs headroom per api_contract §6)"
   type        = number
-  default     = 10
+  default     = 30
 }
 
 variable "health_check_build_label" {

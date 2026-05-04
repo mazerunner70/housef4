@@ -190,6 +190,47 @@ test('POST /api/backup/restore without multipart returns 400', async () => {
   assert.match(res.body.error, /multipart/i);
 });
 
+test('POST /api/backup/restore mismatched app_user_id returns 403', async () => {
+  const boundary = '----housef4-dispatch-403';
+  const backup = {
+    backup_schema_version: 1,
+    app_user_id: 'someone-else',
+    exported_at: 1,
+    accounts: [],
+    transactions: [],
+    clusters: [],
+    transaction_files: [],
+    profile: null,
+    metrics: null,
+  };
+  const raw = JSON.stringify(backup);
+  const body = Buffer.from(
+    [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="backup"; filename="b.json"',
+      'Content-Type: application/json',
+      '',
+      raw,
+      `--${boundary}--`,
+      '',
+    ].join('\r\n'),
+    'utf8',
+  );
+
+  const res = await dispatch({
+    method: 'POST',
+    path: '/api/backup/restore',
+    headers: {
+      'content-type': `multipart/form-data; boundary=${boundary}`,
+    },
+    rawBody: body.toString('utf8'),
+    bodyBuffer: body,
+    userId: 'authenticated-user',
+  });
+  assert.equal(res.statusCode, 403);
+  assert.match(String(res.body.error), /app_user_id|authenticated user/i);
+});
+
 test('POST /api/backup/restore/abort without userId returns 401', async () => {
   const res = await dispatch({
     method: 'POST',
