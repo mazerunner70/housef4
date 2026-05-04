@@ -23,6 +23,7 @@ import {
   userPk,
 } from './keys';
 import { getDocumentClient, requireTableName } from './dynamoClient';
+import { collectUserPartitionItems } from './userPartition';
 import {
   computeDashboardMetrics,
   metricsSnapshotLooksAllZero,
@@ -31,20 +32,22 @@ import {
   type DashboardMetricsStored,
 } from './dashboardMetrics';
 import { dbLog } from './structuredLog';
-import type {
-  AccountRecord,
-  ExistingTransactionPatch,
-  ImportIngestResult,
-  ImportTransactionInput,
-  MetricsSnapshot,
-  PendingClusterRecord,
-  TransactionFileInput,
-  TransactionFileRecord,
-  TransactionFileSource,
-  TransactionFileFormat,
-  TransactionFileTiming,
-  TransactionRecord,
-  TransactionStatus,
+import {
+  BACKUP_SCHEMA_VERSION_V1,
+  type AccountRecord,
+  type BackupSnapshotV1,
+  type ExistingTransactionPatch,
+  type ImportIngestResult,
+  type ImportTransactionInput,
+  type MetricsSnapshot,
+  type PendingClusterRecord,
+  type TransactionFileInput,
+  type TransactionFileRecord,
+  type TransactionFileSource,
+  type TransactionFileFormat,
+  type TransactionFileTiming,
+  type TransactionRecord,
+  type TransactionStatus,
 } from './types';
 
 /** String field from Dynamo/JSON: avoids `[object Object]` from `String(unknown)`. */
@@ -82,6 +85,192 @@ function metricsItemFallbackReason(
 
 const GSI1 = 'GSI1';
 const GSI2 = 'GSI2';
+
+/** Keys not included in portable backup rows (`data_model.md` §8.3). */
+const DYNAMO_INDEX_KEYS = new Set([
+  'PK',
+  'SK',
+  'GSI1PK',
+  'GSI1SK',
+  'GSI2PK',
+  'GSI2SK',
+]);
+
+function stripDynamoIndexKeys(item: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(item)) {
+    if (DYNAMO_INDEX_KEYS.has(k)) continue;
+    if (k.startsWith('GSI')) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+function transactionRecordToBackupWire(rec: TransactionRecord): Record<string, unknown> {
+  const row: Record<string, unknown> = {
+    entity_type: 'TRANSACTION',
+    user_id: rec.user_id,
+    id: rec.id,
+    date: rec.date,
+    raw_merchant: rec.raw_merchant,
+    amount: rec.amount,
+    category: rec.category,
+    status: rec.status,
+    is_recurring: rec.is_recurring,
+    transaction_file_id: rec.transaction_file_id,
+  };
+  if (rec.cleaned_merchant !== undefined) {
+    row.cleaned_merchant = rec.cleaned_merchant;
+  }
+  if (rec.cluster_id !== undefined) {
+    row.cluster_id = rec.cluster_id;
+  }
+  if (rec.merchant_embedding !== undefined && rec.merchant_embedding.length > 0) {
+    row.merchant_embedding = rec.merchant_embedding;
+  }
+  if (rec.suggested_category !== undefined) {
+    row.suggested_category = rec.suggested_category;
+  }
+  if (rec.category_confidence !== undefined) {
+    row.category_confidence = rec.category_confidence;
+  }
+  if (rec.match_type !== undefined) {
+    row.match_type = rec.match_type;
+  }
+  return row;
+}
+
+interface BackupExportAccum {
+  accounts: Record<string, unknown>[];
+  transactions: Record<string, unknown>[];
+  clusters: Record<string, unknown>[];
+  transaction_files: Record<string, unknown>[];
+  profile: Record<string, unknown> | null;
+  metrics: Record<string, unknown> | null;
+}
+
+function transactionFileBackupCompletedAt(row: Record<string, unknown>): number {
+  const t = row.timing;
+  if (typeof t !== 'object' || t === null) {
+    return 0;
+  }
+  const c = (t as TransactionFileTiming).completed_at;
+  if (typeof c === 'number') {
+    return c;
+  }
+  return Number(c ?? 0);
+}
+
+function sortBackupAccountsInPlace(accounts: Record<string, unknown>[]): void {
+  accounts.sort((a, b) =>
+    wireString(a.name, '').localeCompare(wireString(b.name, ''), undefined, {
+      sensitivity: 'base',
+    }),
+  );
+}
+
+function sortBackupTransactionsInPlace(transactions: Record<string, unknown>[]): void {
+  transactions.sort((a, b) => {
+    const byDate = Number(b.date ?? 0) - Number(a.date ?? 0);
+    if (byDate === 0) {
+      return wireString(a.id, '').localeCompare(wireString(b.id, ''));
+    }
+    return byDate;
+  });
+}
+
+function sortBackupClustersInPlace(clusters: Record<string, unknown>[]): void {
+  clusters.sort((a, b) =>
+    wireString(a.cluster_id, '').localeCompare(wireString(b.cluster_id, '')),
+  );
+}
+
+function sortBackupTransactionFilesInPlace(
+  transaction_files: Record<string, unknown>[],
+): void {
+  transaction_files.sort(
+    (a, b) => transactionFileBackupCompletedAt(b) - transactionFileBackupCompletedAt(a),
+  );
+}
+
+function appendPartitionItemToBackupExport(
+  item: Record<string, unknown>,
+  userId: string,
+  acc: BackupExportAccum,
+): void {
+  const et = item.entity_type;
+  if (typeof et !== 'string') {
+    dbLog('warn', 'backup.export.skipped_unknown_entity', {
+      entity_type: null,
+      userIdLen: userId.length,
+    });
+    return;
+  }
+
+  switch (et) {
+    case 'ACCOUNT': {
+      if (wireString(item.id, '') !== '') {
+        acc.accounts.push(stripDynamoIndexKeys(item));
+      }
+      break;
+    }
+    case 'TRANSACTION': {
+      const rec = transactionItemToRecord(item, userId);
+      if (rec) {
+        acc.transactions.push(transactionRecordToBackupWire(rec));
+      }
+      break;
+    }
+    case 'CLUSTER': {
+      if (wireString(item.cluster_id, '') !== '') {
+        acc.clusters.push(stripDynamoIndexKeys(item));
+      }
+      break;
+    }
+    case 'TRANSACTION_FILE': {
+      if (wireString(item.id, '') === '') break;
+      const fallbackName = wireString(item.name, 'import');
+      const source = parseSourceFromItem(item, fallbackName);
+      const result = parseTransactionFileResult(
+        item.result,
+        item.ingest,
+        item.row_count,
+      );
+      const accountId = wireString(item.account_id, '');
+      const rec: TransactionFileRecord = {
+        user_id: wireString(item.user_id, userId),
+        id: wireString(item.id, ''),
+        account_id: accountId.length > 0 ? accountId : '',
+        source,
+        format: parseFormatFromItem(item),
+        timing: parseTimingFromItem(item),
+        result,
+      };
+      acc.transaction_files.push({
+        entity_type: 'TRANSACTION_FILE',
+        user_id: rec.user_id,
+        id: rec.id,
+        account_id: rec.account_id,
+        source: rec.source,
+        format: rec.format,
+        timing: rec.timing,
+        result: rec.result,
+      });
+      break;
+    }
+    case 'PROFILE':
+      acc.profile = stripDynamoIndexKeys(item);
+      break;
+    case 'METRICS':
+      acc.metrics = stripDynamoIndexKeys(item);
+      break;
+    default:
+      dbLog('warn', 'backup.export.skipped_unknown_entity', {
+        entity_type: et,
+        userIdLen: userId.length,
+      });
+  }
+}
 
 export interface FinanceRepository {
   listTransactions(userId: string): Promise<TransactionRecord[]>;
@@ -122,6 +311,8 @@ export interface FinanceRepository {
     clusterId: string,
     assignedCategory: string,
   ): Promise<number>;
+  /** Primary partition snapshot for `GET /api/backup/export`; omits `RESTORE_LOCK`. */
+  exportBackupSnapshot(userId: string): Promise<BackupSnapshotV1>;
 }
 
 interface ClusterItem {
@@ -1175,5 +1366,55 @@ export class DynamoFinanceRepository implements FinanceRepository {
     await this.refreshStoredDashboardMetrics(userId);
 
     return updated;
+  }
+
+  async exportBackupSnapshot(userId: string): Promise<BackupSnapshotV1> {
+    const exported_at = Date.now();
+    const items = await collectUserPartitionItems({
+      docClient: this.doc,
+      dataset: 'primary',
+      userId,
+      excludeRestoreLock: true,
+    });
+
+    const acc: BackupExportAccum = {
+      accounts: [],
+      transactions: [],
+      clusters: [],
+      transaction_files: [],
+      profile: null,
+      metrics: null,
+    };
+
+    for (const item of items) {
+      appendPartitionItemToBackupExport(item, userId, acc);
+    }
+
+    sortBackupAccountsInPlace(acc.accounts);
+    sortBackupTransactionsInPlace(acc.transactions);
+    sortBackupClustersInPlace(acc.clusters);
+    sortBackupTransactionFilesInPlace(acc.transaction_files);
+
+    dbLog('info', 'backup.export.built', {
+      userIdLen: userId.length,
+      txnCount: acc.transactions.length,
+      clusterCount: acc.clusters.length,
+      fileCount: acc.transaction_files.length,
+      accountCount: acc.accounts.length,
+      hasProfile: acc.profile !== null,
+      hasMetrics: acc.metrics !== null,
+    });
+
+    return {
+      backup_schema_version: BACKUP_SCHEMA_VERSION_V1,
+      exported_at,
+      app_user_id: userId,
+      accounts: acc.accounts,
+      profile: acc.profile,
+      metrics: acc.metrics,
+      transactions: acc.transactions,
+      clusters: acc.clusters,
+      transaction_files: acc.transaction_files,
+    };
   }
 }

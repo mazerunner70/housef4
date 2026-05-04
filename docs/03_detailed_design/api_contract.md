@@ -309,7 +309,7 @@ Returns a single downloadable artifact representing the user’s restorable stat
 - **Success:** **`200 OK`** with body **`application/json`** (UTF-8). Clients should persist it as a file (e.g. `housef4-backup-<timestamp>.json`). Optionally the server may send **`Content-Disposition: attachment`** with a suggested filename.
 - **Headers:** `Content-Type: application/json; charset=utf-8`.
 
-The JSON document MUST conform to the **logical backup snapshot** schema in [`database/data_model.md`](./database/data_model.md) §8 (`backup_schema_version`, `exported_at`, entity arrays). Field names inside entity records follow the same **`snake_case`** conventions as **`GET /api/transactions`**, **`GET /api/accounts`**, **`GET /api/transaction-files`**, and **`GET /api/review-queue`**—extended with any persisted attributes omitted from read APIs today only where required for a **lossless round-trip** (document those extensions in the data model).
+The JSON document MUST conform to the **logical backup snapshot** schema in [`database/data_model.md`](./database/data_model.md) §8 (`backup_schema_version`, `exported_at`, entity arrays). **Per-version field dictionary:** current wire format is **[`backup-schema/v1.md`](./backup-schema/v1.md)** (see [`backup-schema/README.md`](./backup-schema/README.md)). Field names inside entity records follow the same **`snake_case`** conventions as **`GET /api/transactions`**, **`GET /api/accounts`**, **`GET /api/transaction-files`**, and **`GET /api/review-queue`**—extended with any persisted attributes omitted from read APIs today only where required for a **lossless round-trip** (document those extensions in the versioned backup schema / data model).
 
 #### Errors
 
