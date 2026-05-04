@@ -157,3 +157,27 @@ export type BackupExportDownload = {
   /** From `Content-Disposition` when present; else a safe default. */
   filename: string
 }
+
+/** Successful `POST /api/backup/restore` body (`api_contract.md` §6). */
+export type BackupRestoredCounts = {
+  accounts: number
+  transactions: number
+  clusters: number
+  transaction_files: number
+  profile: boolean
+  metrics: boolean
+}
+
+export type BackupRestoreResponse = {
+  success: boolean
+  restored: BackupRestoredCounts
+  completed_at: number
+}
+
+/** Successful `POST /api/backup/restore/abort` body (`api_contract.md` §6). */
+export type BackupRestoreAbortResponse = {
+  success: boolean
+  restore_lock_cleared: boolean
+  staging_partition_cleared: boolean
+  completed_at: number
+}

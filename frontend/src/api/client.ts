@@ -1,6 +1,8 @@
 import type {
   AccountsResponse,
   BackupExportDownload,
+  BackupRestoreAbortResponse,
+  BackupRestoreResponse,
   ImportParseResult,
   MetricsResponse,
   ReviewQueueResponse,
@@ -113,6 +115,93 @@ export async function getBackupExport(): Promise<BackupExportDownload> {
     parseContentDispositionFilename(res.headers.get('Content-Disposition')) ??
     DEFAULT_BACKUP_FILENAME
   return { blob, filename }
+}
+
+/** Raw HTTP response body as UTF-8 text (may be empty). */
+export type ApiHttpErrorBody = string
+
+/** Non-OK HTTP response with the entity body as text. */
+export class ApiHttpError extends Error {
+  readonly status: number
+  readonly body: ApiHttpErrorBody
+
+  constructor(status: number, statusText: string, body: ApiHttpErrorBody = '') {
+    super(`${status} ${statusText}`)
+    this.name = 'ApiHttpError'
+    this.status = status
+    this.body = body
+  }
+}
+
+async function readResponseText(res: Response): Promise<string> {
+  return res.text()
+}
+
+/**
+ * `POST /api/backup/restore` — multipart **`backup`** part (`api_contract.md` §6).
+ */
+export async function postBackupRestore(
+  file: File,
+): Promise<BackupRestoreResponse> {
+  const auth = await authorizationHeader()
+  const body = new FormData()
+  body.append('backup', file)
+  const res = await fetch('/api/backup/restore', {
+    method: 'POST',
+    body,
+    headers: { ...auth },
+  })
+  const text = await readResponseText(res)
+  if (!res.ok) {
+    throw new ApiHttpError(res.status, res.statusText, text)
+  }
+  return JSON.parse(text) as BackupRestoreResponse
+}
+
+/**
+ * `POST /api/backup/restore/abort` — clear **`RESTORE_LOCK`** then staging (`api_contract.md` §6).
+ */
+export async function postBackupRestoreAbort(): Promise<BackupRestoreAbortResponse> {
+  const auth = await authorizationHeader()
+  const res = await fetch('/api/backup/restore/abort', {
+    method: 'POST',
+    headers: { ...auth },
+  })
+  const text = await readResponseText(res)
+  if (!res.ok) {
+    throw new ApiHttpError(res.status, res.statusText, text)
+  }
+  return JSON.parse(text) as BackupRestoreAbortResponse
+}
+
+const ABORT_RETRY_DELAYS_MS = [400, 800, 1200, 1600, 2000, 2400, 2800]
+
+/**
+ * Calls {@link postBackupRestoreAbort} and retries on **500** (partial staging cleanup — idempotent).
+ */
+export async function postBackupRestoreAbortWithRetries(
+  maxAttempts = 8,
+): Promise<BackupRestoreAbortResponse> {
+  let lastError: unknown
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await postBackupRestoreAbort()
+    } catch (e) {
+      lastError = e
+      if (e instanceof ApiHttpError && e.status === 500) {
+        const delayMs =
+          ABORT_RETRY_DELAYS_MS[
+            Math.min(attempt, ABORT_RETRY_DELAYS_MS.length - 1)
+          ]
+        if (attempt < maxAttempts-1) {
+          await new Promise((r) => setTimeout(r, delayMs))
+        }
+        continue
+      }
+      throw e
+    }
+  }
+  throw lastError
 }
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
