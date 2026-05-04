@@ -153,3 +153,39 @@ test('GET /api/backup/export with userId without DYNAMODB_TABLE_NAME returns 500
     if (prev !== undefined) process.env.DYNAMODB_TABLE_NAME = prev;
   }
 });
+
+test('POST /api/backup/restore without userId returns 401', async () => {
+  const res = await dispatch({
+    method: 'POST',
+    path: '/api/backup/restore',
+    headers: {},
+    rawBody: '',
+    bodyBuffer: Buffer.from([]),
+  });
+  assert.equal(res.statusCode, 401);
+});
+
+test('POST /api/backup/restore with empty buffer returns 400', async () => {
+  const res = await dispatch({
+    method: 'POST',
+    path: '/api/backup/restore',
+    headers: {},
+    rawBody: '',
+    bodyBuffer: Buffer.from([]),
+    userId: 'user-1',
+  });
+  assert.equal(res.statusCode, 400);
+});
+
+test('POST /api/backup/restore without multipart returns 400', async () => {
+  const res = await dispatch({
+    method: 'POST',
+    path: '/api/backup/restore',
+    headers: { 'content-type': 'application/json' },
+    rawBody: '{}',
+    bodyBuffer: Buffer.from('{}'),
+    userId: 'user-1',
+  });
+  assert.equal(res.statusCode, 400);
+  assert.match(res.body.error, /multipart/i);
+});

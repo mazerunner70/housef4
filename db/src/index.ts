@@ -3,6 +3,12 @@ export * from './keys';
 export * from './userPartition';
 export type { FinanceRepository } from './dynamoFinanceRepository';
 export { DynamoFinanceRepository } from './dynamoFinanceRepository';
+export {
+  BackupRestoreClientError,
+  runRestoreBackupWorkflow,
+  validateBackupSnapshotForRestore,
+} from './backupRestore';
+export type { RunRestoreBackupWorkflowOptions } from './backupRestore';
 export { getDocumentClient, requireRestoreStagingTableName, requireTableName } from './dynamoClient';
 export {
   HEALTH_CHECK_PK,

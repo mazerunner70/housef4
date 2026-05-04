@@ -23,6 +23,7 @@ import {
   userPk,
 } from './keys';
 import { getDocumentClient, requireTableName } from './dynamoClient';
+import { runRestoreBackupWorkflow } from './backupRestore';
 import { collectUserPartitionItems } from './userPartition';
 import {
   computeDashboardMetrics,
@@ -35,6 +36,7 @@ import { dbLog } from './structuredLog';
 import {
   BACKUP_SCHEMA_VERSION_V1,
   type AccountRecord,
+  type BackupRestoreCounts,
   type BackupSnapshotV1,
   type ExistingTransactionPatch,
   type ImportIngestResult,
@@ -313,6 +315,11 @@ export interface FinanceRepository {
   ): Promise<number>;
   /** Primary partition snapshot for `GET /api/backup/export`; omits `RESTORE_LOCK`. */
   exportBackupSnapshot(userId: string): Promise<BackupSnapshotV1>;
+  /** Full overwrite restore via staging table (`data_model.md` §8.2). Snapshot must be validated first. */
+  restoreBackupSnapshot(
+    userId: string,
+    snapshot: BackupSnapshotV1,
+  ): Promise<BackupRestoreCounts>;
 }
 
 interface ClusterItem {
@@ -1416,5 +1423,17 @@ export class DynamoFinanceRepository implements FinanceRepository {
       clusters: acc.clusters,
       transaction_files: acc.transaction_files,
     };
+  }
+
+  async restoreBackupSnapshot(
+    userId: string,
+    snapshot: BackupSnapshotV1,
+  ): Promise<BackupRestoreCounts> {
+    return runRestoreBackupWorkflow({
+      doc: this.doc,
+      userId,
+      snapshot,
+      refreshMetrics: () => this.refreshStoredDashboardMetrics(userId),
+    });
   }
 }

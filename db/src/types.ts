@@ -187,3 +187,13 @@ export interface BackupSnapshotV1 {
   clusters: Record<string, unknown>[];
   transaction_files: Record<string, unknown>[];
 }
+
+/** Response shape for `POST /api/backup/restore` `restored` field (`api_contract.md` §6). */
+export interface BackupRestoreCounts {
+  accounts: number;
+  transactions: number;
+  clusters: number;
+  transaction_files: number;
+  profile: boolean;
+  metrics: boolean;
+}

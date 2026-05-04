@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc -w",
-    "test": "pnpm run build && node --test test/userPartition.test.cjs test/backupExport.test.cjs"
+    "test": "pnpm run build && node --test test/userPartition.test.cjs test/backupExport.test.cjs test/backupRestore.test.cjs"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.500.0",
