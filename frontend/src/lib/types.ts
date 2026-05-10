@@ -41,7 +41,7 @@ export type Transaction = {
   raw_merchant: string
   /** Normalized merchant text for clustering; derived on the server when missing in storage. */
   cleaned_merchant: string
-  /** Canonical: spending negative, income positive. */
+  /** Canonical sign per account: negative = money out, positive = money in (`import_field_mapping.md` §8). */
   amount: number
   /** File-signed amount before optional import negation, when the API returns it. */
   file_amount?: number
@@ -109,7 +109,7 @@ export type ImportParseResult = {
   importFileId: string
   /** Detected from filename / MIME; echoed by `POST /api/imports` when wired. */
   sourceFormat?: ImportSourceFormat
-  /** Import sign normalization (canonical spending negative). */
+  /** Import sign normalization (canonical: negative = from account, positive = into account). */
   amountNegation?: {
     applied: boolean
     suggestInterest: boolean
@@ -138,7 +138,7 @@ export type TransactionFileFormat = {
   source_format?: string
   /** When known from import metadata (e.g. OFX). */
   currency?: string
-  /** True when this import applied sign negation for canonical amounts. */
+  /** True when this run negated parsed values to match canonical sign (negative = from account). */
   amount_negated?: boolean
 }
 

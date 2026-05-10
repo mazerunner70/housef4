@@ -19,25 +19,31 @@ type Phase = 'idle' | 'parsing' | 'done'
 function importAmountNegationShortLabel(amountNegated: boolean | undefined): {
   text: string
   title: string
+  badgeClassName: string
 } {
+  const base =
+    'inline-block rounded-md border px-2 py-0.5 font-medium'
   if (amountNegated === true) {
     return {
-      text: 'Signs normalized',
+      text: 'Amount values negated',
       title:
-        'Import flipped parsed amounts so spending is negative and income is positive (canonical).',
+        'Import flipped parsed amounts so negatives are money out of this account and positives are money in (canonical convention).',
+      badgeClassName: `${base} border-white/10 bg-white/[0.04] text-zinc-300`,
     }
   }
   if (amountNegated === false) {
     return {
-      text: 'Raw file signs',
+      text: 'Amount values not negated',
       title:
-        'Stored amounts match the export as parsed; batch negation was not applied.',
+        'Stored amounts match the file as parsed; batch negation was not applied.',
+      badgeClassName: `${base} border-white/10 bg-white/[0.04] text-zinc-300`,
     }
   }
   return {
-    text: 'Sign policy unknown',
+    text: 'Amount sign unknown',
     title:
-      'This import predates sign metadata, or the server did not record a policy.',
+      'Missing or legacy metadata—we cannot tell whether values were negated on import. Re-upload or check totals if signs look wrong.',
+    badgeClassName: `${base} border-amber-500/45 bg-amber-500/10 text-amber-200/95`,
   }
 }
 
@@ -333,7 +339,7 @@ export function DataImportPage() {
                       </p>
                       <p className="text-xs text-zinc-500">
                         <span
-                          className="inline-block rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 font-medium text-zinc-400"
+                          className={signInfo.badgeClassName}
                           title={signInfo.title}
                         >
                           {signInfo.text}

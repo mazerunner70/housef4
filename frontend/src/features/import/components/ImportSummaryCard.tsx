@@ -80,14 +80,14 @@ export function ImportSummaryCard({
         <p className="mt-4 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-zinc-400">
           {neg.applied ? (
             <>
-              <span className="text-zinc-200">Sign normalization applied</span> (expenses negative,
-              income positive).
+              <span className="text-zinc-200">Amount values negated</span>{' '}
+              (canonical: negatives are money leaving this account, positives money arriving).
               {normalizationSubtext}
             </>
           ) : (
             <>
-              <span className="text-zinc-200">Sign normalization not applied</span> — amounts match
-              the file as parsed.
+              <span className="text-zinc-200">Amount values not negated</span> — stored as parsed from
+              the file.
               {(neg.suggestInterest || neg.suggestPriorImport) && (
                 <span className="block pt-1 text-xs text-amber-400/90">
                   Heuristics suggested flipping signs; pass{' '}

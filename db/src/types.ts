@@ -152,6 +152,7 @@ export interface TransactionFileFormat {
   currency?: string;
   /**
    * When true, import applied `-file_amount` into stored canonical `amount` for this run.
+   * Canonical sign: negative = money from the account, positive = into the account (`import_field_mapping.md` §8).
    */
   amount_negated?: boolean;
 }

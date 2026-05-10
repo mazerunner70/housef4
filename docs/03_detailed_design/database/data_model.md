@@ -74,7 +74,7 @@ Every application item (except the health system row) includes:
 | `date` | Number | **Epoch milliseconds UTC** (same convention as the API). |
 | `raw_merchant` | String | As imported. |
 | `cleaned_merchant` | String | Normalized merchant line for clustering. |
-| `amount` | Number | Canonical sign: spending / outflows **negative**, income **positive** (see HOU-25 / import amount negation). |
+| `amount` | Number | Canonical sign: money **from** this account (**negative**), money **into** this account (**positive**) — aligns with dashboards and spend/income rollups (`import_field_mapping.md` §8); use **`format.amount_negated`** on `TRANSACTION_FILE` when imports flipped raw signs. |
 | `file_amount` | Number (optional) | Parser-signed amount before optional import negation; set on transaction rows created by imports after this feature shipped (equals `amount` when `format.amount_negated` is false). Omitted on older rows. |
 | `cluster_id` | String or absent / null (when implemented) | Merchant cluster / stable id for rules and `GSI1`. Optional once [`../import_transaction_files.md`](../import_transaction_files.md) allows unassigned rows. |
 | `category` | String | Current assigned category. |

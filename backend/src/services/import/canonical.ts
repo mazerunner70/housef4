@@ -8,7 +8,8 @@ export type ParserOutputRow = {
 /**
  * One normalized row after format-specific parsing (before ids / clustering).
  * `file_amount` is exactly what the parser read; `canonical_amount` follows the
- * product sign convention (spending negative, income positive) after optional import negation.
+ * product sign convention (negative = money from the account, positive = money into the account)
+ * after optional import negation.
  */
 export interface ParsedImportRow {
   date: number;

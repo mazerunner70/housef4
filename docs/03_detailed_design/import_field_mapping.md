@@ -34,7 +34,7 @@ Before clustering and rules, each parsed line should normalize to something equi
 | Field | Purpose |
 |--------|---------|
 | **`date`** | When the transaction occurred; the public API exposes this as epoch milliseconds (UTC)—see [`api_contract.md`](./api_contract.md). |
-| **`amount`** | Signed number; match product-wide convention (e.g. negative = outflow, per API contract). |
+| **`amount`** | Signed number; **canonical rule:** negative = money **from** this account (outflow), positive = money **into** this account (inflow) — [`database/data_model.md`](./database/data_model.md), [`transfer_matching.md`](./transfer_matching.md) §2.2, [`api_contract.md`](./api_contract.md). |
 | **`raw_merchant`** | Verbatim payee / description string used for clustering and the review queue UI. |
 
 Optional but useful for support and debugging: **`source_metadata`** (file row index, original OFX `FITID`, raw snippet)—not required by the MVP UI.
@@ -64,7 +64,7 @@ OFX is standardized; use a **fixed mapping** from statement transaction elements
 | Canonical | Typical OFX source |
 |-----------|---------------------|
 | **Date** | `DTPOSTED` or `DTUSER` on `<STMTTRN>` — parse OFX date format and convert to your chosen ISO / calendar-date rule. |
-| **Amount** | `TRNAMT` — apply one global sign convention (OFX uses signed amounts; align with “negative = outflow” if that is the app standard). |
+| **Amount** | `TRNAMT` — OFX amounts are signed; negate or remap as needed so stored `amount` follows the global rule (negative = from account, positive = into account — §8). |
 | **Raw merchant** | Prefer `NAME`; if empty, fall back to `MEMO` or `PAYEE` when present. |
 
 **QFX** is treated as OFX content with a wrapper; the same field mapping applies once the payload is parsed.
@@ -93,7 +93,7 @@ Map QIF record tags into the same three canonical fields, for example:
 | Canonical | Typical QIF usage |
 |-----------|-------------------|
 | **Date** | `D` — parse per QIF date rules. |
-| **Amount** | `T` — apply the same global sign convention as OFX/CSV. |
+| **Amount** | `T` — normalize to the canonical sign convention (§8), same rule as OFX/CSV. |
 | **Raw merchant** | `P` (payee); optionally append or prefer `M` (memo) when payee is empty or too generic. |
 
 ---
@@ -118,7 +118,12 @@ Internal types might use a name such as **`ParsedTransaction`** or **`StagingRow
 
 ## 8. Amount sign convention and deduplication
 
-**Sign:** Define once whether negative means money **out** (consistent with current frontend examples) and convert every format to that rule.
+**Sign (product-wide):** For each transaction row, **`amount`** is interpreted **for that specific account**:
+
+- **Negative:** money flowing **from** the account (outflow).
+- **Positive:** money flowing **into** the account (inflow).
+
+Raw files often invert this for credit-card CSVs or debit/credit splits; parsers and **`format.amount_negated`** normalize to this rule before persistence (see [`database/data_model.md`](./database/data_model.md) §1 transaction `amount`, [`transfer_matching.md`](./transfer_matching.md) §2.2).
 
 **Duplicates:** Exports may overlap (e.g. re-importing OFX after CSV). Mitigate with:
 
@@ -132,5 +137,6 @@ Document the chosen rule next to persistence so imports are idempotent where pos
 ## 9. Summary
 
 - **Map file-specific fields → only `date`, `amount`, and `raw_merchant` (plus optional metadata).**
+- **`amount` sign:** canonical **negative = from account**, **positive = into account** (§8).
 - **OFX/QFX/QIF:** deterministic tag/element mapping; **CSV:** heuristics, then presets or user column mapping if needed.
 - **Category, cluster, status, recurring** are **downstream** of this mapping—not alternate “columns” in the import file.

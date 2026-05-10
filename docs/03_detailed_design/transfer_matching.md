@@ -35,9 +35,14 @@ All **transfer matching** runs on the **same canonical signed `amount`** stored 
 - Suggested enums: **`amountConvention`** such as `EXPENSE_OUTFLOW_POSITIVE` | `INFLOW_POSITIVE` | `AS_EXPORTED`, plus optional **`invertAmount: boolean`** for odd exports.
 - **Account type** (`checking` \| `savings` \| `credit_card` \| …) supplies **defaults** when a new account is created; **do not** infer sign from “credit card” alone without the profile, because bank CSV conventions differ.
 
-### 2.2 Policy
+### 2.2 Policy (locked)
 
-Document one **product-wide meaning** for canonical `amount` (e.g. positive = outflow / obligation increasing, negative = inflow / payment — exact choice must match dashboards and [`data_model.md`](./database/data_model.md)). Every import path answers: “How does this file’s column map into that?”
+Canonical **`amount`** is **signed relative to that account**:
+
+- **Negative:** money flowing **from** the account (outflow)—e.g. card charges, withdrawals, outbound transfers, debit card spends.
+- **Positive:** money flowing **into** the account (inflow)—e.g. salary credits, refunds to the account, inbound transfers.
+
+This matches persisted transactions, dashboards/metrics, and [`database/data_model.md`](./database/data_model.md). Bank and card exports disagree on raw signs ([`import_field_mapping.md`](./import_field_mapping.md) §8); mapping and **`format.amount_negated`** exist so every import path yields this convention. Every profile answers: “How does this file’s columns map **into** that?”
 
 Optional later: validation warnings when a profile yields implausible series (out of scope for v1 of this doc).
 

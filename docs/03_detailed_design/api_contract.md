@@ -229,7 +229,7 @@ Optional query: **`transactionFileId`** (string, UUID of a persisted import / `T
 |--------|------|--------|
 | `transactions[].id` | string | Stable transaction identifier. |
 | `transactions[].date` | number | Milliseconds since Unix epoch (UTC); see [Date and time (JSON)](#date-and-time-json). |
-| `transactions[].amount` | number | Canonical signed amount (spending / outflows negative, income positive). |
+| `transactions[].amount` | number | Canonical signed amount: **negative** = money **from** the account (outflow), **positive** = money **into** the account (inflow) — see [`import_field_mapping.md`](./import_field_mapping.md) §8. |
 | `transactions[].file_amount` | number (optional) | File-signed value before optional import negation, when stored. |
 | `transactions[].status` | string | e.g. `CLASSIFIED`, `PENDING_REVIEW`. |
 | `transactions[].cleaned_merchant` | string | Normalized merchant line for clustering and rules (see `transaction_analysis_clusters_and_categories.md`); always present on `GET /api/transactions` (derived when not stored). |
