@@ -75,7 +75,7 @@ function applyFormatFromRow(
     out.currency = wireString(o.currency);
   }
   if (o.amount_negated != null) {
-    out.amount_negated = Boolean(o.amount_negated);
+    out.amount_negated = o.amount_negated as boolean;
   }
 }
 

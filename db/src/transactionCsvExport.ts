@@ -6,10 +6,14 @@ import type {
 
 /** RFC 4180-style CSV cell: quote when needed, escape internal quotes. */
 export function escapeCsvCell(value: string): string {
-  if (/[",\r\n]/.test(value)) {
-    return `"${value.replaceAll('"', '""')}"`;
+  let s = value;
+  if (/^[=+\-@]/.test(s)) {
+    s = `'${s}`;
   }
-  return value;
+  if (/[",\r\n]/.test(s)) {
+    return `"${s.replaceAll('"', '""')}"`;
+  }
+  return s;
 }
 
 function cell(v: unknown): string {

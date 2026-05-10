@@ -11,6 +11,14 @@ test('escapeCsvCell quotes commas and quotes', () => {
   assert.equal(escapeCsvCell('say "hi"'), '"say ""hi"""');
 });
 
+test('escapeCsvCell prefixes formula-leading strings before quoting', () => {
+  assert.equal(escapeCsvCell('=1+2'), '\'=1+2');
+  assert.equal(escapeCsvCell('+macro'), "'+macro");
+  assert.equal(escapeCsvCell('-oops'), "'-oops");
+  assert.equal(escapeCsvCell('@ref'), "'@ref");
+  assert.equal(escapeCsvCell('=evil,fn'), `"'=evil,fn"`);
+});
+
 test('formatTransactionsAsCsv joins account and import metadata', () => {
   const csv = formatTransactionsAsCsv({
     transactions: [

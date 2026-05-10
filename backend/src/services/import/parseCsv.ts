@@ -124,9 +124,12 @@ function resolveCsvRowAmount(
     cols.debitIdx !== undefined &&
     cols.creditIdx !== undefined
   ) {
-    const debit = parseMoney(vals[cols.debitIdx] ?? '') ?? 0;
-    const credit = parseMoney(vals[cols.creditIdx] ?? '') ?? 0;
-    amount = credit - debit;
+    const debit = parseMoney(vals[cols.debitIdx] ?? '');
+    const credit = parseMoney(vals[cols.creditIdx] ?? '');
+    if (debit === undefined && credit === undefined) {
+      return undefined;
+    }
+    amount = (credit ?? 0) - (debit ?? 0);
   }
   if (amount === undefined || Number.isNaN(amount)) return undefined;
   return amount;

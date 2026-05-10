@@ -51,7 +51,7 @@ Transaction **B** is a **candidate partner** for **A** if:
 |------|--------|
 | Accounts | `account_id(A) ≠ account_id(B)` (or equivalent account key used in the app). |
 | Time | `date(B)` ∈ `[date(A) − 4d, date(A) + 4d]` inclusive, using the **same date field** as the rest of the product (post date vs transaction date — pick one and keep it consistent). |
-| Inverse residual | Let `r = amount(A) + amount(B)`. Require `|r| ≤ ε` (§3.1). |
+| Inverse residual | Let r = amount(A) + amount(B). Require &#124;r&#124; ≤ ε (§3.1). |
 
 ### 3.1 Tolerance ε
 
