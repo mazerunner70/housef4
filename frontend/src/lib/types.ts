@@ -54,6 +54,10 @@ export type Transaction = {
   suggested_category?: string | null
   category_confidence?: number
   match_type?: string
+  /** Internal transfer pair id; optional until matching is persisted. See `transfer_matching.md`. */
+  match_id?: string
+  match_source?: string
+  match_confidence?: string
 }
 
 export type TransactionsResponse = {

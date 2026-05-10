@@ -46,6 +46,9 @@ const CSV_COLUMNS = [
   'suggested_category',
   'category_confidence',
   'match_type',
+  'match_id',
+  'match_source',
+  'match_confidence',
   'merchant_embedding_json',
 ] as const;
 
@@ -134,6 +137,9 @@ export function formatTransactionsAsCsv(input: FormatTransactionsAsCsvInput): st
       cell(t.suggested_category ?? ''),
       cell(t.category_confidence ?? ''),
       cell(t.match_type ?? ''),
+      cell(t.match_id ?? ''),
+      cell(t.match_source ?? ''),
+      cell(t.match_confidence ?? ''),
       cell(embeddingJson),
     ];
     lines.push(row.join(','));

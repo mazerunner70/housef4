@@ -188,6 +188,15 @@ function transactionWireToRecord(
   if (row.match_type !== undefined && row.match_type !== null) {
     rec.match_type = wireString(row.match_type, '');
   }
+  if (row.match_id !== undefined && row.match_id !== null) {
+    rec.match_id = wireString(row.match_id, '');
+  }
+  if (row.match_source !== undefined && row.match_source !== null) {
+    rec.match_source = wireString(row.match_source, '');
+  }
+  if (row.match_confidence !== undefined && row.match_confidence !== null) {
+    rec.match_confidence = wireString(row.match_confidence, '');
+  }
   if (row.file_amount !== undefined && row.file_amount !== null) {
     const fa = Number(row.file_amount);
     if (Number.isFinite(fa)) rec.file_amount = fa;
@@ -233,6 +242,15 @@ function transactionRecordToDynamoItem(
   }
   if (rec.match_type !== undefined) {
     item.match_type = rec.match_type;
+  }
+  if (rec.match_id !== undefined) {
+    item.match_id = rec.match_id;
+  }
+  if (rec.match_source !== undefined) {
+    item.match_source = rec.match_source;
+  }
+  if (rec.match_confidence !== undefined) {
+    item.match_confidence = rec.match_confidence;
   }
   if (rec.file_amount !== undefined) {
     item.file_amount = rec.file_amount;

@@ -84,11 +84,15 @@ Every application item (except the health system row) includes:
 | `suggested_category` | String or null | From rules / ML. |
 | `category_confidence` | Number | Optional. |
 | `match_type` | String | Optional; **categorization** match (e.g. rule vs ML) — not transfer pairing. |
-| `match_id` | String or absent / null | **Planned:** shared id when this row is one leg of an **internal transfer** pair; distinct from `match_type`. Spec: [`../transfer_matching.md`](../transfer_matching.md). When set, clustering must omit the row. |
-| `match_source` | String or absent | **Planned:** `auto` \| `user` — see `transfer_matching.md`. |
-| `match_confidence` | String or absent | **Planned:** e.g. `exact` \| `within_epsilon` — see `transfer_matching.md`. |
+| `match_id` | String or absent | Optional; shared id for an **internal transfer** leg pair (distinct from `match_type`). Persists across backup/restore; matching pipeline not required to set it yet. See [`transfer_matching.md`](../transfer_matching.md). |
+| `match_source` | String or absent | Optional; `auto` \| `user` when `match_id` is used. |
+| `match_confidence` | String or absent | Optional; e.g. `exact` \| `within_epsilon` when `match_id` is used. |
 | `transaction_file_id` | String | Id of the `TRANSACTION_FILE` row for the import that **inserted** this transaction (same id as in `SK` of `FILE#…`). Required on every transaction row. |
 | `GSI2PK` / `GSI2SK` | String | Denormalized keys for **GSI2** (see above); always set with `transaction_file_id` on insert. |
+
+Persisted via `DynamoFinanceRepository` on transaction items (reads in `transactionItemToRecord`, backup/export wire in `transactionRecordToBackupWire`, restore in `backupRestore.ts`). Automatic population of **`match_*`** attributes is deferred to the transfer-matching pipeline; imports do not write them unless extended later.
+
+**Indexing:** **`match_id`**, **`match_source`**, and **`match_confidence`** are **not** part of **`GSI1`** or **`GSI2`** composite keys; they are opaque attributes on the base item (`GSI*` projection **`ALL`**). There is **no dedicated query-by-`match_id`** access pattern unless a future GSI or table design adds one.
 
 ---
 

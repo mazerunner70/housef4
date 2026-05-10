@@ -10,7 +10,7 @@ This document specifies how the product **detects money moving between a user’
 
 **Naming note:** The existing transaction field **`match_type`** means **how categorization was matched** (e.g. rule vs ML). It must **not** be overloaded for transfer pairing. **`match_id`** is reserved for **internal transfer legs** only.
 
-**Status:** Intended behaviour for implementation. Until the pipeline persists `match_id`, clustering should behave as today; once `match_id` is written, clustering **must** skip those rows as specified below.
+**Status:** Optional **`match_id`** / **`match_source`** / **`match_confidence`** fields are persisted and flow through **`GET /api/transactions`**, CSV export, and backup **v1** round-trip **when present**. **Automatic pairing** and clustering exclusion (**§7**) are specified below but **not** all implemented yet; until the pipeline assigns `match_id`, clustering behaves as before.
 
 ---
 
@@ -111,10 +111,11 @@ Re-running auto-detection should **not** leave stale links:
 
 ## 6. Persistence and API
 
-When implemented:
+**Implemented:** optional **`match_id`**, **`match_source`**, and **`match_confidence`** on Dynamo **`TRANSACTION`** items; **`GET /api/transactions`**, CSV export, and **backup v1** include them when present (see [`database/data_model.md`](./database/data_model.md), [`api_contract.md`](./api_contract.md), [`backup-schema/v1.md`](./backup-schema/v1.md)).
 
-- Add **`match_id`** (and optional fields above) to the **transaction** item in DynamoDB; update [`database/data_model.md`](./database/data_model.md) and **`GET /api/transactions`** (and CSV export if applicable) per [`api_contract.md`](./api_contract.md).
-- **Backup JSON** should include `match_id` when present (extend [`backup-schema/v1.md`](./backup-schema/v1.md) or a new version if needed).
+**Pending:** **`match_id` population** from the pairing pipeline (**§§3–§4**) and clustering exclusion (**§7**).
+
+- **Backup JSON** includes **`match_id`** (and sibling fields when present).
 
 ---
 
