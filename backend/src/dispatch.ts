@@ -8,6 +8,7 @@ import { getMetricsPayload } from './handlers/metrics';
 import { getReviewQueuePayload } from './handlers/reviewQueue';
 import { getTransactionFilesPayload } from './handlers/transactionFiles';
 import { postTagRulePayload } from './handlers/tagRule';
+import { getTransactionsCsvExport } from './handlers/transactionsCsvExport';
 import { getTransactionsPayload } from './handlers/transactions';
 import { HttpError } from './httpError';
 import { normalizeApiPath } from './pathNormalize';
@@ -57,6 +58,17 @@ function jsonResponse(
   };
 }
 
+function csvAttachmentResponse(statusCode: number, csvBody: string, filename: string): InternalResponse {
+  return {
+    statusCode,
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    },
+    body: csvBody,
+  };
+}
+
 interface AuthenticatedGetRoute {
   tail: string[];
   routeLog: string;
@@ -80,6 +92,15 @@ const authenticatedGetRoutes: AuthenticatedGetRoute[] = [
     routeLog: 'accounts',
     handler: async (uid) =>
       jsonResponse(200, await getAccountsPayload(uid)),
+  },
+  {
+    tail: ['transactions', 'export'],
+    routeLog: 'transactions/export',
+    handler: async (uid, req) => {
+      const csv = await getTransactionsCsvExport(uid, req);
+      const filename = `housef4-transactions-${Date.now()}.csv`;
+      return csvAttachmentResponse(200, csv, filename);
+    },
   },
   {
     tail: ['transactions'],

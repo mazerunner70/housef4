@@ -62,6 +62,7 @@ async function authorizationHeader(): Promise<Record<string, string>> {
 }
 
 const DEFAULT_BACKUP_FILENAME = 'housef4-backup.json'
+const DEFAULT_TRANSACTIONS_CSV_FILENAME = 'housef4-transactions.csv'
 
 function parseContentDispositionFilename(
   contentDisposition: string | null,
@@ -114,6 +115,40 @@ export async function getBackupExport(): Promise<BackupExportDownload> {
   const filename =
     parseContentDispositionFilename(res.headers.get('Content-Disposition')) ??
     DEFAULT_BACKUP_FILENAME
+  return { blob, filename }
+}
+
+/**
+ * `GET /api/transactions/export` — CSV table of transactions (optional filters
+ * match `GET /api/transactions`).
+ */
+export async function getTransactionsCsvExport(opts?: {
+  transactionFileId?: string
+  clusterId?: string
+}): Promise<BackupExportDownload> {
+  const auth = await authorizationHeader()
+  const qs = new URLSearchParams()
+  const fileId = opts?.transactionFileId?.trim()
+  const clusterId = opts?.clusterId?.trim()
+  if (fileId) qs.set('transactionFileId', fileId)
+  if (clusterId) qs.set('clusterId', clusterId)
+  const qstr = qs.toString()
+  const path =
+    qstr.length > 0
+      ? `/api/transactions/export?${qstr}`
+      : '/api/transactions/export'
+  const res = await fetch(path, {
+    method: 'GET',
+    cache: 'no-store',
+    headers: { ...auth },
+  })
+  if (!res.ok) {
+    throw new Error(`${res.status} ${res.statusText}`)
+  }
+  const blob = await res.blob()
+  const filename =
+    parseContentDispositionFilename(res.headers.get('Content-Disposition')) ??
+    DEFAULT_TRANSACTIONS_CSV_FILENAME
   return { blob, filename }
 }
 

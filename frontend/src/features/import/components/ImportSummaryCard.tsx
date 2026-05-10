@@ -1,4 +1,5 @@
 import type { ImportParseResult } from '@/lib/types'
+import type { ReactNode } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 
@@ -15,6 +16,25 @@ export function ImportSummaryCard({
   onReviewUnknown,
   onReviewTransactions,
 }: ImportSummaryCardProps) {
+  const neg = summary.amountNegation
+  let normalizationSubtext: ReactNode = null
+  if (neg?.applied) {
+    if (neg.explicitOverride) {
+      normalizationSubtext = (
+        <span className="block pt-1 text-xs">
+          Controlled by the <code className="text-zinc-300">negate_amounts</code> upload field.
+        </span>
+      )
+    } else if (neg.suggestInterest || neg.suggestPriorImport) {
+      normalizationSubtext = (
+        <span className="block pt-1 text-xs">
+          Decided automatically from this file (for example interest-line cues) and/or your last
+          import for this account.
+        </span>
+      )
+    }
+  }
+
   return (
     <Card
       title="Import complete"
@@ -56,6 +76,29 @@ export function ImportSummaryCard({
           </div>
         )}
       </div>
+      {neg && (
+        <p className="mt-4 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-zinc-400">
+          {neg.applied ? (
+            <>
+              <span className="text-zinc-200">Sign normalization applied</span> (expenses negative,
+              income positive).
+              {normalizationSubtext}
+            </>
+          ) : (
+            <>
+              <span className="text-zinc-200">Sign normalization not applied</span> — amounts match
+              the file as parsed.
+              {(neg.suggestInterest || neg.suggestPriorImport) && (
+                <span className="block pt-1 text-xs text-amber-400/90">
+                  Heuristics suggested flipping signs; pass{' '}
+                  <code className="text-zinc-300">negate_amounts=true</code> on upload if totals look
+                  inverted.
+                </span>
+              )}
+            </>
+          )}
+        </p>
+      )}
       <div className="mt-6 flex flex-wrap gap-3">
         <Button
           type="button"

@@ -50,7 +50,7 @@ function inheritedCategoryForGroup(
 ): string | null {
   const counts = new Map<string, number>();
   for (const i of indices) {
-    const s = sources[i]!;
+    const s = sources[i];
     if (s.kind === 'existing' && s.record.status === 'CLASSIFIED') {
       const c = s.record.category;
       counts.set(c, (counts.get(c) ?? 0) + 1);
@@ -60,7 +60,7 @@ function inheritedCategoryForGroup(
   const sorted = [...counts.entries()].sort(
     (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
   );
-  return sorted[0]![0];
+  return sorted[0][0];
 }
 
 function categorizeGroup(
@@ -70,19 +70,19 @@ function categorizeGroup(
   categoryVectors: Float32Array[],
 ): CategorySuggestion {
   if (indices.length === 1) {
-    const i = indices[0]!;
-    const text = cleanedTexts[i]!;
+    const i = indices[0];
+    const text = cleanedTexts[i];
     const rule = ruleMatchForText(text);
     if (rule) return rule;
-    return mlMatchForEmbedding(embeddings[i]!, categoryVectors);
+    return mlMatchForEmbedding(embeddings[i], categoryVectors);
   }
 
   for (const i of indices) {
-    const rule = ruleMatchForText(cleanedTexts[i]!);
+    const rule = ruleMatchForText(cleanedTexts[i]);
     if (rule) return rule;
   }
 
-  const groupEmb = indices.map((i) => embeddings[i]!);
+  const groupEmb = indices.map((i) => embeddings[i]);
   const centroid = meanNormalized(groupEmb);
   return mlMatchForEmbedding(centroid, categoryVectors);
 }
@@ -111,7 +111,7 @@ export async function runClusterAndCategoryPipeline(
     ...parsed.map((row) => ({
       kind: 'new' as const,
       row,
-      id: `txn_${randomUUID().replace(/-/g, '')}`,
+      id: `txn_${randomUUID().replaceAll('-', '')}`,
     })),
   ];
 
@@ -134,7 +134,7 @@ export async function runClusterAndCategoryPipeline(
 
   const byLabel = new Map<number, number[]>();
   for (let i = 0; i < labels.length; i++) {
-    const L = labels[i]!;
+    const L = labels[i];
     let g = byLabel.get(L);
     if (!g) {
       g = [];
@@ -176,7 +176,7 @@ export async function runClusterAndCategoryPipeline(
   }
 
   const assignments: Assignment[] = sources.map((_, i) => {
-    const L = labels[i]!;
+    const L = labels[i];
     const indices = byLabel.get(L)!;
     const { cluster_id, conserve } = labelResolution.get(L)!;
     const inherited = conserve
@@ -193,7 +193,7 @@ export async function runClusterAndCategoryPipeline(
         category_confidence: 1,
         match_type: 'INHERITED',
         known_merchant: true,
-        embedding: embeddings[i]!,
+        embedding: embeddings[i],
       };
     }
 
@@ -206,7 +206,7 @@ export async function runClusterAndCategoryPipeline(
         category_confidence: suggestion.confidence,
         match_type: 'RULE',
         known_merchant: true,
-        embedding: embeddings[i]!,
+        embedding: embeddings[i],
       };
     }
 
@@ -219,7 +219,7 @@ export async function runClusterAndCategoryPipeline(
       category_confidence: suggestion.confidence,
       match_type: 'ML',
       known_merchant: false,
-      embedding: embeddings[i]!,
+      embedding: embeddings[i],
     };
   });
 
@@ -248,9 +248,9 @@ export function buildNewImportInputs(
   const nExisting = sources.length - parsedLength;
   const out: ImportTransactionInput[] = [];
   for (let i = nExisting; i < sources.length; i++) {
-    const s = sources[i]!;
+    const s = sources[i];
     if (s.kind !== 'new') continue;
-    const a = assignments[i]!;
+    const a = assignments[i];
     const row = s.row;
     out.push({
       user_id: userId,
@@ -258,7 +258,8 @@ export function buildNewImportInputs(
       date: row.date,
       raw_merchant: row.raw_merchant,
       cleaned_merchant: cleanMerchantForClustering(row.raw_merchant),
-      amount: row.amount,
+      file_amount: row.file_amount,
+      amount: row.canonical_amount,
       cluster_id: a.cluster_id,
       category: a.category,
       status: a.status,

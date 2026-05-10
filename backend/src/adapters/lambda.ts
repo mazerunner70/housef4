@@ -13,10 +13,16 @@ function jsonProxyResult(
   body: unknown,
   extraHeaders: Record<string, string> = {},
 ): APIGatewayProxyResult {
+  const payload =
+    typeof body === 'string' ? body : JSON.stringify(body);
+  const headers =
+    typeof body === 'string'
+      ? { ...extraHeaders }
+      : { 'Content-Type': 'application/json', ...extraHeaders };
   return {
     statusCode,
-    headers: { 'Content-Type': 'application/json', ...extraHeaders },
-    body: JSON.stringify(body),
+    headers,
+    body: payload,
   };
 }
 

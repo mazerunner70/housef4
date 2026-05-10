@@ -188,6 +188,10 @@ function transactionWireToRecord(
   if (row.match_type !== undefined && row.match_type !== null) {
     rec.match_type = wireString(row.match_type, '');
   }
+  if (row.file_amount !== undefined && row.file_amount !== null) {
+    const fa = Number(row.file_amount);
+    if (Number.isFinite(fa)) rec.file_amount = fa;
+  }
   return rec;
 }
 
@@ -229,6 +233,9 @@ function transactionRecordToDynamoItem(
   }
   if (rec.match_type !== undefined) {
     item.match_type = rec.match_type;
+  }
+  if (rec.file_amount !== undefined) {
+    item.file_amount = rec.file_amount;
   }
   return item;
 }

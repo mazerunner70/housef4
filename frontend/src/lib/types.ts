@@ -41,7 +41,10 @@ export type Transaction = {
   raw_merchant: string
   /** Normalized merchant text for clustering; derived on the server when missing in storage. */
   cleaned_merchant: string
+  /** Canonical: spending negative, income positive. */
   amount: number
+  /** File-signed amount before optional import negation, when the API returns it. */
+  file_amount?: number
   cluster_id: string
   category: string
   status: 'CLASSIFIED' | 'PENDING_REVIEW'
@@ -106,6 +109,13 @@ export type ImportParseResult = {
   importFileId: string
   /** Detected from filename / MIME; echoed by `POST /api/imports` when wired. */
   sourceFormat?: ImportSourceFormat
+  /** Import sign normalization (canonical spending negative). */
+  amountNegation?: {
+    applied: boolean
+    suggestInterest: boolean
+    suggestPriorImport: boolean
+    explicitOverride: boolean
+  }
 }
 
 /** Same shape as `ImportIngestResult` / the body of a successful `POST /api/imports` summary. */
@@ -128,6 +138,8 @@ export type TransactionFileFormat = {
   source_format?: string
   /** When known from import metadata (e.g. OFX). */
   currency?: string
+  /** True when this import applied sign negation for canonical amounts. */
+  amount_negated?: boolean
 }
 
 export type TransactionFileTiming = {
@@ -151,7 +163,10 @@ export type TransactionFilesResponse = {
   transaction_files: TransactionFile[]
 }
 
-/** Result of `GET /api/backup/export` before triggering a browser save-as. */
+/**
+ * Result of an authenticated file download (`GET /api/backup/export`,
+ * `GET /api/transactions/export`, …) before triggering a browser save-as.
+ */
 export type BackupExportDownload = {
   blob: Blob
   /** From `Content-Disposition` when present; else a safe default. */

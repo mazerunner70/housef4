@@ -3,6 +3,13 @@ import { randomUUID } from 'node:crypto';
 import { getFinanceRepository } from '@housef4/db';
 
 import { HttpError } from '../httpError';
+import {
+  parseNegateAmountsField,
+  resolveAmountNegation,
+  suggestNegateFromInterest,
+  suggestNegateFromPriorImport,
+} from '../services/import/amountNegation';
+import { applyImportAmountNegation } from '../services/import/canonical';
 import { enrichImportRows } from '../services/import/enrichImportRows';
 import {
   extractImportMultipart,
@@ -73,6 +80,20 @@ export async function postImportPayload(
     extracted.file.mimeType,
   );
 
+  const explicitNegate = parseNegateAmountsField(extracted.negateAmounts);
+  const suggestInterest = suggestNegateFromInterest(rows);
+  const suggestPriorImport = await suggestNegateFromPriorImport(
+    repo,
+    userId,
+    accountId,
+  );
+  const amountNegated = resolveAmountNegation({
+    explicit: explicitNegate,
+    suggestInterest,
+    suggestPriorImport,
+  });
+  applyImportAmountNegation(rows, amountNegated);
+
   const importFileId = randomUUID();
   const enriched = await enrichImportRows(userId, rows, repo);
   await repo.patchExistingTransactionsAfterImport(
@@ -105,6 +126,7 @@ export async function postImportPayload(
     format: {
       ...(detectedFormat === 'unknown' ? {} : { source_format: detectedFormat }),
       ...(importCurrency && { currency: importCurrency }),
+      amount_negated: amountNegated,
     },
     timing: {
       started_at: importStartedAt,
@@ -135,5 +157,11 @@ export async function postImportPayload(
   if (detectedFormat !== 'unknown') {
     base.sourceFormat = detectedFormat;
   }
+  base.amountNegation = {
+    applied: amountNegated,
+    suggestInterest,
+    suggestPriorImport,
+    explicitOverride: explicitNegate !== undefined,
+  };
   return base;
 }

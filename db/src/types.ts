@@ -16,7 +16,14 @@ export interface TransactionRecord {
    * Omitted on legacy rows until backfill; API may derive from `raw_merchant`.
    */
   cleaned_merchant?: string;
+  /**
+   * Canonical amount: spending / outflows negative, income positive (HOU-25 / `data_model.md`).
+   */
   amount: number;
+  /**
+   * File-signed amount from the import parser before optional batch negation; omitted on legacy rows.
+   */
+  file_amount?: number;
   /** Absent on legacy or unclustered rows when backfilled. */
   cluster_id?: string;
   category: string;
@@ -102,7 +109,10 @@ export interface ImportTransactionInput {
   raw_merchant: string;
   /** Same semantics as `TransactionRecord.cleaned_merchant`; persisted on ingest. */
   cleaned_merchant: string;
+  /** Canonical amount (same sign semantics as `TransactionRecord.amount`). */
   amount: number;
+  /** Parser output before import negation; persisted when imports record `file_amount`. */
+  file_amount: number;
   cluster_id: string;
   category: string;
   status: TransactionStatus;
@@ -140,6 +150,10 @@ export interface TransactionFileFormat {
   source_format?: string;
   /** ISO 4217 when known (e.g. from OFX `CURDEF`), for display. */
   currency?: string;
+  /**
+   * When true, import applied `-file_amount` into stored canonical `amount` for this run.
+   */
+  amount_negated?: boolean;
 }
 
 /**

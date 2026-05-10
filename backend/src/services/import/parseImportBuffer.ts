@@ -1,4 +1,5 @@
 import type { ImportSourceFormatKey, ParsedImportRow } from './canonical';
+import { parsedRowsFromParserOutput } from './canonical';
 import { detectImportFormat } from './detectFormat';
 import { parseBankCsv } from './parseCsv';
 import { extractOfxDefaultCurrency, parseOfxLike } from './parseOfx';
@@ -17,9 +18,12 @@ export function parseImportBuffer(
   const detected = detectImportFormat(filename, mimeType, buf);
   const text = buf.toString('utf8');
 
-  const tryCsv = (): ParsedImportRow[] => parseBankCsv(text);
-  const tryOfx = (): ParsedImportRow[] => parseOfxLike(text);
-  const tryQif = (): ParsedImportRow[] => parseQif(text);
+  const tryCsv = (): ParsedImportRow[] =>
+    parsedRowsFromParserOutput(parseBankCsv(text));
+  const tryOfx = (): ParsedImportRow[] =>
+    parsedRowsFromParserOutput(parseOfxLike(text));
+  const tryQif = (): ParsedImportRow[] =>
+    parsedRowsFromParserOutput(parseQif(text));
 
   if (detected === 'ofx') {
     return {

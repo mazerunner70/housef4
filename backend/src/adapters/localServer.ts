@@ -83,7 +83,9 @@ export async function startLocalServer(): Promise<http.Server> {
         log.info('http.response', { statusCode: out.statusCode, method, path: pathOnly });
         const headerPairs: Record<string, string | number> = { ...out.headers };
         res.writeHead(out.statusCode, headerPairs);
-        res.end(JSON.stringify(out.body));
+        const payload =
+          typeof out.body === 'string' ? out.body : JSON.stringify(out.body);
+        res.end(payload);
       });
     } catch (err) {
       createLogger({ phase: 'localServer' }).error('http.request.unhandled', {

@@ -23,6 +23,14 @@ export type {
   HealthCheckDiagnosticCode,
   HealthCheckReadDetail,
 } from './healthCheck';
+export {
+  escapeCsvCell,
+  formatTransactionsAsCsv,
+} from './transactionCsvExport';
+export type {
+  FormatTransactionsAsCsvInput,
+  TransactionCsvColumn,
+} from './transactionCsvExport';
 
 import type { FinanceRepository } from './dynamoFinanceRepository';
 import { DynamoFinanceRepository } from './dynamoFinanceRepository';
