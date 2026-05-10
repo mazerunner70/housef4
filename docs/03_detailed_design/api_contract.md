@@ -233,15 +233,15 @@ Optional query: **`transactionFileId`** (string, UUID of a persisted import / `T
       "is_recurring": false,
       "transaction_file_id": "550e8400-e29b-41d4-a716-446655440000",
       "match_type": "RULE",
-      "match_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-      "match_source": "auto",
-      "match_confidence": "exact"
+      "pairing_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "pairing_source": "auto",
+      "pairing_confidence": "exact"
     }
   ]
 }
 ```
 
-The server **does not emit `null`** for omitted optional keys (for example **`match_id`**) — the property is absent unless persisted on the row. **`match_confidence`** here is a **string label** describing transfer-pair quality; numeric categorization certainty remains **`category_confidence`**.
+The server **does not emit `null`** for omitted optional keys (for example **`pairing_id`**) — the property is absent unless persisted on the row. **`pairing_confidence`** here is a **string label** describing transfer-pair quality; numeric categorization certainty remains **`category_confidence`**.
 
 | Field | Type | Notes |
 |--------|------|--------|
@@ -253,11 +253,11 @@ The server **does not emit `null`** for omitted optional keys (for example **`ma
 | `transactions[].cleaned_merchant` | string | Normalized merchant line for clustering and rules (see `transaction_analysis_clusters_and_categories.md`); always present on `GET /api/transactions` (derived when not stored). |
 | `transactions[].transaction_file_id` | string | Id of the `TRANSACTION_FILE` import that created this row. |
 | `transactions[].match_type` | string (optional) | How categorization was matched (rule vs ML, etc.). |
-| `transactions[].match_id` | string (optional) | Shared id linking two legs of an **internal transfer**; distinct from `match_type`. Present only when persisted on the row (otherwise omitted). |
-| `transactions[].match_source` | string (optional) | Present when stored with `match_id`; how the leg was paired, e.g. `auto` or `user`. |
-| `transactions[].match_confidence` | string (optional) | Present when stored with `match_id`; pairing-quality label such as `exact` or `within_epsilon` (not numeric — see **`category_confidence`** for ML score). |
+| `transactions[].pairing_id` | string (optional) | Shared id linking two legs of an **internal transfer**; distinct from `match_type`. Present only when persisted on the row (otherwise omitted). |
+| `transactions[].pairing_source` | string (optional) | Present when stored with `pairing_id`; how the leg was paired, e.g. `auto` or `user`. |
+| `transactions[].pairing_confidence` | string (optional) | Present when stored with `pairing_id`; pairing-quality label such as `exact` or `within_epsilon` (not numeric — see **`category_confidence`** for ML score). |
 
-Other documented fields match the example payload (`raw_merchant`, `cluster_id`, `category`, `is_recurring`, `suggested_category`, …). See **`transfer_matching.md`** for semantics of **`match_*`** transfer fields versus **`match_type`**.
+Other documented fields match the example payload (`raw_merchant`, `cluster_id`, `category`, `is_recurring`, `suggested_category`, …). See **`transfer_matching.md`** for semantics of **`pairing_*`** transfer fields versus **`match_type`**.
 
 ### Transaction CSV export
 
@@ -277,7 +277,7 @@ Optional query parameters match **`GET /api/transactions`**:
 - **Success:** **`200 OK`** with **`Content-Type: text/csv; charset=utf-8`** and **`Content-Disposition: attachment`** suggesting `housef4-transactions-<epoch_ms>.csv`.
 - **`date`** is exported as a numeric epoch **milliseconds UTC** cell (same convention as JSON APIs).
 
-CSV columns (header row), in order: **`user_id`**, **`id`**, **`date`**, **`raw_merchant`**, **`cleaned_merchant`** (derived like **`GET /api/transactions`** when not stored), **`amount`**, **`file_amount`** (empty when not stored), **`cluster_id`**, **`category`**, **`status`**, **`is_recurring`**, **`transaction_file_id`**, **`account_id`**, **`account_name`**, **`import_file_name`**, **`import_source_format`**, **`import_file_currency`**, **`import_amount_negated`** (`true` / `false`, empty when the import predates this field), **`suggested_category`**, **`category_confidence`**, **`match_type`**, **`match_id`**, **`match_source`**, **`match_confidence`**, **`merchant_embedding_json`** (JSON array in one cell, empty when absent).
+CSV columns (header row), in order: **`user_id`**, **`id`**, **`date`**, **`raw_merchant`**, **`cleaned_merchant`** (derived like **`GET /api/transactions`** when not stored), **`amount`**, **`file_amount`** (empty when not stored), **`cluster_id`**, **`category`**, **`status`**, **`is_recurring`**, **`transaction_file_id`**, **`account_id`**, **`account_name`**, **`import_file_name`**, **`import_source_format`**, **`import_file_currency`**, **`import_amount_negated`** (`true` / `false`, empty when the import predates this field), **`suggested_category`**, **`category_confidence`**, **`match_type`**, **`pairing_id`**, **`pairing_source`**, **`pairing_confidence`**, **`merchant_embedding_json`** (JSON array in one cell, empty when absent).
 
 #### Errors
 
@@ -497,4 +497,4 @@ Restore semantics are **full overwrite only**: merging backup data with current 
 
 Additive changes only unless noted otherwise; clients SHOULD tolerate unknown JSON keys.
 
-- **Transactions — internal transfer fields:** **`GET /api/transactions`** and **`GET /api/transactions/export`** may include optional **`match_id`**, **`match_source`**, and **`match_confidence`** on a row when those attributes exist in storage (paired transfer legs — see [`transfer_matching.md`](./transfer_matching.md)). Rows without internal-transfer metadata omit these keys (not **`null`**). **`match_confidence`** is a string label, not related to **`category_confidence`** (numeric).
+- **Transactions — internal transfer fields:** **`GET /api/transactions`** and **`GET /api/transactions/export`** may include optional **`pairing_id`**, **`pairing_source`**, and **`pairing_confidence`** on a row when those attributes exist in storage (paired transfer legs — see [`transfer_matching.md`](./transfer_matching.md)). Rows without internal-transfer metadata omit these keys (not **`null`**). **`pairing_confidence`** is a string label, not related to **`category_confidence`** (numeric). Restore and Dynamo reads still accept legacy **`match_*`** keys for the same semantics.

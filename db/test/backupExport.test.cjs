@@ -137,8 +137,8 @@ test('exportBackupSnapshot maps partition items into V1 envelope', async (t) => 
   assert.equal(snap.transactions.length, 1);
   assert.equal(snap.transactions[0].id, 'tx-1');
   assert.equal(snap.transactions[0].entity_type, 'TRANSACTION');
-  assert.equal(snap.transactions[0].match_id, 'mid-aaa');
-  assert.equal(snap.transactions[0].match_source, 'user');
+  assert.equal(snap.transactions[0].pairing_id, 'mid-aaa');
+  assert.equal(snap.transactions[0].pairing_source, 'user');
 
   assert.equal(snap.clusters.length, 1);
   assert.equal(snap.clusters[0].cluster_id, 'c1');

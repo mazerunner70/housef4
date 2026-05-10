@@ -1,23 +1,23 @@
 ---
-title: Internal transfer detection and match_id
+title: Internal transfer detection and pairing_id
 stage: Detailed Design
 phase: Ingestion / analytics
 ---
 
-# Internal transfer detection and `match_id`
+# Internal transfer detection and `pairing_id`
 
-This document specifies how the product **detects money moving between a user’s own accounts** (internal transfers), links the two legs with a shared **`match_id`**, and **excludes** those rows from **merchant clustering** and related category assessments. It complements [`import_field_mapping.md`](./import_field_mapping.md) (canonical fields and import profiles), [`import_transaction_files.md`](./import_transaction_files.md) (import pipeline and `cluster_id` lifecycle), [`transaction_analysis_clusters_and_categories.md`](./transaction_analysis_clusters_and_categories.md) (clustering layers), and the physical layout in [`database/data_model.md`](./database/data_model.md).
+This document specifies how the product **detects money moving between a user’s own accounts** (internal transfers), links the two legs with a shared **`pairing_id`**, and **excludes** those rows from **merchant clustering** and related category assessments. It complements [`import_field_mapping.md`](./import_field_mapping.md) (canonical fields and import profiles), [`import_transaction_files.md`](./import_transaction_files.md) (import pipeline and `cluster_id` lifecycle), [`transaction_analysis_clusters_and_categories.md`](./transaction_analysis_clusters_and_categories.md) (clustering layers), and the physical layout in [`database/data_model.md`](./database/data_model.md).
 
-**Naming note:** The existing transaction field **`match_type`** means **how categorization was matched** (e.g. rule vs ML). It must **not** be overloaded for transfer pairing. **`match_id`** is reserved for **internal transfer legs** only.
+**Naming note:** The existing transaction field **`match_type`** means **how categorization was matched** (e.g. rule vs ML). Transfer pairing uses **`pairing_id`**, **`pairing_source`**, and **`pairing_confidence`** so **`match_*`** is not overloaded across categorization vs transfers.
 
-**Status:** Optional **`match_id`** / **`match_source`** / **`match_confidence`** fields are persisted and flow through **`GET /api/transactions`**, CSV export, and backup **v1** round-trip **when present**. **Automatic pairing** and clustering exclusion (**§7**) are specified below but **not** all implemented yet; until the pipeline assigns `match_id`, clustering behaves as before.
+**Status:** Optional **`pairing_id`** / **`pairing_source`** / **`pairing_confidence`** fields are persisted and flow through **`GET /api/transactions`**, CSV export, and backup **v1** round-trip **when present**. Reads accept legacy Dynamo / backup keys **`match_id`** / **`match_source`** / **`match_confidence`** and normalize to **`pairing_*`** on export and APIs. **Automatic pairing** and clustering exclusion (**§7**) are specified below but **not** all implemented yet; until the pipeline assigns `pairing_id`, clustering behaves as before.
 
 ---
 
 ## 1. Goals
 
 - Reduce distortion in **spend / income metrics** and **merchant clusters** from movements that are **balance reallocations**, not consumption.
-- Link each leg to its partner with a shared **`match_id`** for reporting, future reconciliation UX, and exclusion rules.
+- Link each leg to its partner with a shared **`pairing_id`** for reporting, future reconciliation UX, and exclusion rules.
 - Choose the partner leg by **smallest inverse amount residual** among candidates within **±4 calendar days** on **different** accounts.
 - Define a **consistent canonical sign** for `amount` across account types and imports (especially **credit card** CSVs).
 
@@ -82,21 +82,21 @@ For each transaction **A**:
 Greedy “each A picks best B” without locking allows **two As to claim the same B**. Use:
 
 1. **Proposal phase:** For every as-yet-unpaired **A**, compute its best **B** and score **s**.
-2. **Resolution phase:** Sort all proposed pairs by **s** ascending, then **greedily accept** a pair only if **both** endpoints are still unpaired; assign a new shared **`match_id`** to both rows.
+2. **Resolution phase:** Sort all proposed pairs by **s** ascending, then **greedily accept** a pair only if **both** endpoints are still unpaired; assign a new shared **`pairing_id`** to both rows.
 
 Optionally replace step 2 with a **minimum-cost bipartite matching** if collision rates are high.
 
-### 4.2 `match_id` format
+### 4.2 `pairing_id` format
 
-- **Opaque UUID** (or ULID) generated when a pair is accepted; **both** legs store the **same** `match_id`.
+- **Opaque UUID** (or ULID) generated when a pair is accepted; **both** legs store the **same** `pairing_id`.
 - Deterministic ids from `hash(sorted(idA, idB))` are possible but complicate **splitting** pairs later; UUID is the default recommendation.
 
 ### 4.3 Idempotent re-runs
 
 Re-running auto-detection should **not** leave stale links:
 
-- Clear **`match_id` only** for rows where **`match_source = 'auto'`** (or unset) before recomputing.
-- Rows confirmed or linked by the user (**§8**) should use **`match_source = 'user'`** and **must not** be silently unpaired by auto runs (product rule).
+- Clear **`pairing_id` only** for rows where **`pairing_source = 'auto'`** (or unset) before recomputing.
+- Rows confirmed or linked by the user (**§8**) should use **`pairing_source = 'user'`** and **must not** be silently unpaired by auto runs (product rule).
 
 ---
 
@@ -104,31 +104,31 @@ Re-running auto-detection should **not** leave stale links:
 
 | Field | Purpose |
 |--------|---------|
-| **`match_confidence`** | e.g. `exact` vs `within_epsilon` for future UI and ranking on a review page. |
-| **`match_source`** | `auto` \| `user` — separates pipeline from manual overrides. |
+| **`pairing_confidence`** | e.g. `exact` vs `within_epsilon` for future UI and ranking on a review page. |
+| **`pairing_source`** | `auto` \| `user` — separates pipeline from manual overrides. |
 
 ---
 
 ## 6. Persistence and API
 
-**Implemented:** optional **`match_id`**, **`match_source`**, and **`match_confidence`** on Dynamo **`TRANSACTION`** items; **`GET /api/transactions`**, CSV export, and **backup v1** include them when present (see [`database/data_model.md`](./database/data_model.md), [`api_contract.md`](./api_contract.md), [`backup-schema/v1.md`](./backup-schema/v1.md)).
+**Implemented:** optional **`pairing_id`**, **`pairing_source`**, and **`pairing_confidence`** on Dynamo **`TRANSACTION`** items (canonical); **`GET /api/transactions`**, CSV export, and **backup v1** emit them when present (see [`database/data_model.md`](./database/data_model.md), [`api_contract.md`](./api_contract.md), [`backup-schema/v1.md`](./backup-schema/v1.md)). Legacy stored keys **`match_*`** are still read.
 
-**Pending:** **`match_id` population** from the pairing pipeline (**§§3–§4**) and clustering exclusion (**§7**).
+**Pending:** **`pairing_id` population** from the pairing pipeline (**§§3–§4**) and clustering exclusion (**§7**).
 
-- **Backup JSON** includes **`match_id`** (and sibling fields when present).
+- **Backup JSON** includes **`pairing_*`** (and sibling fields when present); **`POST /api/backup/restore`** still accepts older snapshots that used **`match_*`** for the same semantics.
 
 ---
 
 ## 7. Clustering and category assessment exclusion
 
-**Rule:** Any transaction with **`match_id` set (non-null)** must be **excluded** from:
+**Rule:** Any transaction with **`pairing_id` set (non-null)** must be **excluded** from:
 
 - **Merchant clustering** (assignment or update of `cluster_id`, embeddings used for cluster discovery, etc.).
 - **Category assessment** that drives **spend/income behaviour** (same class of analytics where internal transfers would distort insights).
 
 **Still allowed:** Ledger views, raw lists, exports, and optional **transfer-specific** reports.
 
-The import pipeline and any batch job that **reclusters** must **filter out** `match_id` rows **before** cluster logic, or **skip** applying cluster updates to those rows if they are already marked.
+The import pipeline and any batch job that **reclusters** must **filter out** `pairing_id` rows **before** cluster logic, or **skip** applying cluster updates to those rows if they are already marked.
 
 This aligns with the clustering model described in [`transaction_analysis_clusters_and_categories.md`](./transaction_analysis_clusters_and_categories.md): internal transfers are not “merchants” and should not participate in merchant/cluster learning.
 

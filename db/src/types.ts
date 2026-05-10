@@ -35,11 +35,11 @@ export interface TransactionRecord {
   category_confidence?: number;
   match_type?: string;
   /** Shared id when this row is one leg of an internal transfer pair; distinct from `match_type`. See `docs/03_detailed_design/transfer_matching.md`. */
-  match_id?: string;
+  pairing_id?: string;
   /** `auto` \| `user` — how the transfer link was established. */
-  match_source?: string;
+  pairing_source?: string;
   /** e.g. `exact` \| `within_epsilon` — transfer pairing quality. */
-  match_confidence?: string;
+  pairing_confidence?: string;
   /** Import file id for the `TRANSACTION_FILE` row that created this transaction (same id as in `FILE#…` / `importFileId`). */
   transaction_file_id: string;
 }

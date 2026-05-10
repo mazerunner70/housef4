@@ -146,14 +146,14 @@ function transactionRecordToBackupWire(rec: TransactionRecord): Record<string, u
   if (rec.match_type !== undefined) {
     row.match_type = rec.match_type;
   }
-  if (rec.match_id !== undefined) {
-    row.match_id = rec.match_id;
+  if (rec.pairing_id !== undefined) {
+    row.pairing_id = rec.pairing_id;
   }
-  if (rec.match_source !== undefined) {
-    row.match_source = rec.match_source;
+  if (rec.pairing_source !== undefined) {
+    row.pairing_source = rec.pairing_source;
   }
-  if (rec.match_confidence !== undefined) {
-    row.match_confidence = rec.match_confidence;
+  if (rec.pairing_confidence !== undefined) {
+    row.pairing_confidence = rec.pairing_confidence;
   }
   return row;
 }
@@ -548,22 +548,32 @@ function copyFileAmountIfPresent(
   if (Number.isFinite(fa)) rec.file_amount = fa;
 }
 
-const OPTIONAL_TXN_STRING_KEYS = [
-  'match_type',
-  'match_id',
-  'match_source',
-  'match_confidence',
-] as const;
-
 function copyOptionalTxnStringFields(
   item: Record<string, unknown>,
   rec: TransactionRecord,
 ): void {
-  for (const k of OPTIONAL_TXN_STRING_KEYS) {
-    const v = item[k];
-    if (v !== undefined && v !== null) {
-      rec[k] = wireString(v, '');
-    }
+  const mt = item.match_type;
+  if (mt !== undefined && mt !== null) {
+    rec.match_type = wireString(mt, '');
+  }
+}
+
+/** Reads transfer pairing fields; prefers `pairing_*`, falls back to legacy Dynamo keys `match_*`. */
+function copyTransferPairingFields(
+  item: Record<string, unknown>,
+  rec: TransactionRecord,
+): void {
+  const pid = item.pairing_id ?? item.match_id;
+  if (pid !== undefined && pid !== null) {
+    rec.pairing_id = wireString(pid, '');
+  }
+  const src = item.pairing_source ?? item.match_source;
+  if (src !== undefined && src !== null) {
+    rec.pairing_source = wireString(src, '');
+  }
+  const conf = item.pairing_confidence ?? item.match_confidence;
+  if (conf !== undefined && conf !== null) {
+    rec.pairing_confidence = wireString(conf, '');
   }
 }
 
@@ -589,6 +599,7 @@ function transactionOptionalFields(
     rec.category_confidence = Number(item.category_confidence);
   }
   copyOptionalTxnStringFields(item, rec);
+  copyTransferPairingFields(item, rec);
   copyFileAmountIfPresent(item, rec);
 }
 

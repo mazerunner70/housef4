@@ -84,15 +84,15 @@ Every application item (except the health system row) includes:
 | `suggested_category` | String or null | From rules / ML. |
 | `category_confidence` | Number | Optional. |
 | `match_type` | String | Optional; **categorization** match (e.g. rule vs ML) — not transfer pairing. |
-| `match_id` | String or absent | Optional; shared id for an **internal transfer** leg pair (distinct from `match_type`). Persists across backup/restore; matching pipeline not required to set it yet. See [`transfer_matching.md`](../transfer_matching.md). |
-| `match_source` | String or absent | Optional; `auto` \| `user` when `match_id` is used. |
-| `match_confidence` | String or absent | Optional; e.g. `exact` \| `within_epsilon` when `match_id` is used. |
+| `pairing_id` | String or absent | Optional; shared id for an **internal transfer** leg pair (distinct from `match_type`). Persists across backup/restore; pairing pipeline not required to set it yet. See [`transfer_matching.md`](../transfer_matching.md). **Legacy:** reads still honor Dynamo attribute **`match_id`**. |
+| `pairing_source` | String or absent | Optional; `auto` \| `user` when `pairing_id` is used. Legacy key **`match_source`**. |
+| `pairing_confidence` | String or absent | Optional; e.g. `exact` \| `within_epsilon` when `pairing_id` is used. Legacy key **`match_confidence`**. |
 | `transaction_file_id` | String | Id of the `TRANSACTION_FILE` row for the import that **inserted** this transaction (same id as in `SK` of `FILE#…`). Required on every transaction row. |
 | `GSI2PK` / `GSI2SK` | String | Denormalized keys for **GSI2** (see above); always set with `transaction_file_id` on insert. |
 
-Persisted via `DynamoFinanceRepository` on transaction items (reads in `transactionItemToRecord`, backup/export wire in `transactionRecordToBackupWire`, restore in `backupRestore.ts`). Automatic population of **`match_*`** attributes is deferred to the transfer-matching pipeline; imports do not write them unless extended later.
+Persisted via `DynamoFinanceRepository` on transaction items (reads in `transactionItemToRecord`, backup/export wire in `transactionRecordToBackupWire`, restore in `backupRestore.ts`). Automatic population of **`pairing_*`** attributes is deferred to the transfer-pairing pipeline; imports do not write them unless extended later.
 
-**Indexing:** **`match_id`**, **`match_source`**, and **`match_confidence`** are **not** part of **`GSI1`** or **`GSI2`** composite keys; they are opaque attributes on the base item (`GSI*` projection **`ALL`**). There is **no dedicated query-by-`match_id`** access pattern unless a future GSI or table design adds one.
+**Indexing:** **`pairing_id`**, **`pairing_source`**, and **`pairing_confidence`** are **not** part of **`GSI1`** or **`GSI2`** composite keys; they are opaque attributes on the base item (`GSI*` projection **`ALL`**). There is **no dedicated query-by-`pairing_id`** access pattern unless a future GSI or table design adds one.
 
 ---
 
@@ -221,7 +221,7 @@ Backups are **artifacts** (JSON files on disk after download), not rows in this 
 | **`accounts`** | Array | Objects aligned with **`GET /api/accounts`** plus any persisted fields needed for round-trip (`id`, `name`, `created_at`). |
 | **`profile`** | Object or null | Maps to **§5 Profile** attributes (`default_currency`, `net_worth`, …). |
 | **`metrics`** | Object or null | Maps to **§6 Metrics** cached snapshot attributes (optional — may be recomputed after restore instead). |
-| **`transactions`** | Array | Objects aligned with **`GET /api/transactions`** plus persistence-only fields required for **§1 Transaction**: **`merchant_embedding`**, **`suggested_category`**, **`category_confidence`**, **`match_type`**, **`match_id`** / **`match_source`** / **`match_confidence`** when present (see [`../transfer_matching.md`](../transfer_matching.md)). Must include **`transaction_file_id`** and consistent **`cluster_id`** references. |
+| **`transactions`** | Array | Objects aligned with **`GET /api/transactions`** plus persistence-only fields required for **§1 Transaction**: **`merchant_embedding`**, **`suggested_category`**, **`category_confidence`**, **`match_type`**, **`pairing_id`** / **`pairing_source`** / **`pairing_confidence`** when present (see [`../transfer_matching.md`](../transfer_matching.md)). Must include **`transaction_file_id`** and consistent **`cluster_id`** references. |
 | **`clusters`** | Array | Objects aligned with review-queue cluster records and **§2 Cluster** persistence (`cluster_id`, aggregates, `assigned_category`, `pending_review`, …). |
 | **`transaction_files`** | Array | **`TRANSACTION_FILE`** metadata only (**§3** maps: `source`, `format`, `timing`, `result`, ids, `account_id`). **V1:** do **not** embed raw file contents or S3 object bodies; see [`import_file_blob_storage.md`](../import_file_blob_storage.md) for future blob-inclusive backups. |
 

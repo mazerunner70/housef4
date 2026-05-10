@@ -16,7 +16,7 @@ Welcome to the `housef4` monorepo.
 - **Backup JSON schema by version:** `docs/03_detailed_design/backup-schema/` ([`README`](./03_detailed_design/backup-schema/README.md), current **[v1](./03_detailed_design/backup-schema/v1.md)**)
 - **Persistent data (DynamoDB single-table, keys, GSI):** `docs/03_detailed_design/database/data_model.md` (includes **`TRANSACTION_FILE`** / `FILE#` items)
 - **Transaction import, clustering, and cluster `cluster_id` lifecycle:** `docs/03_detailed_design/import_transaction_files.md`
-- **Internal transfers (`match_id`), canonical amount signs, clustering exclusion:** [`03_detailed_design/transfer_matching.md`](./03_detailed_design/transfer_matching.md)
+- **Internal transfers (`pairing_id`), canonical amount signs, clustering exclusion:** [`03_detailed_design/transfer_matching.md`](./03_detailed_design/transfer_matching.md)
 - **UI routes & components (MVP journeys):** `docs/03_detailed_design/ui_component_flow.md`
 
 ## Setup
