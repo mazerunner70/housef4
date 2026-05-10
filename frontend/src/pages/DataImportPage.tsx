@@ -16,6 +16,31 @@ const NEW_ACCOUNT = '__new__'
 
 type Phase = 'idle' | 'parsing' | 'done'
 
+function importAmountNegationShortLabel(amountNegated: boolean | undefined): {
+  text: string
+  title: string
+} {
+  if (amountNegated === true) {
+    return {
+      text: 'Signs normalized',
+      title:
+        'Import flipped parsed amounts so spending is negative and income is positive (canonical).',
+    }
+  }
+  if (amountNegated === false) {
+    return {
+      text: 'Raw file signs',
+      title:
+        'Stored amounts match the export as parsed; batch negation was not applied.',
+    }
+  }
+  return {
+    text: 'Sign policy unknown',
+    title:
+      'This import predates sign metadata, or the server did not record a policy.',
+  }
+}
+
 function importSatisfied(
   accountLoadError: boolean,
   choice: string,
@@ -287,6 +312,9 @@ export function DataImportPage() {
           <ul className="mt-3 divide-y divide-white/[0.06]">
             {fileHistory.data.transaction_files.map((f) => {
               const canReview = f.result.rowCount > 0
+              const signInfo = importAmountNegationShortLabel(
+                f.format.amount_negated,
+              )
               return (
                 <li
                   key={f.id}
@@ -302,6 +330,14 @@ export function DataImportPage() {
                         {f.account_id
                           ? (accountNameById.get(f.account_id) ?? f.account_id)
                           : '—'}
+                      </p>
+                      <p className="text-xs text-zinc-500">
+                        <span
+                          className="inline-block rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 font-medium text-zinc-400"
+                          title={signInfo.title}
+                        >
+                          {signInfo.text}
+                        </span>
                       </p>
                       <p className="text-sm text-zinc-500">
                         <time

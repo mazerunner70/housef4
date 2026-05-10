@@ -2,6 +2,8 @@
 
 This document defines the **two-layer model** used in ML experimentation ([`ml-training/notebooks/experimentation.ipynb`](../../ml-training/notebooks/experimentation.ipynb)) and outlines how to align it with the live backend. It complements the [`transaction_analysis_expert`](../../.agents/skills/transaction_analysis_expert/SKILL.md) skill (clustering, categorization, low-cost storage) and [`import_field_mapping.md`](./import_field_mapping.md) (canonical `raw_merchant`).
 
+**Internal transfers:** Transactions linked by **`match_id`** are **not** merchant spend; the clustering pipeline must **exclude** them (see [`transfer_matching.md`](./transfer_matching.md)).
+
 ---
 
 ## 1. Why two layers?

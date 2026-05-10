@@ -35,6 +35,8 @@ export interface ExtractedUpload {
 export type ImportMultipartFields = {
   accountId: string;
   newAccountName: string;
+  /** Raw `negate_amounts` field: `true`/`false`/`auto`/empty — see `parseNegateAmountsField` in import pipeline. */
+  negateAmounts: string;
 };
 
 export type ExtractedImportUpload = {
@@ -76,10 +78,12 @@ export async function extractImportMultipart(
     let acceptedFileTruncated = false;
     let accountId = '';
     let newAccountName = '';
+    let negateAmounts = '';
 
     bb.on('field', (name, val) => {
       if (name === 'account_id') accountId = val;
       if (name === 'new_account_name') newAccountName = val;
+      if (name === 'negate_amounts') negateAmounts = val;
     });
 
     bb.on('file', (name, file, info) => {
@@ -126,6 +130,7 @@ export async function extractImportMultipart(
         file: fileFound,
         accountId,
         newAccountName,
+        negateAmounts,
       });
     });
     bb.on('error', reject);

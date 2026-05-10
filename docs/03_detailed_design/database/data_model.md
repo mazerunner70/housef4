@@ -74,7 +74,8 @@ Every application item (except the health system row) includes:
 | `date` | Number | **Epoch milliseconds UTC** (same convention as the API). |
 | `raw_merchant` | String | As imported. |
 | `cleaned_merchant` | String | Normalized merchant line for clustering. |
-| `amount` | Number | Sign per product rules (e.g. spending negative). |
+| `amount` | Number | Canonical sign: spending / outflows **negative**, income **positive** (see HOU-25 / import amount negation). |
+| `file_amount` | Number (optional) | Parser-signed amount before optional import negation; set on transaction rows created by imports after this feature shipped (equals `amount` when `format.amount_negated` is false). Omitted on older rows. |
 | `cluster_id` | String or absent / null (when implemented) | Merchant cluster / stable id for rules and `GSI1`. Optional once [`../import_transaction_files.md`](../import_transaction_files.md) allows unassigned rows. |
 | `category` | String | Current assigned category. |
 | `status` | String | `CLASSIFIED` \| `PENDING_REVIEW`. |
@@ -82,7 +83,10 @@ Every application item (except the health system row) includes:
 | `merchant_embedding` | List of numbers | Optional; e.g. 384-dim vector when present. |
 | `suggested_category` | String or null | From rules / ML. |
 | `category_confidence` | Number | Optional. |
-| `match_type` | String | Optional; how the row was matched. |
+| `match_type` | String | Optional; **categorization** match (e.g. rule vs ML) — not transfer pairing. |
+| `match_id` | String or absent / null | **Planned:** shared id when this row is one leg of an **internal transfer** pair; distinct from `match_type`. Spec: [`../transfer_matching.md`](../transfer_matching.md). When set, clustering must omit the row. |
+| `match_source` | String or absent | **Planned:** `auto` \| `user` — see `transfer_matching.md`. |
+| `match_confidence` | String or absent | **Planned:** e.g. `exact` \| `within_epsilon` — see `transfer_matching.md`. |
 | `transaction_file_id` | String | Id of the `TRANSACTION_FILE` row for the import that **inserted** this transaction (same id as in `SK` of `FILE#…`). Required on every transaction row. |
 | `GSI2PK` / `GSI2SK` | String | Denormalized keys for **GSI2** (see above); always set with `transaction_file_id` on insert. |
 
@@ -130,7 +134,7 @@ Per-upload **import history**: the uploaded file, how it was classified, when pr
 | `id` | String | Same as in `SK` after the `FILE#` prefix. |
 | `account_id` | String | Id of the user’s `ACCOUNT` item (`ACCOUNT#…` sort key id segment) for this file. Omitted on legacy items; readers treat missing as empty. |
 | **`source`** | Map (object) | **§1 — Multipart / upload audit:** `name` (client filename or display default), `size_bytes`, optional `content_type` (part MIME). |
-| **`format`** | Map (object) | **§2 — Import source type for parsing** (set after sniffing): optional `source_format` (e.g. `csv` / `ofx` / `qfx` / `qif`); optional `currency` (ISO 4217) when inferrable (e.g. OFX `CURDEF`); may be empty if unknown. |
+| **`format`** | Map (object) | **§2 — Import source type for parsing** (set after sniffing): optional `source_format` (e.g. `csv` / `ofx` / `qfx` / `qif`); optional `currency` (ISO 4217) when inferrable (e.g. OFX `CURDEF`); optional **`amount_negated`** (boolean) when the server flipped signs for canonical import; may be empty if unknown. |
 | **`timing`** | Map (object) | **§3 — Clock (epoch ms UTC):** `started_at` (after a successful multipart extract, before parse/enrich/ingest), `completed_at` (when the run finishes and the item is written). **Listing order** (newest first) uses `timing.completed_at`. |
 | **`result`** | Map (object) | **§4 — Batch summary** — full **`ImportIngestResult`**: `rowCount`, `knownMerchants`, `unknownMerchants`, `existingTransactionsUpdated`, `newClustersTouched` (the last two include re-cluster patch effects where applicable; see [`db/src/types.ts`](../../../db/src/types.ts)). |
 
@@ -213,7 +217,7 @@ Backups are **artifacts** (JSON files on disk after download), not rows in this 
 | **`accounts`** | Array | Objects aligned with **`GET /api/accounts`** plus any persisted fields needed for round-trip (`id`, `name`, `created_at`). |
 | **`profile`** | Object or null | Maps to **§5 Profile** attributes (`default_currency`, `net_worth`, …). |
 | **`metrics`** | Object or null | Maps to **§6 Metrics** cached snapshot attributes (optional — may be recomputed after restore instead). |
-| **`transactions`** | Array | Objects aligned with **`GET /api/transactions`** plus persistence-only fields required for **§1 Transaction**: **`merchant_embedding`**, **`suggested_category`**, **`category_confidence`**, **`match_type`** when present. Must include **`transaction_file_id`** and consistent **`cluster_id`** references. |
+| **`transactions`** | Array | Objects aligned with **`GET /api/transactions`** plus persistence-only fields required for **§1 Transaction**: **`merchant_embedding`**, **`suggested_category`**, **`category_confidence`**, **`match_type`**, **`match_id`** / **`match_source`** / **`match_confidence`** when present (see [`../transfer_matching.md`](../transfer_matching.md)). Must include **`transaction_file_id`** and consistent **`cluster_id`** references. |
 | **`clusters`** | Array | Objects aligned with review-queue cluster records and **§2 Cluster** persistence (`cluster_id`, aggregates, `assigned_category`, `pending_review`, …). |
 | **`transaction_files`** | Array | **`TRANSACTION_FILE`** metadata only (**§3** maps: `source`, `format`, `timing`, `result`, ids, `account_id`). **V1:** do **not** embed raw file contents or S3 object bodies; see [`import_file_blob_storage.md`](../import_file_blob_storage.md) for future blob-inclusive backups. |
 

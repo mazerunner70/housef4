@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   downloadBlobAsFile,
   getBackupExport,
+  getTransactionsCsvExport,
 } from '@/api/client'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
@@ -30,6 +31,10 @@ export function DataBackupSettingsPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+
+  const [csvLoading, setCsvLoading] = useState(false)
+  const [csvError, setCsvError] = useState<string | null>(null)
+  const [csvSuccess, setCsvSuccess] = useState(false)
 
   const [stuckBannerOpen, setStuckBannerOpen] = useState(() =>
     readStuckBannerFlag(),
@@ -83,6 +88,22 @@ export function DataBackupSettingsPage() {
       setError(message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleDownloadCsv = async () => {
+    setCsvError(null)
+    setCsvSuccess(false)
+    setCsvLoading(true)
+    try {
+      const { blob, filename } = await getTransactionsCsvExport()
+      downloadBlobAsFile(blob, filename)
+      setCsvSuccess(true)
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Export failed'
+      setCsvError(message)
+    } finally {
+      setCsvLoading(false)
     }
   }
 
@@ -202,6 +223,69 @@ export function DataBackupSettingsPage() {
             onRestoreLockUncertainty={handleRestoreLockUncertainty}
           />
         </div>
+      </section>
+
+      <section
+        className="rounded-2xl border border-white/[0.08] bg-zinc-900/40 p-6 sm:p-8"
+        aria-labelledby="transactions-csv-heading"
+      >
+        <h2
+          id="transactions-csv-heading"
+          className="text-lg font-semibold text-zinc-100"
+        >
+          Transactions (CSV)
+        </h2>
+        <p className="mt-2 text-sm text-zinc-400">
+          Download all transactions as a spreadsheet-friendly table: every stored
+          field plus account name, import filename, cluster id, category, and
+          related metadata (see API contract).
+        </p>
+
+        <div className="mt-6 flex flex-wrap items-center gap-4">
+          <Button
+            type="button"
+            disabled={csvLoading}
+            onClick={() => void handleDownloadCsv()}
+          >
+            Download CSV
+          </Button>
+          {csvLoading && (
+            <div className="inline-flex items-center gap-2 text-sm text-zinc-400">
+              <Spinner label="Preparing CSV export" />
+              <span aria-hidden>Preparing CSV…</span>
+            </div>
+          )}
+        </div>
+
+        {csvSuccess && (
+          <output
+            className="mt-4 block rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100"
+            aria-live="polite"
+            aria-label="CSV export status"
+          >
+            CSV downloaded.
+          </output>
+        )}
+
+        {csvError && (
+          <div className="mt-4 space-y-3">
+            <p
+              role="alert"
+              className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200"
+            >
+              Could not export CSV ({csvError}). Check your connection and try
+              again.
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={csvLoading}
+              onClick={() => void handleDownloadCsv()}
+            >
+              Try again
+            </Button>
+          </div>
+        )}
       </section>
     </div>
   )

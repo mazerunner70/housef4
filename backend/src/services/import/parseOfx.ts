@@ -1,17 +1,17 @@
 import { createLogger } from '../../logger';
-import type { ParsedImportRow } from './canonical';
+import type { ParserOutputRow } from './canonical';
 
 const log = createLogger({ component: 'import.parseOfx' });
 
 function getTag(block: string, tag: string): string | undefined {
-  const re = new RegExp(`<${tag}>([^<\\r\\n]*)`, 'i');
-  const m = block.match(re);
+  const re = new RegExp(String.raw`<${tag}>([^<\r\n]*)`, 'i');
+  const m = re.exec(block);
   return m?.[1]?.trim();
 }
 
 /** Parse OFX / QFX SGML-style `STMTTRN` blocks. */
-export function parseOfxLike(content: string): ParsedImportRow[] {
-  const rows: ParsedImportRow[] = [];
+export function parseOfxLike(content: string): ParserOutputRow[] {
+  const rows: ParserOutputRow[] = [];
   const re = /<STMTTRN>([\s\S]*?)<\/STMTTRN>/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(content)) !== null) {
@@ -49,9 +49,11 @@ export function parseOfxLike(content: string): ParsedImportRow[] {
  * Returns a 3-letter code when a single unambiguous value is found.
  */
 export function extractOfxDefaultCurrency(content: string): string | undefined {
-  const fromCurdef = content.match(/<CURDEF>([A-Z]{3})</i);
+  const curdefRe = /<CURDEF>([A-Z]{3})</i;
+  const fromCurdef = curdefRe.exec(content);
   if (fromCurdef?.[1]) return fromCurdef[1].toUpperCase();
-  const fromCur = content.match(/<CURRENCY>([A-Z]{3})</i);
+  const curRe = /<CURRENCY>([A-Z]{3})</i;
+  const fromCur = curRe.exec(content);
   if (fromCur?.[1]) return fromCur[1].toUpperCase();
   return undefined;
 }

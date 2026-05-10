@@ -1,12 +1,12 @@
 import { parse } from 'csv-parse/sync';
 
 import { createLogger } from '../../logger';
-import type { ParsedImportRow } from './canonical';
+import type { ParserOutputRow } from './canonical';
 
 const log = createLogger({ component: 'import.parseCsv' });
 
 function normHeader(h: string): string {
-  return h.trim().toLowerCase().replace(/\s+/g, ' ');
+  return h.trim().toLowerCase().replaceAll(/\s+/g, ' ');
 }
 
 function scoreDateHeader(h: string): number {
@@ -84,19 +84,19 @@ function pickColumns(headers: string[]): {
 
 function parseDateCell(s: string): number | null {
   const t = s.trim();
-  const iso = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(t);
   if (iso) {
     return Date.UTC(
-      parseInt(iso[1]!, 10),
-      parseInt(iso[2]!, 10) - 1,
-      parseInt(iso[3]!, 10),
+      Number.parseInt(iso[1] ?? '0', 10),
+      Number.parseInt(iso[2] ?? '0', 10) - 1,
+      Number.parseInt(iso[3] ?? '0', 10),
     );
   }
-  const mdy = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  const mdy = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/.exec(t);
   if (mdy) {
-    let mm = parseInt(mdy[1]!, 10);
-    let dd = parseInt(mdy[2]!, 10);
-    let yy = parseInt(mdy[3]!, 10);
+    let mm = Number.parseInt(mdy[1] ?? '0', 10);
+    let dd = Number.parseInt(mdy[2] ?? '0', 10);
+    let yy = Number.parseInt(mdy[3] ?? '0', 10);
     if (yy < 100) yy += yy >= 70 ? 1900 : 2000;
     return Date.UTC(yy, mm - 1, dd);
   }
@@ -105,15 +105,36 @@ function parseDateCell(s: string): number | null {
 }
 
 function parseMoney(s: string): number | undefined {
-  const t = s.replace(/[£$€,\s]/g, '').replace(/^\((.+)\)$/, '-$1');
+  const t = s.replaceAll(/[£$€,\s]/g, '').replace(/^\((.+)\)$/, '-$1');
   if (!t) return undefined;
   const n = Number(t);
   return Number.isNaN(n) ? undefined : n;
 }
 
-export function parseBankCsv(text: string): ParsedImportRow[] {
+function resolveCsvRowAmount(
+  vals: string[],
+  cols: NonNullable<ReturnType<typeof pickColumns>>,
+): number | undefined {
+  let amount: number | undefined;
+  if (cols.amountIdx >= 0 && vals[cols.amountIdx]) {
+    amount = parseMoney(vals[cols.amountIdx]);
+  }
+  if (
+    amount === undefined &&
+    cols.debitIdx !== undefined &&
+    cols.creditIdx !== undefined
+  ) {
+    const debit = parseMoney(vals[cols.debitIdx] ?? '') ?? 0;
+    const credit = parseMoney(vals[cols.creditIdx] ?? '') ?? 0;
+    amount = credit - debit;
+  }
+  if (amount === undefined || Number.isNaN(amount)) return undefined;
+  return amount;
+}
+
+export function parseBankCsv(text: string): ParserOutputRow[] {
   const bomStripped =
-    text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+    text.codePointAt(0) === 0xfeff ? text.slice(1) : text;
   let records: Record<string, string>[];
   try {
     records = parse(bomStripped, {
@@ -127,26 +148,20 @@ export function parseBankCsv(text: string): ParsedImportRow[] {
   }
   if (records.length === 0) return [];
 
-  const headers = Object.keys(records[0]!);
+  const first = records[0];
+  if (!first) return [];
+  const headers = Object.keys(first);
   const cols = pickColumns(headers);
   if (!cols) return [];
 
-  const rows: ParsedImportRow[] = [];
+  const rows: ParserOutputRow[] = [];
   for (const rec of records) {
     const vals = headers.map((h) => rec[h] ?? '');
     const raw_merchant = (vals[cols.descIdx] ?? '').trim();
     if (!raw_merchant) continue;
 
-    let amount: number | undefined;
-    if (cols.amountIdx >= 0 && vals[cols.amountIdx]) {
-      amount = parseMoney(vals[cols.amountIdx]!);
-    }
-    if (amount === undefined && cols.debitIdx !== undefined && cols.creditIdx !== undefined) {
-      const debit = parseMoney(vals[cols.debitIdx] ?? '') ?? 0;
-      const credit = parseMoney(vals[cols.creditIdx] ?? '') ?? 0;
-      amount = credit - debit;
-    }
-    if (amount === undefined || Number.isNaN(amount)) continue;
+    const amount = resolveCsvRowAmount(vals, cols);
+    if (amount === undefined) continue;
 
     const dateRaw = vals[cols.dateIdx] ?? '';
     const date = parseDateCell(dateRaw);

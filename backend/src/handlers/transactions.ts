@@ -48,6 +48,9 @@ export async function getTransactionsPayload(
       if (t.match_type !== undefined) {
         row.match_type = t.match_type;
       }
+      if (t.file_amount !== undefined) {
+        row.file_amount = t.file_amount;
+      }
       return row;
     }),
   };

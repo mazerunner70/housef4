@@ -16,6 +16,7 @@ import {
 } from 'recharts'
 
 import type { MetricsResponse } from '@/lib/types'
+import { formatUsdChartAxisTick } from '@/lib/formatCurrency'
 import { cn } from '@/lib/cn'
 import { monthStartMsFromCashflowLabel } from '@/lib/dashboardSpending'
 import { theme } from '@/lib/theme'
@@ -27,13 +28,13 @@ type CashflowChartRow = {
   Outflow: number
 }
 
-type MonthlyCashFlowChartProps = {
+type MonthlyCashFlowChartProps = Readonly<{
   metrics: MetricsResponse
   /** `cashflow_history[].label` for the focused month; null = latest month on the axis. */
   selectedMonthLabel: string | null
   onSelectCashflowMonth: (monthLabel: string) => void
   className?: string
-}
+}>
 
 function useObservedSize<T extends HTMLElement>() {
   const ref = useRef<T | null>(null)
@@ -61,6 +62,10 @@ function useObservedSize<T extends HTMLElement>() {
     }
   }, [])
   return { ref, width: size.width, height: size.height }
+}
+
+function cashflowLegendFormatter(value: string) {
+  return <span className="text-sm text-zinc-400">{value}</span>
 }
 
 export function MonthlyCashFlowChart({
@@ -218,9 +223,7 @@ export function MonthlyCashFlowChart({
               tick={{ fill: chart.tick, fontSize: 11 }}
               axisLine={false}
               tickLine={false}
-              tickFormatter={(v) =>
-                typeof v === 'number' ? `$${v / 1000}k` : String(v)
-              }
+              tickFormatter={(v) => formatUsdChartAxisTick(v, yMax)}
             />
             <Tooltip
               shared
@@ -254,9 +257,7 @@ export function MonthlyCashFlowChart({
             />
             <Legend
               wrapperStyle={{ paddingTop: 8 }}
-              formatter={(value) => (
-                <span className="text-sm text-zinc-400">{value}</span>
-              )}
+              formatter={cashflowLegendFormatter}
             />
             <Line
               type="monotone"

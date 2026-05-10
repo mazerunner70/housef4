@@ -23,9 +23,12 @@ Accepts a bank or PFM export file, parses it server-side into normalized transac
 ### Request
 
 - **`multipart/form-data`** with:
-  - a single part **`file`** (the export binary or text), and
-  - either **`new_account_name`** (non-empty string; the server creates an `ACCOUNT` row and links the file to it) or **`account_id`** (uuid of an existing account for this user; validated before ingest).
-- If both are present, **`new_account_name`** takes precedence and a new account is created.
+  - **`file`**: a single part (the export binary or text).
+  - **Account target** (exactly one of):
+    - **`new_account_name`**: non-empty string; the server creates an `ACCOUNT` row and links the file to it, or
+    - **`account_id`**: uuid of an existing account for this user (validated before ingest).
+  - Optional **`negate_amounts`**: `true` / `false` / `1` / `0` / `yes` / `no` forces batch sign normalization on or off; omitted, empty, `auto`, or any other value uses **auto** (interest-line heuristic and the most recent prior import for the same account with explicit `format.amount_negated` — legacy files without that flag are skipped when scanning). See response **`amountNegation`**.
+- If both **`new_account_name`** and **`account_id`** are present, **`new_account_name`** takes precedence and a new account is created.
 - Typical extensions: `.csv`, `.ofx`, `.qfx`, `.qif`. Relevant MIME types include `text/csv`, `application/x-ofx`, `application/vnd.intu.qfx`, `application/qif`, and `text/plain` when appropriate.
 
 ### Response Payload
@@ -38,7 +41,13 @@ Accepts a bank or PFM export file, parses it server-side into normalized transac
   "sourceFormat": "ofx",
   "importFileId": "550e8400-e29b-41d4-a716-446655440000",
   "existingTransactionsUpdated": 12,
-  "newClustersTouched": 4
+  "newClustersTouched": 4,
+  "amountNegation": {
+    "applied": true,
+    "suggestInterest": true,
+    "suggestPriorImport": false,
+    "explicitOverride": false
+  }
 }
 ```
 
@@ -53,6 +62,7 @@ Optional fields are omitted when not applicable (e.g. `sourceFormat` when unknow
 | `importFileId` | string | Id of the persisted **transaction file** record for this import (see [`database/data_model.md`](./database/data_model.md) `TRANSACTION_FILE`). |
 | `existingTransactionsUpdated` | number (optional) | Existing rows whose cluster or embeddings changed. |
 | `newClustersTouched` | number (optional) | Distinct cluster ids in the new rows. |
+| `amountNegation` | object (optional) | **`applied`**: signs were negated for canonical import; **`suggestInterest`**: interest-line heuristic favored negation; **`suggestPriorImport`**: latest prior import for this account recorded `format.amount_negated`; **`explicitOverride`**: `negate_amounts` was set in the multipart request. |
 
 ### Raw file archival (`IMPORT_BLOB_BACKEND`)
 
@@ -105,7 +115,8 @@ Returns recorded uploads (one item per successful `POST /api/imports` that wrote
         "content_type": "application/vnd.intu.qfx"
       },
       "format": {
-        "source_format": "qfx"
+        "source_format": "qfx",
+        "amount_negated": false
       },
       "timing": {
         "started_at": 1775044799000,
@@ -125,7 +136,7 @@ Returns recorded uploads (one item per successful `POST /api/imports` that wrote
 
 | Field | Type | Notes |
 |--------|------|--------|
-| `transaction_files` | array | Each item matches **`TransactionFileRecord`** in [`db/src/types.ts`](../../../db/src/types.ts). **`user_id`**, **`id`**, **`account_id`** (string; empty for legacy files before accounts), **`source`** (upload: `name`, `size_bytes`, optional `content_type`), **`format`** (optional `source_format` when detected), **`timing`** (`started_at` / `completed_at`, epoch **ms** UTC), **`result`** (**camelCase** — same shape as `POST /api/imports` batch summary: `ImportIngestResult`). Optional **`blob`** when raw archival succeeded ([`import_file_blob_storage.md`](./import_file_blob_storage.md)); omitted after a **non-fatal** blob **`Put`** failure on import (**`200`** still returned — see §1 **Raw file archival**). Newest first by `timing.completed_at`. |
+| `transaction_files` | array | Each item matches **`TransactionFileRecord`** in [`db/src/types.ts`](../../../db/src/types.ts). **`user_id`**, **`id`**, **`account_id`** (string; empty for legacy files before accounts), **`source`** (upload: `name`, `size_bytes`, optional `content_type`), **`format`** (optional `source_format`, `currency`, **`amount_negated`** when recorded — import sign normalization), **`timing`** (`started_at` / `completed_at`, epoch **ms** UTC), **`result`** (**camelCase** — same shape as `POST /api/imports` batch summary: `ImportIngestResult`). Optional **`blob`** when raw archival succeeded ([`import_file_blob_storage.md`](./import_file_blob_storage.md)); omitted after a **non-fatal** blob **`Put`** failure on import (**`200`** still returned — see §1 **Raw file archival**). Newest first by `timing.completed_at`. |
 
 ## 2. Metrics Baseline Endpoint
 
@@ -218,12 +229,40 @@ Optional query: **`transactionFileId`** (string, UUID of a persisted import / `T
 |--------|------|--------|
 | `transactions[].id` | string | Stable transaction identifier. |
 | `transactions[].date` | number | Milliseconds since Unix epoch (UTC); see [Date and time (JSON)](#date-and-time-json). |
-| `transactions[].amount` | number | Signed amount (negative for outflows). |
+| `transactions[].amount` | number | Canonical signed amount (spending / outflows negative, income positive). |
+| `transactions[].file_amount` | number (optional) | File-signed value before optional import negation, when stored. |
 | `transactions[].status` | string | e.g. `CLASSIFIED`, `PENDING_REVIEW`. |
 | `transactions[].cleaned_merchant` | string | Normalized merchant line for clustering and rules (see `transaction_analysis_clusters_and_categories.md`); always present on `GET /api/transactions` (derived when not stored). |
 | `transactions[].transaction_file_id` | string | Id of the `TRANSACTION_FILE` import that created this row. |
 
 Other fields follow the same snake_case names as in the example payload (`raw_merchant`, `cluster_id`, `category`, `is_recurring`).
+
+### Transaction CSV export
+
+**`GET /api/transactions/export`**
+
+Downloads a **`text/csv`** table (UTF-8) of the authenticated user’s transactions with **every persisted transaction field** plus joined columns derived from **`TRANSACTION_FILE`** / **`ACCOUNT`** (account id and name, import filename, detected format and currency when stored).
+
+Optional query parameters match **`GET /api/transactions`**:
+
+| Parameter | Effect |
+|-----------|--------|
+| **`transactionFileId`** | Restrict rows to transactions whose **`transaction_file_id`** matches this UUID. |
+| **`clusterId`** | Further restrict to transactions whose **`cluster_id`** matches. |
+
+#### Response
+
+- **Success:** **`200 OK`** with **`Content-Type: text/csv; charset=utf-8`** and **`Content-Disposition: attachment`** suggesting `housef4-transactions-<epoch_ms>.csv`.
+- **`date`** is exported as a numeric epoch **milliseconds UTC** cell (same convention as JSON APIs).
+
+CSV columns (header row), in order: **`user_id`**, **`id`**, **`date`**, **`raw_merchant`**, **`cleaned_merchant`** (derived like **`GET /api/transactions`** when not stored), **`amount`**, **`file_amount`** (empty when not stored), **`cluster_id`**, **`category`**, **`status`**, **`is_recurring`**, **`transaction_file_id`**, **`account_id`**, **`account_name`**, **`import_file_name`**, **`import_source_format`**, **`import_file_currency`**, **`import_amount_negated`** (`true` / `false`, empty when the import predates this field), **`suggested_category`**, **`category_confidence`**, **`match_type`**, **`merchant_embedding_json`** (JSON array in one cell, empty when absent).
+
+#### Errors
+
+| Status | Meaning |
+|--------|---------|
+| **401** | Unauthenticated. |
+| **500** | Export failed. |
 
 ## 4. Review Queue Endpoint
 

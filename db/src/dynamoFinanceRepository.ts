@@ -25,6 +25,7 @@ import {
 import { getDocumentClient, requireTableName } from './dynamoClient';
 import { runRestoreAbortWorkflow, runRestoreBackupWorkflow } from './backupRestore';
 import { collectUserPartitionItems } from './userPartition';
+import { formatTransactionsAsCsv } from './transactionCsvExport';
 import {
   computeDashboardMetrics,
   metricsSnapshotLooksAllZero,
@@ -72,6 +73,9 @@ function applyFormatFromRow(
   }
   if (o.currency != null) {
     out.currency = wireString(o.currency);
+  }
+  if (o.amount_negated != null) {
+    out.amount_negated = Boolean(o.amount_negated);
   }
 }
 
@@ -126,6 +130,9 @@ function transactionRecordToBackupWire(rec: TransactionRecord): Record<string, u
   }
   if (rec.cluster_id !== undefined) {
     row.cluster_id = rec.cluster_id;
+  }
+  if (rec.file_amount !== undefined) {
+    row.file_amount = rec.file_amount;
   }
   if (rec.merchant_embedding !== undefined && rec.merchant_embedding.length > 0) {
     row.merchant_embedding = rec.merchant_embedding;
@@ -313,6 +320,18 @@ export interface FinanceRepository {
     clusterId: string,
     assignedCategory: string,
   ): Promise<number>;
+  /**
+   * CSV snapshot of transactions with joined account + import metadata.
+   * `@housef4/db` **`formatTransactionsAsCsv`** supplies column layout.
+   */
+  exportTransactionsCsv(
+    userId: string,
+    opts?: {
+      transactionFileId?: string;
+      clusterId?: string;
+      resolveCleanedMerchant?: (t: TransactionRecord) => string;
+    },
+  ): Promise<string>;
   /** Primary partition snapshot for `GET /api/backup/export`; omits `RESTORE_LOCK`. */
   exportBackupSnapshot(userId: string): Promise<BackupSnapshotV1>;
   /** Full overwrite restore via staging table (`data_model.md` §8.2). Snapshot must be validated first. */
@@ -511,6 +530,15 @@ function copyMerchantEmbeddingIfPresent(
   }
 }
 
+function copyFileAmountIfPresent(
+  item: Record<string, unknown>,
+  rec: TransactionRecord,
+) {
+  if (item.file_amount === undefined || item.file_amount === null) return;
+  const fa = Number(item.file_amount);
+  if (Number.isFinite(fa)) rec.file_amount = fa;
+}
+
 function transactionOptionalFields(
   item: Record<string, unknown>,
   rec: TransactionRecord,
@@ -535,6 +563,7 @@ function transactionOptionalFields(
   if (item.match_type !== undefined && item.match_type !== null) {
     rec.match_type = wireString(item.match_type, '');
   }
+  copyFileAmountIfPresent(item, rec);
 }
 
 function transactionItemToRecord(
@@ -583,6 +612,7 @@ function importTransactionToDynamoItem(
     raw_merchant: r.raw_merchant,
     cleaned_merchant: r.cleaned_merchant,
     amount: r.amount,
+    file_amount: r.file_amount,
     cluster_id: r.cluster_id,
     category: r.category,
     status: r.status,
@@ -1428,6 +1458,35 @@ export class DynamoFinanceRepository implements FinanceRepository {
       clusters: acc.clusters,
       transaction_files: acc.transaction_files,
     };
+  }
+
+  async exportTransactionsCsv(
+    userId: string,
+    opts?: {
+      transactionFileId?: string;
+      clusterId?: string;
+      resolveCleanedMerchant?: (t: TransactionRecord) => string;
+    },
+  ): Promise<string> {
+    const fileId = opts?.transactionFileId?.trim() || undefined;
+    const clusterId = opts?.clusterId?.trim() || undefined;
+    const [transactions, accounts, transactionFiles] = await Promise.all([
+      fileId === undefined
+        ? this.listTransactions(userId)
+        : this.listTransactionsByFileId(userId, fileId),
+      this.listAccounts(userId),
+      this.listTransactionFiles(userId),
+    ]);
+    let rows = transactions;
+    if (clusterId !== undefined) {
+      rows = rows.filter((t) => t.cluster_id === clusterId);
+    }
+    return formatTransactionsAsCsv({
+      transactions: rows,
+      accounts,
+      transactionFiles,
+      resolveCleanedMerchant: opts?.resolveCleanedMerchant,
+    });
   }
 
   async restoreBackupSnapshot(

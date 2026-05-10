@@ -1,11 +1,11 @@
 import { createLogger } from '../../logger';
-import type { ParsedImportRow } from './canonical';
+import type { ParserOutputRow } from './canonical';
 
 const log = createLogger({ component: 'import.parseQif' });
 
 /** Parse QIF transaction records (line tags; records often end with `^`). */
-export function parseQif(content: string): ParsedImportRow[] {
-  const rows: ParsedImportRow[] = [];
+export function parseQif(content: string): ParserOutputRow[] {
+  const rows: ParserOutputRow[] = [];
   let dateStr: string | undefined;
   let amountStr: string | undefined;
   let payee: string | undefined;
@@ -30,7 +30,8 @@ export function parseQif(content: string): ParsedImportRow[] {
       memo = undefined;
       return;
     }
-    const amount = Number(String(amountStr).replace(/^\+/, ''));
+    const sAmt = String(amountStr);
+    const amount = Number(sAmt.startsWith('+') ? sAmt.slice(1) : sAmt);
     if (Number.isNaN(amount)) {
       dateStr = undefined;
       amountStr = undefined;
@@ -55,7 +56,7 @@ export function parseQif(content: string): ParsedImportRow[] {
       continue;
     }
     if (t.length < 2) continue;
-    const tag = t[0]!.toUpperCase();
+    const tag = t.charAt(0).toUpperCase();
     const rest = t.slice(1).trim();
     if (tag === 'D') dateStr = rest;
     else if (tag === 'T') amountStr = rest;
@@ -68,20 +69,20 @@ export function parseQif(content: string): ParsedImportRow[] {
 
 function qifDateToUtcMs(s: string): number | null {
   const t = s.trim();
-  const mdy = t.match(/^(\d{1,2})\/(\d{1,2})[/'](\d{2,4})$/);
+  const mdy = /^(\d{1,2})\/(\d{1,2})[/'](\d{2,4})$/.exec(t);
   if (mdy) {
-    let mm = parseInt(mdy[1]!, 10);
-    let dd = parseInt(mdy[2]!, 10);
-    let yy = parseInt(mdy[3]!, 10);
+    let mm = Number.parseInt(mdy[1] ?? '0', 10);
+    let dd = Number.parseInt(mdy[2] ?? '0', 10);
+    let yy = Number.parseInt(mdy[3] ?? '0', 10);
     if (yy < 100) yy += yy >= 70 ? 1900 : 2000;
     return Date.UTC(yy, mm - 1, dd);
   }
-  const iso = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(t);
   if (iso) {
     return Date.UTC(
-      parseInt(iso[1]!, 10),
-      parseInt(iso[2]!, 10) - 1,
-      parseInt(iso[3]!, 10),
+      Number.parseInt(iso[1] ?? '0', 10),
+      Number.parseInt(iso[2] ?? '0', 10) - 1,
+      Number.parseInt(iso[3] ?? '0', 10),
     );
   }
   const d = Date.parse(t);
