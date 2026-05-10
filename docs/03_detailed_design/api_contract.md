@@ -234,8 +234,12 @@ Optional query: **`transactionFileId`** (string, UUID of a persisted import / `T
 | `transactions[].status` | string | e.g. `CLASSIFIED`, `PENDING_REVIEW`. |
 | `transactions[].cleaned_merchant` | string | Normalized merchant line for clustering and rules (see `transaction_analysis_clusters_and_categories.md`); always present on `GET /api/transactions` (derived when not stored). |
 | `transactions[].transaction_file_id` | string | Id of the `TRANSACTION_FILE` import that created this row. |
+| `transactions[].match_type` | string (optional) | How categorization was matched (rule vs ML, etc.). |
+| `transactions[].match_id` | string (optional) | Shared id linking two legs of an **internal transfer**; distinct from `match_type`. Omitted until pairing populates it. |
+| `transactions[].match_source` | string (optional) | With `match_id`: e.g. `auto` \| `user`. |
+| `transactions[].match_confidence` | string (optional) | With `match_id`: e.g. `exact` \| `within_epsilon`. |
 
-Other fields follow the same snake_case names as in the example payload (`raw_merchant`, `cluster_id`, `category`, `is_recurring`).
+Other documented fields match the example payload (`raw_merchant`, `cluster_id`, `category`, `is_recurring`, `suggested_category`, …). See **`transfer_matching.md`** for semantics of **`match_*`** transfer fields versus **`match_type`**.
 
 ### Transaction CSV export
 
@@ -255,7 +259,7 @@ Optional query parameters match **`GET /api/transactions`**:
 - **Success:** **`200 OK`** with **`Content-Type: text/csv; charset=utf-8`** and **`Content-Disposition: attachment`** suggesting `housef4-transactions-<epoch_ms>.csv`.
 - **`date`** is exported as a numeric epoch **milliseconds UTC** cell (same convention as JSON APIs).
 
-CSV columns (header row), in order: **`user_id`**, **`id`**, **`date`**, **`raw_merchant`**, **`cleaned_merchant`** (derived like **`GET /api/transactions`** when not stored), **`amount`**, **`file_amount`** (empty when not stored), **`cluster_id`**, **`category`**, **`status`**, **`is_recurring`**, **`transaction_file_id`**, **`account_id`**, **`account_name`**, **`import_file_name`**, **`import_source_format`**, **`import_file_currency`**, **`import_amount_negated`** (`true` / `false`, empty when the import predates this field), **`suggested_category`**, **`category_confidence`**, **`match_type`**, **`merchant_embedding_json`** (JSON array in one cell, empty when absent).
+CSV columns (header row), in order: **`user_id`**, **`id`**, **`date`**, **`raw_merchant`**, **`cleaned_merchant`** (derived like **`GET /api/transactions`** when not stored), **`amount`**, **`file_amount`** (empty when not stored), **`cluster_id`**, **`category`**, **`status`**, **`is_recurring`**, **`transaction_file_id`**, **`account_id`**, **`account_name`**, **`import_file_name`**, **`import_source_format`**, **`import_file_currency`**, **`import_amount_negated`** (`true` / `false`, empty when the import predates this field), **`suggested_category`**, **`category_confidence`**, **`match_type`**, **`match_id`**, **`match_source`**, **`match_confidence`**, **`merchant_embedding_json`** (JSON array in one cell, empty when absent).
 
 #### Errors
 

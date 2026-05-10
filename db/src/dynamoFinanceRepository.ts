@@ -146,6 +146,15 @@ function transactionRecordToBackupWire(rec: TransactionRecord): Record<string, u
   if (rec.match_type !== undefined) {
     row.match_type = rec.match_type;
   }
+  if (rec.match_id !== undefined) {
+    row.match_id = rec.match_id;
+  }
+  if (rec.match_source !== undefined) {
+    row.match_source = rec.match_source;
+  }
+  if (rec.match_confidence !== undefined) {
+    row.match_confidence = rec.match_confidence;
+  }
   return row;
 }
 
@@ -539,6 +548,25 @@ function copyFileAmountIfPresent(
   if (Number.isFinite(fa)) rec.file_amount = fa;
 }
 
+const OPTIONAL_TXN_STRING_KEYS = [
+  'match_type',
+  'match_id',
+  'match_source',
+  'match_confidence',
+] as const;
+
+function copyOptionalTxnStringFields(
+  item: Record<string, unknown>,
+  rec: TransactionRecord,
+): void {
+  for (const k of OPTIONAL_TXN_STRING_KEYS) {
+    const v = item[k];
+    if (v !== undefined && v !== null) {
+      rec[k] = wireString(v, '');
+    }
+  }
+}
+
 function transactionOptionalFields(
   item: Record<string, unknown>,
   rec: TransactionRecord,
@@ -560,9 +588,7 @@ function transactionOptionalFields(
   if (item.category_confidence !== undefined && item.category_confidence !== null) {
     rec.category_confidence = Number(item.category_confidence);
   }
-  if (item.match_type !== undefined && item.match_type !== null) {
-    rec.match_type = wireString(item.match_type, '');
-  }
+  copyOptionalTxnStringFields(item, rec);
   copyFileAmountIfPresent(item, rec);
 }
 

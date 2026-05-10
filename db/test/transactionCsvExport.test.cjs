@@ -37,6 +37,9 @@ test('formatTransactionsAsCsv joins account and import metadata', () => {
         suggested_category: null,
         category_confidence: 0.9,
         match_type: 'exact',
+        match_id: 'pair-uuid-1',
+        match_source: 'auto',
+        match_confidence: 'exact',
         merchant_embedding: [1, 2],
       },
     ],
@@ -62,7 +65,9 @@ test('formatTransactionsAsCsv joins account and import metadata', () => {
 
   const lines = csv.trimEnd().split('\n');
   assert.equal(lines.length, 2);
-  assert.ok(lines[0].includes('import_amount_negated'));
+  assert.ok(lines[0].includes('match_confidence'));
+  assert.ok(lines[0].includes('match_id'));
+  assert.ok(lines[1].includes('pair-uuid-1'));
   assert.match(lines[1], /,USD,false,/);
   assert.match(lines[1], /,-5,,c9,/);
   assert.ok(lines[1].includes('"Co,ffee"'));
