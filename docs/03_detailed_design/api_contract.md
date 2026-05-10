@@ -298,6 +298,8 @@ Product requirements: **[`docs/01_discovery/stage_1_understanding_mvp.md`](../..
 | Worst-case size | **~15,000 transactions** per user (+ smaller entity counts); size Lambda/API timeouts and parallel **`BatchWriteItem`** accordingly ([`database/data_model.md`](./database/data_model.md) §8.2). |
 | Abort stuck restore | **`POST /api/backup/restore/abort`** — **`RESTORE_LOCK`** on primary **first**, then staging partition ([`database/data_model.md`](./database/data_model.md) §8.2b); **does not** cancel an actively executing Lambda. |
 
+**Manual QA:** step-by-step scenarios (round-trip, **`403`**, **`409`**, abort after failure, abort retry on partial **`500`**) — [`backup_restore_manual_qa.md`](./backup_restore_manual_qa.md).
+
 ### Backup export
 
 **`GET /api/backup/export`**

@@ -89,6 +89,7 @@ Centralize configuration in one module used by both entry points. Suggested vari
 |----------|-------|------------|--------|
 | `APP_ENV` | `local` | `production` | Drives auth bypass rules, logging verbosity. |
 | `DYNAMODB_TABLE_NAME` | Required once DB is wired (**§14 Step 4**) | Set in Lambda env from Terraform | Omit for **§14 Steps 1–3** if no repository calls. |
+| `DYNAMODB_RESTORE_STAGING_TABLE_NAME` | Required for **`POST /api/backup/restore`** and **`POST /api/backup/restore/abort`** (same code path as primary) — point at DynamoDB Local table or Terraform **`aws_dynamodb_table.restore_staging`** | Set in Lambda env from Terraform (`lambda_api.tf`) | Mirrors primary key/GSI layout; logical name pattern includes **`restores-in-progress`** — see [`database/data_model.md`](./database/data_model.md) §8.4 and root [`README`](../../../README.md). |
 | `AWS_REGION` | e.g. `eu-west-2` | Same | Keep aligned with Terraform `aws_region`. |
 | `DYNAMODB_ENDPOINT` | e.g. `http://localhost:8000` | *unset* | When set, SDK client uses local emulator. |
 | `COGNITO_*` / `AWS_COGNITO_*` | Optional | Required for verifying JWTs if you validate in Lambda | Only needed if the local server verifies real JWTs. |
