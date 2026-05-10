@@ -220,10 +220,28 @@ Optional query: **`transactionFileId`** (string, UUID of a persisted import / `T
       "status": "PENDING_REVIEW",
       "is_recurring": false,
       "transaction_file_id": "660e8400-e29b-41d4-a716-446655440001"
+    },
+    {
+      "id": "txnxfer_001",
+      "date": 1775184000000,
+      "raw_merchant": "Online transfer sent",
+      "cleaned_merchant": "TRANSFER ONLINE SENT",
+      "amount": -500,
+      "cluster_id": "CL_XFER",
+      "category": "Transfers",
+      "status": "CLASSIFIED",
+      "is_recurring": false,
+      "transaction_file_id": "550e8400-e29b-41d4-a716-446655440000",
+      "match_type": "RULE",
+      "match_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "match_source": "auto",
+      "match_confidence": "exact"
     }
   ]
 }
 ```
+
+The server **does not emit `null`** for omitted optional keys (for example **`match_id`**) — the property is absent unless persisted on the row. **`match_confidence`** here is a **string label** describing transfer-pair quality; numeric categorization certainty remains **`category_confidence`**.
 
 | Field | Type | Notes |
 |--------|------|--------|
@@ -235,9 +253,9 @@ Optional query: **`transactionFileId`** (string, UUID of a persisted import / `T
 | `transactions[].cleaned_merchant` | string | Normalized merchant line for clustering and rules (see `transaction_analysis_clusters_and_categories.md`); always present on `GET /api/transactions` (derived when not stored). |
 | `transactions[].transaction_file_id` | string | Id of the `TRANSACTION_FILE` import that created this row. |
 | `transactions[].match_type` | string (optional) | How categorization was matched (rule vs ML, etc.). |
-| `transactions[].match_id` | string (optional) | Shared id linking two legs of an **internal transfer**; distinct from `match_type`. Omitted until pairing populates it. |
-| `transactions[].match_source` | string (optional) | With `match_id`: e.g. `auto` \| `user`. |
-| `transactions[].match_confidence` | string (optional) | With `match_id`: e.g. `exact` \| `within_epsilon`. |
+| `transactions[].match_id` | string (optional) | Shared id linking two legs of an **internal transfer**; distinct from `match_type`. Present only when persisted on the row (otherwise omitted). |
+| `transactions[].match_source` | string (optional) | Present when stored with `match_id`; how the leg was paired, e.g. `auto` or `user`. |
+| `transactions[].match_confidence` | string (optional) | Present when stored with `match_id`; pairing-quality label such as `exact` or `within_epsilon` (not numeric — see **`category_confidence`** for ML score). |
 
 Other documented fields match the example payload (`raw_merchant`, `cluster_id`, `category`, `is_recurring`, `suggested_category`, …). See **`transfer_matching.md`** for semantics of **`match_*`** transfer fields versus **`match_type`**.
 
@@ -472,3 +490,11 @@ Example body when staging cleanup fails **after** lock removal (**`500`** status
 ### Alignment with discovery PRD
 
 Restore semantics are **full overwrite only**: merging backup data with current DynamoDB rows is **explicitly out of scope** unless the PRD is revised.
+
+---
+
+## Appendix: Contract changelog (high level)
+
+Additive changes only unless noted otherwise; clients SHOULD tolerate unknown JSON keys.
+
+- **Transactions — internal transfer fields:** **`GET /api/transactions`** and **`GET /api/transactions/export`** may include optional **`match_id`**, **`match_source`**, and **`match_confidence`** on a row when those attributes exist in storage (paired transfer legs — see [`transfer_matching.md`](./transfer_matching.md)). Rows without internal-transfer metadata omit these keys (not **`null`**). **`match_confidence`** is a string label, not related to **`category_confidence`** (numeric).
