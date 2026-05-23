@@ -4,8 +4,7 @@
  * **Stage order is authoritative** relative to numbered stages in
  * `docs/03_detailed_design/import_transaction_files.md` §4.2. Stages 6–9 are
  * Stage 6 (`buildLedgerSnapshot`) is explicit; stages 7–9 remain in
- * `enrichImportRows`; later issues split PersistPlan and planning without
- * changing externally visible behaviour here.
+ * `enrichImportRows` (returns `PersistPlan`); stage 10 is `persistImportPlan`.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -27,6 +26,7 @@ import { enrichImportRows } from './enrichImportRows';
 import { buildLedgerSnapshot } from './ledgerSnapshot';
 import type { ExtractedImportUpload } from './multipartFile';
 import { parseImportBuffer } from './parseImportBuffer';
+import { persistImportPlan, toImportPersistPlan } from './persistPlan';
 
 export type RunImportOrchestrationParams = Readonly<{
   userId: string;
@@ -116,8 +116,8 @@ export async function executeImportOrchestration(
   const ledgerSnapshot =
     rows.length > 0 ? await buildLedgerSnapshot(userId, repo) : undefined;
 
-  // --- Stages 7–9: Pairing + cluster/categorise + persist intents (`enrichImportRows`). ---
-  const enriched = await enrichImportRows(userId, rows, repo, {
+  // --- Stages 7–9: Pairing + cluster/categorise + build `PersistPlan` (`enrichImportRows`). ---
+  const plan = await enrichImportRows(userId, rows, repo, {
     importAccountId: accountId,
     importCurrency,
     ...(ledgerSnapshot && { ledgerSnapshot }),
@@ -127,11 +127,11 @@ export async function executeImportOrchestration(
   const importCompletedAt = Date.now();
   const displayName = extracted.file.filename?.trim() || 'import';
   const ingestPreview = {
-    rowCount: enriched.summary.importRowCount,
-    knownMerchants: enriched.summary.knownMerchants,
-    unknownMerchants: enriched.summary.unknownMerchants,
-    existingTransactionsUpdated: enriched.existingPatches.length,
-    newClustersTouched: enriched.summary.newClustersTouched,
+    rowCount: plan.summary.importRowCount,
+    knownMerchants: plan.summary.knownMerchants,
+    unknownMerchants: plan.summary.unknownMerchants,
+    existingTransactionsUpdated: plan.existingPatches.length,
+    newClustersTouched: plan.summary.newClustersTouched,
   };
   const transactionFileInput = {
     id: importFileId,
@@ -159,11 +159,7 @@ export async function executeImportOrchestration(
       await repo.persistImportPlanViaStaging(userId, {
         importFileId,
         importStartedAt,
-        plan: {
-          toInsert: enriched.toInsert,
-          existingPatches: enriched.existingPatches,
-          retiredClusterIds: enriched.retiredClusterIds,
-        },
+        plan: toImportPersistPlan(plan),
         transactionFile: transactionFileInput,
         fileCurrency: importCurrency,
       });
@@ -180,25 +176,22 @@ export async function executeImportOrchestration(
       throw e;
     }
   } else {
-    await repo.patchExistingTransactionsAfterImport(
+    // --- Stage 10: Apply persist plan (in-place §8.6). ---
+    const result = await persistImportPlan({
       userId,
-      enriched.existingPatches,
-    );
-    const result = await repo.ingestImportBatch(
-      userId,
-      enriched.toInsert,
+      repo,
+      plan,
       importFileId,
-      importCurrency,
-    );
-    await repo.retireClusterAggregates(userId, enriched.retiredClusterIds);
+      fileCurrency: importCurrency,
+    });
 
     // --- Stage 11: Record `TRANSACTION_FILE` metadata (timing, format, fingerprint). ---
     await repo.recordTransactionFile(userId, {
       ...transactionFileInput,
       result: {
         ...result,
-        existingTransactionsUpdated: enriched.existingPatches.length,
-        newClustersTouched: enriched.summary.newClustersTouched,
+        existingTransactionsUpdated: plan.existingPatches.length,
+        newClustersTouched: plan.summary.newClustersTouched,
       },
     });
 
@@ -210,9 +203,9 @@ export async function executeImportOrchestration(
     rowCount: ingestPreview.rowCount,
     format: detectedFormat,
     fileBytes: extracted.file.buffer.length,
-    existingTransactionsUpdated: enriched.existingPatches.length,
-    newClustersTouched: enriched.summary.newClustersTouched,
-    retiredClusterCount: enriched.retiredClusterIds.length,
+    existingTransactionsUpdated: plan.existingPatches.length,
+    newClustersTouched: plan.summary.newClustersTouched,
+    retiredClusterCount: plan.retiredClusterIds.length,
     staging: repo.isImportStagingEnabled(),
   });
 
@@ -220,8 +213,8 @@ export async function executeImportOrchestration(
     rowCount: ingestPreview.rowCount,
     knownMerchants: ingestPreview.knownMerchants,
     unknownMerchants: ingestPreview.unknownMerchants,
-    existingTransactionsUpdated: enriched.existingPatches.length,
-    newClustersTouched: enriched.summary.newClustersTouched,
+    existingTransactionsUpdated: plan.existingPatches.length,
+    newClustersTouched: plan.summary.newClustersTouched,
     importFileId,
   };
   if (detectedFormat !== 'unknown') {

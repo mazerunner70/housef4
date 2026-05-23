@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import type {
   ExistingTransactionPatch,
   FinanceRepository,
-  ImportTransactionInput,
   TransactionRecord,
   TransferPairingAssignment,
 } from '@housef4/db';
@@ -16,6 +15,7 @@ import {
   type Assignment,
 } from './clusterPipeline';
 import type { LedgerSnapshot } from './ledgerSnapshot';
+import type { PersistPlan } from './persistPlan';
 import { computeIngestTransferPairings } from '../pairing';
 import { createMerchantEmbedder } from './merchantsEmbedder';
 import { cleanMerchantForClustering } from './merchantNormalize';
@@ -98,19 +98,6 @@ function buildExistingPatches(
   return patches;
 }
 
-export type EnrichImportResult = {
-  toInsert: ImportTransactionInput[];
-  existingPatches: ExistingTransactionPatch[];
-  /** CLUSTER# rows to remove after write-back; see `import_transaction_files.md` §7.4. */
-  retiredClusterIds: string[];
-  summary: {
-    importRowCount: number;
-    knownMerchants: number;
-    unknownMerchants: number;
-    newClustersTouched: number;
-  };
-};
-
 export type EnrichImportContext = {
   /** Financial account this file is imported into (`ACCOUNT#…`). */
   importAccountId: string;
@@ -125,7 +112,7 @@ export async function enrichImportRows(
   parsed: ParsedImportRow[],
   repo: FinanceRepository,
   ctx: EnrichImportContext,
-): Promise<EnrichImportResult> {
+): Promise<PersistPlan> {
   if (parsed.length === 0) {
     return {
       toInsert: [],
