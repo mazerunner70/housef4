@@ -4,6 +4,7 @@ import type { ImportPersistPlan, TransactionStatus } from './types';
 export type ClusterAggregateMember = Readonly<{
   raw_merchant: string;
   amount: number;
+  category: string;
   status: TransactionStatus;
   suggested_category?: string | null;
   category_confidence?: number;
@@ -56,11 +57,49 @@ function normalizeFileCurrency(fileCurrency?: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Authoritative post-run category: user/rule `assigned_category` on CLUSTER when set,
+ * else unanimous `category` among CLASSIFIED members (`import_transaction_files.md` §7).
+ */
+export function authoritativeAssignedCategory(
+  members: readonly ClusterAggregateMember[],
+  userAssignedCategory: string | null | undefined,
+): string | null {
+  const stored = userAssignedCategory?.trim();
+  if (stored) return stored;
+  const classified = members.filter((m) => m.status === 'CLASSIFIED');
+  if (classified.length === 0) return null;
+  const first = classified[0].category.trim();
+  if (!first) return null;
+  for (const m of classified) {
+    if (m.category.trim() !== first) return null;
+  }
+  return first;
+}
+
+/**
+ * §7 review-queue predicate: diff vs `previous_category_id` when present; else any
+ * member still `PENDING_REVIEW`.
+ */
+export function computeClusterPendingReview(
+  assignedCategory: string | null,
+  previousCategoryId: string | null | undefined,
+  members: readonly ClusterAggregateMember[],
+): boolean {
+  const prev = previousCategoryId?.trim();
+  if (prev) {
+    return assignedCategory !== prev;
+  }
+  return members.some((m) => m.status === 'PENDING_REVIEW');
+}
+
 export type BuildClusterAggregateOptions = Readonly<{
   fileCurrency?: string;
   assignedCategory?: string | null;
   /** Preserved when not overridden by `fileCurrency`. */
   currency?: string;
+  /** §7 unanimous prior category among existing members before this corpus pass. */
+  previousCategoryId?: string | null;
 }>;
 
 /** Full rebuild of one `CLUSTER#…` item from all member transactions (§8.3). */
@@ -77,7 +116,13 @@ export function buildClusterAggregateItem(
     merchants.push(m.raw_merchant);
   }
 
-  const pending_review = members.some((m) => m.status === 'PENDING_REVIEW');
+  const previousCategoryId = opts.previousCategoryId ?? null;
+  const assigned_category = authoritativeAssignedCategory(members, opts.assignedCategory);
+  const pending_review = computeClusterPendingReview(
+    assigned_category,
+    previousCategoryId,
+    members,
+  );
   const fromFile = normalizeFileCurrency(opts.fileCurrency);
   const clusterCurrency = fromFile ?? opts.currency;
 
@@ -90,7 +135,8 @@ export function buildClusterAggregateItem(
     total_transactions: members.length,
     total_amount,
     suggested_category: bestSuggestedFromMembers(members),
-    assigned_category: opts.assignedCategory ?? null,
+    assigned_category,
+    previous_category_id: previousCategoryId,
     pending_review,
   };
   if (clusterCurrency) {
@@ -110,6 +156,7 @@ export function clusterMembersFromTransactionItems(
     out.push({
       raw_merchant: String(item.raw_merchant ?? ''),
       amount: Number(item.amount ?? 0),
+      category: String(item.category ?? ''),
       status: String(item.status ?? 'PENDING_REVIEW') as TransactionStatus,
       suggested_category:
         item.suggested_category === undefined

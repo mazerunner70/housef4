@@ -43,10 +43,11 @@ function createStubRepo(overrides = {}) {
       repo.lastRetiredClusterIds = clusterIds;
     },
 
-    rebuildClusterAggregatesAfterImport: async (_userId, clusterIds, fileCurrency) => {
+    rebuildClusterAggregatesAfterImport: async (_userId, clusterIds, fileCurrency, clusterHints) => {
       log('rebuildClusterAggregatesAfterImport');
       repo.lastRebuiltClusterIds = clusterIds;
       repo.lastRebuildCurrency = fileCurrency;
+      repo.lastClusterHints = clusterHints;
     },
   };
 
@@ -73,6 +74,7 @@ function samplePlan(overrides = {}) {
     ],
     existingPatches: [{ id: 'txn_old_1', cluster_id: 'CL_xyz', category: 'Food', status: 'PENDING_REVIEW' }],
     retiredClusterIds: ['CL_retired'],
+    clusterHints: { CL_abc: { previousCategoryId: null }, CL_xyz: { previousCategoryId: 'Food' } },
     summary: {
       importRowCount: 1,
       knownMerchants: 1,
@@ -119,6 +121,7 @@ test('persistImportPlan — §8.6 write order patch → ingest → rebuild → r
   assert.deepEqual(repo.lastRetiredClusterIds, plan.retiredClusterIds);
   assert.deepEqual(repo.lastRebuiltClusterIds, ['CL_abc', 'CL_xyz']);
   assert.equal(repo.lastRebuildCurrency, 'USD');
+  assert.deepEqual(repo.lastClusterHints, plan.clusterHints);
   assert.equal(result.rowCount, 1);
   assert.equal(result.knownMerchants, 1);
 });
@@ -164,6 +167,7 @@ test('toImportPersistPlan — projects write intents for staging (§8.7)', () =>
     toInsert: plan.toInsert,
     existingPatches: plan.existingPatches,
     retiredClusterIds: plan.retiredClusterIds,
+    clusterHints: plan.clusterHints,
   });
   assert.equal('summary' in toImportPersistPlan(plan), false);
 });

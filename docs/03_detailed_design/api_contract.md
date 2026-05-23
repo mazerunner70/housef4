@@ -360,6 +360,8 @@ Fetches only clusters needing manual user mapping (Active Learning).
 | `pending_clusters[].currency` | string (optional) | When set, from the import file metadata (e.g. OFX `CURDEF`) for the batch that last updated the cluster aggregate. |
 | `pending_clusters[].previousCategoryId` | string \| null | When **set**, unanimous **prior** transactional **`category`** among **existing** members before this ingest’s reassignment (**`CLUSTER.previous_category_id`** in **[`database/data_model.md`](./database/data_model.md)** §2). **Absent**/`null` when priors disagreed or were empty. Helps the client show “pick a definitive category”—see **[`import_transaction_files.md`](./import_transaction_files.md)** §7. |
 
+Clusters appear in **`pending_clusters`** when the persisted **`CLUSTER#…`** row has **`pending_review: true`**, computed at import rebuild per §7: diff between authoritative **`assigned_category`** and **`previous_category_id`** when the hint is present; otherwise any member transaction still **`PENDING_REVIEW`**.
+
 ## 5. Tag Rule Endpoint
 
 Confirms a match from the review queue.

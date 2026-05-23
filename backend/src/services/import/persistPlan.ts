@@ -12,6 +12,7 @@ import type {
   ImportIngestResult,
   ImportPersistPlan,
   ImportTransactionInput,
+  ClusterAggregateHint,
 } from '@housef4/db';
 import { liveClusterIdsFromImportPlan } from '@housef4/db';
 
@@ -21,6 +22,8 @@ export type PersistPlan = Readonly<{
   existingPatches: ExistingTransactionPatch[];
   /** CLUSTER# rows to remove after write-back; see `import_transaction_files.md` §8.4. */
   retiredClusterIds: string[];
+  /** CLUSTER# hints from stage 9 (`previous_category_id` per §7). */
+  clusterHints: Record<string, ClusterAggregateHint>;
   summary: Readonly<{
     importRowCount: number;
     knownMerchants: number;
@@ -35,6 +38,7 @@ export function toImportPersistPlan(plan: PersistPlan): ImportPersistPlan {
     toInsert: plan.toInsert,
     existingPatches: plan.existingPatches,
     retiredClusterIds: plan.retiredClusterIds,
+    clusterHints: plan.clusterHints,
   };
 }
 
@@ -67,6 +71,7 @@ export async function persistImportPlan(
     userId,
     liveClusterIdsFromImportPlan(plan),
     fileCurrency,
+    plan.clusterHints,
   );
   await repo.retireClusterAggregates(userId, plan.retiredClusterIds);
 

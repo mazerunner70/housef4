@@ -66,6 +66,8 @@ export interface PendingClusterRecord {
   total_transactions: number;
   total_amount: number;
   suggested_category: string | null;
+  /** §7 unanimous prior category hint when set on the CLUSTER aggregate. */
+  previous_category_id?: string | null;
   /** Denormalized from the import batch(es); UI prefers this, then profile default, then USD. */
   currency?: string;
 }
@@ -118,11 +120,19 @@ export interface ImportLockRecord {
   import_started_at?: number;
 }
 
+/** §7 planning hint persisted on `CLUSTER#…` at import commit. */
+export interface ClusterAggregateHint {
+  /** Unanimous prior transactional `category` among existing members; `null` when ambiguous. */
+  previousCategoryId: string | null;
+}
+
 /** Planning output for import persistence (stages 9–10). */
 export interface ImportPersistPlan {
   toInsert: ImportTransactionInput[];
   existingPatches: ExistingTransactionPatch[];
   retiredClusterIds: string[];
+  /** Per live `cluster_id` from stage 9; drives `previous_category_id` on rebuild (§7). */
+  clusterHints?: Record<string, ClusterAggregateHint>;
 }
 
 /** One normalized row produced by import parsing before persistence. */

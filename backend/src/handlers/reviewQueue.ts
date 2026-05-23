@@ -23,6 +23,9 @@ export async function getReviewQueuePayload(userId: string) {
       total_amount: c.total_amount,
       suggested_category: c.suggested_category,
       ...(c.currency && { currency: c.currency }),
+      ...(c.previous_category_id !== undefined && {
+        previousCategoryId: c.previous_category_id,
+      }),
     })),
   };
 }

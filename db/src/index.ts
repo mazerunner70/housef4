@@ -28,6 +28,8 @@ export {
   buildClusterAggregateItem,
   clusterMembersFromTransactionItems,
   liveClusterIdsFromImportPlan,
+  authoritativeAssignedCategory,
+  computeClusterPendingReview,
 } from './clusterAggregates';
 export type {
   BuildClusterAggregateOptions,

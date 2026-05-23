@@ -15,6 +15,7 @@ test('runImportPlanning — zero parsed rows returns empty PersistPlan', async (
     toInsert: [],
     existingPatches: [],
     retiredClusterIds: [],
+    clusterHints: {},
     summary: {
       importRowCount: 0,
       knownMerchants: 0,
@@ -128,4 +129,7 @@ test('runImportPlanning — §6.0 remint retires prior cluster ids on existing r
   assert.notEqual(plan.existingPatches[0].cluster_id, priorClusterId);
   assert.equal(plan.existingPatches[0].cluster_id, plan.toInsert[0].cluster_id);
   assert.ok(plan.retiredClusterIds.includes(priorClusterId));
+
+  const remintedId = plan.toInsert[0].cluster_id;
+  assert.equal(plan.clusterHints[remintedId]?.previousCategoryId, 'Food');
 });
