@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import type {
   ExistingTransactionPatch,
   FinanceRepository,
@@ -103,6 +101,8 @@ export type EnrichImportContext = {
   importAccountId: string;
   /** ISO 4217 when known from the parsed file (transfer pairing only). */
   importCurrency?: string;
+  /** §4.2 stage 5 output; `newTransactionIds[i]` ↔ `parsed[i]`. */
+  newTransactionIds: readonly string[];
   /** §4.2 stage 6 output; required when `parsed.length > 0`. */
   ledgerSnapshot?: LedgerSnapshot;
 };
@@ -130,11 +130,14 @@ export async function enrichImportRows(
   if (!ctx.ledgerSnapshot) {
     throw new Error('enrichImportRows: ledgerSnapshot required when parsed rows exist');
   }
+  if (ctx.newTransactionIds.length !== parsed.length) {
+    throw new Error(
+      'enrichImportRows: newTransactionIds length must match parsed rows',
+    );
+  }
 
   const { transactions: existing, fileIdToAccountId } = ctx.ledgerSnapshot;
-  const newTransactionIds = parsed.map(
-    () => `txn_${randomUUID().replaceAll('-', '')}`,
-  );
+  const newTransactionIds = ctx.newTransactionIds;
 
   const pairingByLegId = computeIngestTransferPairings({
     importAccountId: ctx.importAccountId,

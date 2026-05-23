@@ -3,11 +3,9 @@
  *
  * **Stage order is authoritative** relative to numbered stages in
  * `docs/03_detailed_design/import_transaction_files.md` §4.2. Stages 6–9 are
- * Stage 6 (`buildLedgerSnapshot`) is explicit; stages 7–9 remain in
- * `enrichImportRows` (returns `PersistPlan`); stage 10 is `persistImportPlan`.
+ * Stage 5 (`allocateBatchArtefactIds`) and stage 6 (`buildLedgerSnapshot`) are explicit;
+ * stages 7–9 remain in `enrichImportRows` (returns `PersistPlan`); stage 10 is `persistImportPlan`.
  */
-
-import { randomUUID } from 'node:crypto';
 
 import type { FinanceRepository } from '@housef4/db';
 import { ImportLockConflictError } from '@housef4/db';
@@ -20,6 +18,7 @@ import {
   suggestNegateFromInterest,
   suggestNegateFromPriorImport,
 } from './amountNegation';
+import { allocateBatchArtefactIds } from './allocateBatchIds';
 import { applyImportAmountNegation } from './canonical';
 import { computeImportBlobContentSha256 } from './blobFingerprint';
 import { enrichImportRows } from './enrichImportRows';
@@ -109,8 +108,8 @@ export async function executeImportOrchestration(
   });
   applyImportAmountNegation(rows, amountNegated);
 
-  // --- Stage 5: Allocate batch artefact IDs (`import_file_id`, per-row `transaction_id[]` minted inside planning). ---
-  const importFileId = randomUUID();
+  // --- Stage 5: Allocate batch artefact IDs (`import_file_id`, per-row `transaction_id[]`). ---
+  const { importFileId, transactionIds } = allocateBatchArtefactIds(rows.length);
 
   // --- Stage 6: Load ledger snapshot (`listTransactions` + file→account map). ---
   const ledgerSnapshot =
@@ -120,6 +119,7 @@ export async function executeImportOrchestration(
   const plan = await enrichImportRows(userId, rows, repo, {
     importAccountId: accountId,
     importCurrency,
+    newTransactionIds: transactionIds,
     ...(ledgerSnapshot && { ledgerSnapshot }),
   });
 
