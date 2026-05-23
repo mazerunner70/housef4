@@ -65,3 +65,20 @@ export function requireRestoreStagingTableName(): string {
   }
   return name;
 }
+
+/** Import-staging replica (`lambda_api.tf` → `DYNAMODB_IMPORT_STAGING_TABLE_NAME`). */
+export function requireImportStagingTableName(): string {
+  const name = process.env.DYNAMODB_IMPORT_STAGING_TABLE_NAME?.trim();
+  if (!name) {
+    throw new Error(
+      'DYNAMODB_IMPORT_STAGING_TABLE_NAME must be set when using the import staging table',
+    );
+  }
+  return name;
+}
+
+/** When unset, import persistence uses in-place writes on primary (`import_transaction_files.md` §8.6). */
+export function getImportStagingTableName(): string | undefined {
+  const name = process.env.DYNAMODB_IMPORT_STAGING_TABLE_NAME?.trim();
+  return name || undefined;
+}

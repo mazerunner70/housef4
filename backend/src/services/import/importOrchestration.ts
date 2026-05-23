@@ -10,6 +10,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { FinanceRepository } from '@housef4/db';
+import { ImportLockConflictError } from '@housef4/db';
 
 import { HttpError } from '../../httpError';
 import { getLog } from '../../requestLogContext';
@@ -115,28 +116,17 @@ export async function executeImportOrchestration(
     importCurrency,
   });
 
-  // --- Stage 10: Apply persist plan — patches → ingest → retire (fixed order, §8.1). ---
-  await repo.patchExistingTransactionsAfterImport(
-    userId,
-    enriched.existingPatches,
-  );
-  const result = await repo.ingestImportBatch(
-    userId,
-    enriched.toInsert,
-    importFileId,
-    importCurrency,
-  );
-  await repo.retireClusterAggregates(userId, enriched.retiredClusterIds);
-
-  // --- Stage 11: Record `TRANSACTION_FILE` metadata (timing, format, fingerprint). ---
-  const displayName = extracted.file.filename?.trim() || 'import';
+  // --- Stage 10–12: Persist (§8.7 staging when configured, else §8.6 in-place). ---
   const importCompletedAt = Date.now();
-  const ingest = {
-    ...result,
+  const displayName = extracted.file.filename?.trim() || 'import';
+  const ingestPreview = {
+    rowCount: enriched.summary.importRowCount,
+    knownMerchants: enriched.summary.knownMerchants,
+    unknownMerchants: enriched.summary.unknownMerchants,
     existingTransactionsUpdated: enriched.existingPatches.length,
     newClustersTouched: enriched.summary.newClustersTouched,
   };
-  await repo.recordTransactionFile(userId, {
+  const transactionFileInput = {
     id: importFileId,
     account_id: accountId,
     content_sha256: contentSha256,
@@ -154,25 +144,75 @@ export async function executeImportOrchestration(
       started_at: importStartedAt,
       completed_at: importCompletedAt,
     },
-    result: ingest,
-  });
+    result: ingestPreview,
+  };
+
+  if (repo.isImportStagingEnabled()) {
+    try {
+      await repo.persistImportPlanViaStaging(userId, {
+        importFileId,
+        importStartedAt,
+        plan: {
+          toInsert: enriched.toInsert,
+          existingPatches: enriched.existingPatches,
+          retiredClusterIds: enriched.retiredClusterIds,
+        },
+        transactionFile: transactionFileInput,
+        fileCurrency: importCurrency,
+      });
+    } catch (e) {
+      if (e instanceof ImportLockConflictError) {
+        const message =
+          e.reason === 'restore_in_progress'
+            ? 'Restore in progress; import blocked'
+            : 'Import already in progress';
+        throw new HttpError(409, message, {
+          error: e.reason === 'restore_in_progress' ? 'restore_in_progress' : 'import_in_progress',
+        });
+      }
+      throw e;
+    }
+  } else {
+    await repo.patchExistingTransactionsAfterImport(
+      userId,
+      enriched.existingPatches,
+    );
+    const result = await repo.ingestImportBatch(
+      userId,
+      enriched.toInsert,
+      importFileId,
+      importCurrency,
+    );
+    await repo.retireClusterAggregates(userId, enriched.retiredClusterIds);
+
+    // --- Stage 11: Record `TRANSACTION_FILE` metadata (timing, format, fingerprint). ---
+    await repo.recordTransactionFile(userId, {
+      ...transactionFileInput,
+      result: {
+        ...result,
+        existingTransactionsUpdated: enriched.existingPatches.length,
+        newClustersTouched: enriched.summary.newClustersTouched,
+      },
+    });
+
+    // --- Stage 12: Derive aggregates (`METRICS`). ---
+    await repo.refreshStoredDashboardMetrics(userId);
+  }
 
   log.info('import.complete', {
-    rowCount: result.rowCount,
+    rowCount: ingestPreview.rowCount,
     format: detectedFormat,
     fileBytes: extracted.file.buffer.length,
     existingTransactionsUpdated: enriched.existingPatches.length,
     newClustersTouched: enriched.summary.newClustersTouched,
     retiredClusterCount: enriched.retiredClusterIds.length,
+    staging: repo.isImportStagingEnabled(),
   });
 
-  // --- Stage 12: Derive aggregates (`METRICS`). ---
-  await repo.refreshStoredDashboardMetrics(userId);
-
   const base: Record<string, unknown> = {
-    rowCount: result.rowCount,
-    knownMerchants: result.knownMerchants,
-    unknownMerchants: result.unknownMerchants,
+    rowCount: ingestPreview.rowCount,
+    knownMerchants: ingestPreview.knownMerchants,
+    unknownMerchants: ingestPreview.unknownMerchants,
     existingTransactionsUpdated: enriched.existingPatches.length,
     newClustersTouched: enriched.summary.newClustersTouched,
     importFileId,

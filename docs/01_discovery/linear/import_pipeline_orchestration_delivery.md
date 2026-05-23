@@ -87,6 +87,7 @@ Keep these **out** of the main sequence unless explicitly pulled forward—avoid
 | Issue title | Notes |
 | --- | --- |
 | Persist raw blobs + orphan policy on persist failure | [`import_file_blob_storage.md`](../03_detailed_design/import_file_blob_storage.md), [`import_transaction_files.md` §4.8, §11.2.5](../03_detailed_design/import_transaction_files.md) |
+| **Import staging (now/next) + promote / abort** | [`import_transaction_files.md` §8.7](../03_detailed_design/import_transaction_files.md), [`database/data_model.md` §8.5](../03_detailed_design/database/data_model.md) — **`DYNAMODB_IMPORT_STAGING_TABLE_NAME`**, reuse `userPartition` / restore copy patterns |
 | Import blocked during backup restore lock | **`§11.2.4`** + restore docs alignment |
 | SQS/worker scale-out | **`§4.8`** thresholds |
 | Non-import entry point “start at pairing” | **`§4.6` Q8** |

@@ -6,7 +6,7 @@ phase: Ingestion / analytics
 
 # Internal transfer detection and `pairing_id`
 
-This document specifies how the product **detects money moving between a user’s own accounts** (internal transfers), links the two legs with a shared **`pairing_id`**, and **excludes** those rows from **merchant clustering** and related category assessments. It complements [`import_field_mapping.md`](./import_field_mapping.md) (canonical fields and import profiles), [`import_transaction_files.md`](./import_transaction_files.md) (import pipeline and `cluster_id` lifecycle), [`transaction_analysis_clusters_and_categories.md`](./transaction_analysis_clusters_and_categories.md) (clustering layers), and the physical layout in [`database/data_model.md`](./database/data_model.md).
+This document specifies how the product **detects money moving between a user’s own accounts** (internal transfers), links the two legs with a shared **`pairing_id`**, and **excludes** those rows from **merchant clustering** and related category assessments. It complements [`import_field_mapping.md`](./import_field_mapping.md) (canonical fields and import profiles), [`import_transaction_files.md`](./import_transaction_files.md) (import pipeline, **`cluster_id` lifecycle**, **§8.7** staging promote), [`transaction_analysis_clusters_and_categories.md`](./transaction_analysis_clusters_and_categories.md) (clustering layers), and the physical layout in [`database/data_model.md`](./database/data_model.md).
 
 **Naming note:** The existing transaction field **`match_type`** means **how categorization was matched** (e.g. rule vs ML). Transfer pairing uses **`pairing_id`**, **`pairing_source`**, and **`pairing_confidence`** so **`match_*`** is not overloaded across categorization vs transfers.
 
@@ -173,6 +173,6 @@ This document does **not** specify UI or API for that page; implementation can f
 
 ## 9. References
 
-- [`import_transaction_files.md`](./import_transaction_files.md) — import batch and `cluster_id` writes.
+- [`import_transaction_files.md`](./import_transaction_files.md) — import batch and `cluster_id` writes; **§8.7** import staging (now/next promote).
 - [`transaction_analysis_clusters_and_categories.md`](./transaction_analysis_clusters_and_categories.md) — cluster vs category layers.
 - [`database/data_model.md`](./database/data_model.md) — transaction attributes.

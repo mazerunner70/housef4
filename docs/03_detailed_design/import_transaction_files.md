@@ -61,6 +61,10 @@ This document is the **detailed design** for the server-side import pipeline: **
 | **Retire (a cluster id)**                       | No transaction points to that `cluster_id` after commit; the `**CLUSTER#…`** item is obsolete for live rules and can be pruned or tombstoned per ops policy.                                                                                                                                                                                                                                                                                                                                                                                         |
 | `**LedgerSnapshot`**                            | Read-once view of existing transactions + file→account map for pairing and clustering (orchestration §4.2 stage 6).                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `**PersistPlan`**                               | In-memory outcome of planning: `to_insert[]`, `existing_patches[]`, `retired_cluster_ids[]`, summary—before Dynamo writes.                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `**ImportRollbackManifest`**                    | Pre-persistence snapshots captured at end of planning (§8.6): enough to **compensate** a failed in-place import by restoring DynamoDB (and optional blob) to the pre-run ledger state. **Alternative** to **§8.7** staging.                                                                                                                                                                                                                                                                                                                          |
+| **Now (ledger)**                                | The **committed** user partition on the **primary** DynamoDB table — what read APIs serve before a successful import promote.                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **Next (ledger)**                               | The **materialized post-import** user partition written to the **import staging** table during persistence (**§8.7**); promoted to **now** on success.                                                                                                                                                                                                                                                                                                                                                                                               |
+| `**IMPORT_LOCK`**                               | Primary-table single-flight row (`SYSTEM#IMPORT_LOCK`, **§8.7**) while an import is in flight for that user.                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 
 ---
@@ -92,7 +96,7 @@ The handler should remain **thin**: it delegates to a **top-level module** under
 | 7   | **Transfer pairing**            | Ingest-scoped pairing (`[transfer_matching.md](./transfer_matching.md)`); build `**paired_txn_ids`** for clustering exclusion (**§7** there).                                                                               | `**pairing_by_leg_id`**, `**paired_txn_ids`** (include existing rows that already persist `**pairing_id**`). Code: `backend/src/services/pairing/`.     |
 | 8   | **Cluster & categorise**        | Embeddings, physical grouping (`DBSCAN`-style), cluster **identity**, rule/ML categorisation (`runClusterAndCategoryPipeline`). Paired legs skip merchant clustering.                                                       | Per-row `**Assignment`**; alignment with `sources` / `existingSorted`.                                                                                  |
 | 9   | **Build persist intents**       | Assemble `**ImportTransactionInput`** and `**ExistingTransactionPatch`**; derive `**retired_cluster_ids`**.                                                                                                                 | `**PersistPlan**`.                                                                                                                                      |
-| 10  | **Apply persist plan**          | **Fixed order:** patch existing txs → `ingestImportBatch` (new txs + GSI keys) → `retireClusterAggregates`. **Not reorderable** without compensating design (§4.5).                                                         | Committed txn + cluster state.                                                                                                                          |
+| 10  | **Apply persist plan**          | **Preferred (§8.7):** materialize full post-import partition to **import staging** → validate → promote (delete **this user's** primary partition → copy staging → primary). **Legacy / fallback (§8.6):** in-place patch → ingest → retire on primary with compensating rollback. | Committed txn + cluster state on **primary**.                                                                                                           |
 | 11  | **Record import file metadata** | `recordTransactionFile` (timing, format, result envelope, **blob fingerprint** per **§11.2.1**).                                                                                                                            | `TRANSACTION_FILE` per `[database/data_model.md](./database/data_model.md)`.                                                                            |
 | 12  | **Derive aggregates**           | `refreshStoredDashboardMetrics` (may be **async** if UI shows **last-updated** on metrics).                                                                                                                                 | `METRICS` snapshot.                                                                                                                                     |
 
@@ -123,7 +127,7 @@ flowchart TD
 | Layer           | Stages                                                                                                                                        | Dynamo writes                             |
 | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
 | **Planning**    | **2b** (duplicate blob guard — `**TRANSACTION_FILE` read only**, §11.2.1), 6–9 (aread ledger once; pairing; cluster; build `**PersistPlan`**) | Reads only (plus embedder init inside 8). |
-| **Persistence** | 10–12                                                                                                                                         | Yes, **fixed order**.                     |
+| **Persistence** | 10–12                                                                                                                                         | Yes — **§8.7** staging + promote (preferred) or **§8.6** in-place + compensate. |
 
 
 Target API shape: `**runImportPlanning(…): PersistPlan`** then `**persistImportPlan(repo, plan, …)`** for testability.
@@ -152,7 +156,7 @@ The following are coupling or legacy patterns; they do **not** invalidate the **
 **A1** — HTTP handler delegates to `**backend/src/services/import`** top-level orchestration; **each stage** gets its own submodule where practical.
 
 **Q2 — Error boundaries?**  
-**A2** — **Clear 5xx**; no ambiguous partial success. **Integrity first**; bounded retries only where consistent—document in `[api_contract.md](./api_contract.md)`.
+**A2** — **Clear 5xx**; no ambiguous partial success. **Integrity first**; bounded retries only where consistent—document in `[api_contract.md](./api_contract.md)`. **Preferred:** persist via **now / next staging** (**§8.7**) so **primary stays untouched** until promote; abort clears **only that user's staging partition**. **Fallback:** in-place writes on primary require **compensating rollback** (**§8.6**). Neither path returns **`200`** unless the import is fully committed on primary.
 
 **Q3 — Embedder in tests?**  
 **A3** — **Inject `MerchantEmbedder`**: production uses `createMerchantEmbedder()`; unit tests use a **fixed-dimension stub** or fixture replay; optional rare **golden** integration with Transformers.
@@ -192,7 +196,8 @@ The following are coupling or legacy patterns; they do **not** invalidate the **
 - **Per-stage observability:** CloudWatch stage duration + `import_file_id` correlation?
 - **Row-count ceiling:** When does **SQS/worker** replace single-Lambda planning?
 - **Restore lock:** Import vs `[database/data_model.md](./database/data_model.md)` restore / staging behaviour.
-- **Raw blob timing:** `[import_file_blob_storage.md](./import_file_blob_storage.md)`—persist bytes before/after success; **rollback** of orphaned blobs on stage‑10 failure?
+- **Raw blob timing:** `[import_file_blob_storage.md](./import_file_blob_storage.md)`—write blob **after** staging validates / before or after promote per **§8.7**; **delete on abort** (staging cleared) or **§8.6** compensate.
+- **Persistence strategy:** **§8.7** now/next staging table vs **§8.6** in-place saga — see **§11.2** item **6**.
 
 ---
 
@@ -312,6 +317,208 @@ Splits and merges from [§6](#6-cluster-identity-resolution) reshuffle membershi
 - These rows are **not** part of the clustering algorithm; they exist so clients can list which files were ingested via `**GET /api/transaction-files`**. See `[database/data_model.md](./database/data_model.md)` §3 and `[api_contract.md](./api_contract.md)`.
 - **No migration policy (early):** do not invest in backfills for old `TRANSACTION_FILE` shapes; if items are wrong or pre-date required attributes, **delete them after explicit approval** (or clear non-prod user data) rather than in-place migration—see the **Schema changes / existing data** note in the data model.
 
+### 8.6 Import failure rollback (compensating saga — fallback)
+
+**When to use:** In-place persistence on the **primary** table (today's `patchExistingTransactionsAfterImport` → `ingestImportBatch` → `retireClusterAggregates` path) when an **import staging table** is not configured. **Preferred approach:** **[§8.7](#87-import-staging-now--next-ledger)** — primary stays **now** until promote; no pre-image manifest required for abort-before-promote.
+
+Corpus re-cluster imports are **not append-only**: stage **10** may **patch every existing transaction**, **insert** new rows, and **delete** retired `CLUSTER#…` aggregates. A failure mid-persistence therefore leaves DynamoDB in a **hybrid** state—not fixable by deleting only the new file’s transactions. Rollback must **restore the ledger as it was before stage 10 began**.
+
+#### 8.6.1 Product contract
+
+| Outcome | Client / API |
+| -------- | ------------- |
+| **Success** | `200` + import summary; `TRANSACTION_FILE` row exists; cluster remint committed (**§11.1** item **3**). |
+| **Planning failure** (stages **2–9**) | `4xx` / `5xx`; **no Dynamo writes** from the import batch (except see **§8.6.4** for stage **2** account create). |
+| **Persistence failure** (stages **10–12**) | **`5xx`** after **compensating rollback** completes (or **`5xx`** + ops alert if compensation itself fails). **No** `TRANSACTION_FILE` row for this run. Client treats as “clusters unchanged” (**§11.1** item **3**). |
+
+**Integrity first:** Never return **`200`** unless stages **10–11** (and blob when required) have committed. **`METRICS`** refresh (stage **12**) may fail non-fatally only if dashboard staleness is acceptable and a follow-up refresh is scheduled; otherwise include metrics in the rollback boundary.
+
+#### 8.6.2 Why delete-only is insufficient
+
+Stage **10** today (`importOrchestration.ts`) runs, in order:
+
+1. **`patchExistingTransactionsAfterImport`** — overwrites `cluster_id`, category, embeddings, GSI1, pairing fields on **existing** transactions.
+2. **`ingestImportBatch`** — puts **new** `TRANSACTION` items (scoped by `transaction_file_id` / **GSI2**) and upserts **`CLUSTER#…`** for clusters touched by **new** rows.
+3. **`retireClusterAggregates`** — **deletes** `CLUSTER#…` items whose ids no longer appear on any transaction.
+
+Failure after step **1** or **2** leaves existing rows pointing at **minted** cluster ids while old aggregates may still exist—or, after step **3**, deleted aggregates cannot be recreated without a snapshot. **Deleting new file transactions alone does not revert re-cluster patches.**
+
+#### 8.6.3 `ImportRollbackManifest` (capture at end of planning)
+
+Extend **`PersistPlan`** (stage **9**) with a manifest built from the same **`LedgerSnapshot`** used for planning—**before any stage 10 write**:
+
+| Field | Source | Used to |
+| ----- | ------ | ------- |
+| `import_file_id` | stage **5** | Delete new txns via **GSI2**; skip if file row never written. |
+| `new_transaction_ids[]` | `to_insert[]` | Idempotent delete of inserted rows. |
+| `new_cluster_ids[]` | distinct `cluster_id` in `to_insert[]` **and** in `existing_patches[]` (all **minted** this run) | Delete orphan **`CLUSTER#…`** created or overwritten during ingest. |
+| `pre_patch_transactions[]` | full **`TransactionRecord`** (or Dynamo item) for each id in `existing_patches[]` | **Put** back prior field values (`cluster_id`, category, status, GSI1, embeddings, pairing, …). |
+| `pre_retired_cluster_items[]` | full items for each id in `retired_cluster_ids[]` | **Put** back **`CLUSTER#…`** rows deleted in `retireClusterAggregates`. |
+| `created_account_id?` | stage **2** when `createAccount` ran | Delete empty account on rollback (**§8.6.4**). |
+| `blob_ref?` | after blob **`Put`** (when enabled) | Compensating **`DeleteObject`** / unlink ([`import_file_blob_storage.md`](./import_file_blob_storage.md) §8). |
+| `persist_checkpoint` | enum of last **successful** sub-step | Idempotent retry of compensation after Lambda timeout. |
+
+**Cluster snapshots:** For every id in `retired_cluster_ids[]`, **`BatchGet`** the live `CLUSTER#…` item during planning (same pass as **`LedgerSnapshot`**). Optionally snapshot **`CLUSTER#…`** for ids in `new_cluster_ids[]` that **pre-existed** (merge into an existing aggregate) if ingest overwrites them—today rare under **§6.0** remint but required for correctness if ids collide.
+
+**Metrics:** Do **not** snapshot **`METRICS`**; after successful compensation call **`refreshStoredDashboardMetrics`** (derived from transactions).
+
+#### 8.6.4 Compensation procedure (`compensateFailedImport`)
+
+Run in a **`try/finally`** around stages **10–12** (or dedicated `persistImportPlan` wrapper). On any thrown error after the first persist write, execute **reverse effects** in this order (safe if some steps were never reached—each op is idempotent):
+
+```mermaid
+flowchart TD
+  F[Persistence failure detected] --> A[Delete TRANSACTION_FILE if present]
+  A --> B[Delete blob if blob_ref set]
+  B --> C[Delete new TRANSACTION rows by import_file_id / ids]
+  C --> D[Delete new CLUSTER aggregates new_cluster_ids]
+  D --> E[Put pre_retired_cluster_items]
+  E --> F2[Put pre_patch_transactions restore]
+  F2 --> G[Delete created_account_id if unused]
+  G --> H[refreshStoredDashboardMetrics]
+  H --> R[Re-throw 5xx to client]
+```
+
+1. **`deleteTransactionFile`** — only if stage **11** completed.
+2. **`ImportBlobStore.delete`** — if blob was written ([`import_file_blob_storage.md`](./import_file_blob_storage.md): blob **after** stage **10** success, not before parse).
+3. **`deleteTransactionsByImportFileId`** / batch delete by `new_transaction_ids` — removes file-scoped inserts (**GSI2** query + primary keys).
+4. **`deleteClusterAggregates(new_cluster_ids)`** — remove minted aggregates; skip ids also listed in `pre_retired_cluster_items` until step **5** restores old rows.
+5. **`putClusterItems(pre_retired_cluster_items)`** — restore deleted **`CLUSTER#…`**.
+6. **`putTransactions(pre_patch_transactions)`** — full item restore for patched existing rows (not inverse patches—**authoritative pre-image**).
+7. **`deleteAccount(created_account_id)`** — only if stage **2** created an account **and** it has no other transactions/files (otherwise leave account; document in ops logs).
+8. **`refreshStoredDashboardMetrics`**.
+
+Update **`persist_checkpoint`** after each successful sub-step so a **second** Lambda invocation or retry does not double-delete or skip restore.
+
+#### 8.6.5 Write ordering and checkpoints
+
+The stage **10** order (**patch → ingest → retire**) is retained for referential integrity (**§4.5**, **§8.1**). Rollback does **not** depend on reordering writes; it depends on the **manifest**.
+
+Track checkpoints:
+
+| Checkpoint | After |
+| ---------- | ----- |
+| `patched_existing` | `patchExistingTransactionsAfterImport` |
+| `ingested_new` | `ingestImportBatch` |
+| `retired_clusters` | `retireClusterAggregates` |
+| `recorded_file` | `recordTransactionFile` |
+| `blob_stored` | blob **`Put`** (when enabled) |
+| `metrics_refreshed` | `refreshStoredDashboardMetrics` |
+
+Compensation uses the checkpoint to undo **only** what ran. Example: failure during **`ingestImportBatch`** after partial batch write → delete any inserted txns/clusters for this `import_file_id`, then **`putTransactions(pre_patch_transactions)`**.
+
+#### 8.6.6 Concurrency, idempotency, and ops
+
+- **Single-flight per user** (**§11.2** item **1**): required so no concurrent import mutates the ledger while compensation runs.
+- **Idempotent compensation:** Safe to run twice (e.g. after timeout); keyed by `import_file_id`.
+- **Compensation failure:** Log **`import.compensation_failed`** with manifest + checkpoint; surface **`5xx`**; ops may restore from **`GET /api/backup/export`** snapshot taken before import (manual) or replay compensation.
+- **No TransactWriteItems for full batch:** Item counts exceed DynamoDB transaction limits; saga + manifest is the MVP pattern. Optional later: chunk transacts for small imports only.
+
+#### 8.6.7 Implementation targets
+
+| Layer | Responsibility |
+| ----- | -------------- |
+| Planning (`runImportPlanning` / `enrichImportRows`) | Build **`ImportRollbackManifest`** alongside **`PersistPlan`**. |
+| `persistImportPlan(repo, plan, manifest, …)` | Checkpoints, **`try/catch`**, invoke **`compensateFailedImport`**. |
+| `db/` | `compensateFailedImport`, bulk delete by **GSI2**, full-item **`Put`** restore helpers; optional `deleteAccountIfEmpty`. |
+| Blob | **`ImportBlobStore.delete`** on compensation ([`import_file_blob_storage.md`](./import_file_blob_storage.md)). |
+| `[api_contract.md](./api_contract.md)` | Document **`5xx`** = no durable import; no partial success body. |
+
+**Target API shape:** `runImportPlanning(…) → { plan: PersistPlan, rollback: ImportRollbackManifest }` then `persistImportPlan(repo, plan, rollback, …)` as in **§4.3**.
+
+### 8.7 Import staging (now / next ledger)
+
+**Decision (persistence):** Corpus re-cluster produces a **full desired ledger** (every transaction, every live `CLUSTER#…`, `FILE#…`, accounts, optional `METRICS`) — not a small delta. Write that outcome to a **dedicated import staging DynamoDB table** (**next**), validate it, then **promote** to **primary** (**now**) by partition-scoped delete + copy. Reuses the same **per-user partition** patterns as backup restore ([`database/data_model.md`](./database/data_model.md) §8.2, `db/src/userPartition.ts`, `db/src/backupRestore.ts`).
+
+#### 8.7.1 Roles
+
+| Slot | Table | Scope | Read APIs |
+| ---- | ----- | ----- | --------- |
+| **Now** | **Primary** (`DYNAMODB_TABLE_NAME`) | `PK = USER#<user_id>` — committed ledger | All **`GET`** paths until promote completes |
+| **Next** | **Import staging** (`DYNAMODB_IMPORT_STAGING_TABLE_NAME`) | **Same** `PK`/`SK`/GSI layout; **only** this user's rows during an in-flight import | Internal / validation only — **not** exposed to clients |
+
+**Concurrent users:** User A's import writes **`PK = USER#A`** on staging; user B's import writes **`PK = USER#B`**. **Abort**, **promote**, and **clear staging** always mean **paginated `Query` + batch delete/copy for that user id only** — never a full-table scan or wipe. Same rule for **primary** deletes during promote: **only** `PK = USER#<user_id>` application items (exclude lock rows — **§8.7.3**).
+
+**Same user:** Overlapping imports remain **blocked** by **`IMPORT_LOCK`** (**§11.2** item **1**) — not by table-level locking.
+
+#### 8.7.2 Workflow
+
+```mermaid
+flowchart TD
+  P[Planning reads NOW from primary] --> L[Acquire IMPORT_LOCK on primary]
+  L --> M[Materialize full post-import partition to staging NEXT]
+  M --> V[Validate staging partition for this user]
+  V -->|fail| A[Clear this user staging partition release lock 5xx]
+  V -->|ok| B[Optional blob Put]
+  B --> D[Delete this user ledger items on primary except locks]
+  D --> C[BatchWrite copy staging to primary with retries]
+  C --> S[Clear this user staging partition]
+  S --> R[refreshStoredDashboardMetrics release lock 200]
+```
+
+| Step | Action | Primary (now) | Staging (next) |
+| ---- | ------ | ------------- | -------------- |
+| 0 | **`runImportPlanning`** (stages **2–9**) | Read only | — |
+| 1 | **`acquireImportLock`** conditional **`PutItem`** | **`IMPORT_LOCK`** row | — |
+| 2 | **`clearImportStagingPartition(userId)`** | — | Delete all `PK = USER#<uid>` (idempotent) |
+| 3 | **`materializeImportPlanToStaging`** | — | **`BatchWriteItem` Put** full post-import item set (transactions with **`GSI1*`/`GSI2*`**, all **`CLUSTER#…`**, new **`FILE#…`**, accounts, `PROFILE`, optional `METRICS`) — same keys they will use on primary |
+| 4 | **`validateStagingImportPartition`** | — | Counts, referential integrity, sample **`GSI*`** presence |
+| 5 | **Blob `Put`** (when enabled) | — | After validation; see [`import_file_blob_storage.md`](./import_file_blob_storage.md) |
+| 6 | **`promoteImportStagingToPrimary`** | Paginated delete ledger SK prefixes for **this user only** (exclude **`SYSTEM#IMPORT_LOCK`**, **`SYSTEM#RESTORE_LOCK`**) | — |
+| 7 | **Copy** | **`BatchWriteItem` Put** from staging query (**this user**) | Source of truth until copy verified |
+| 8 | **`clearImportStagingPartition(userId)`** | — | Delete **this user's** staging partition |
+| 9 | **`refreshStoredDashboardMetrics`**, **`releaseImportLock`**, return **`200`** | Committed **now** | Empty for this user |
+
+**Materialization:** Prefer one pure function **`persistPlanToDynamoItems(plan, ledgerSnapshot, …): Item[]`** over three ordered mutators on primary — easier to test and identical item shapes on staging and primary.
+
+**Zero-row imports:** Still materialize partition state (existing txns after re-cluster, clusters, new empty batch metadata if applicable) when planning touches the corpus; **`200`** + **`TRANSACTION_FILE`** when product requires history for empty files.
+
+#### 8.7.3 `IMPORT_LOCK` (primary only)
+
+Mirror **`RESTORE_LOCK`** ([`database/data_model.md`](./database/data_model.md) §8.2a):
+
+| Key | Value |
+| --- | ----- |
+| `PK` | `USER#<user_id>` |
+| `SK` | **`SYSTEM#IMPORT_LOCK`** (add constant in `db/src/keys.ts`) |
+
+**Attributes (suggested):** `entity_type: IMPORT_LOCK`, `import_file_id`, `import_started_at` (epoch ms). **Do not** replicate lock rows onto staging.
+
+**Mutual exclusion:** **`IMPORT_LOCK`** ⟂ **`RESTORE_LOCK`** ⟂ second import (**`409 Conflict`**). **`POST /api/imports`** while restore lock held → **`409`** (document in [`api_contract.md`](./api_contract.md)).
+
+#### 8.7.4 Abort and failure
+
+| Phase | Primary | Staging | Client |
+| ----- | ------- | ------- | ------ |
+| Before promote (steps **1–5**) | Unchanged (except lock) | Cleared on abort | **`5xx`** — ledger unchanged |
+| Promote: after primary delete, copy incomplete | **Partial** for **this user only** | **Full next retained** | **`5xx`** — retry promote from staging |
+| After successful promote | Committed | Cleared for this user | **`200`** |
+
+**Abort (`POST /api/imports/abort` — optional V1):** Same order as restore abort — **`DeleteItem` `IMPORT_LOCK` first**, then **`clearImportStagingPartition(userId)`**. Does not repair a **partial primary** after promote delete; ops / resumable promote playbook (below).
+
+**Copy reliability:** DynamoDB **`BatchWriteItem` Put** with exponential backoff (see `batchWriteItemsParallel` in `backupRestore.ts`) is **very unlikely to fail** at MVP corpus sizes after retries. The meaningful promote risk is **Lambda / HTTP timeout** after primary delete for **this user** — not sustained Dynamo throttling. **Mitigation:** keep **this user's staging partition** until primary copy **and** optional count verification succeed; **`IMPORT_LOCK`** held → **`409`** on new imports; **idempotent retry** of copy from staging.
+
+#### 8.7.5 Comparison with §8.6
+
+| | **§8.7 Staging** | **§8.6 Saga** |
+| --- | --- | --- |
+| Primary during import | **Read-only** (now) | Mutated in place |
+| Failure before commit | Clear **user's** staging | Compensate with manifest |
+| Write amplification | ~2× (staging + copy) | ~1× (+ undo cost on failure) |
+| Code reuse | `userPartition`, restore copy | New compensate helpers |
+| Infra | Second table + env var | Primary only |
+
+#### 8.7.6 Implementation targets
+
+| Layer | Responsibility |
+| ----- | -------------- |
+| `db/` | `UserPartitionDataset`: add **`import_staging`**; `materializeImportPlanToStaging`, `validateStagingImportPartition`, `promoteImportStagingToPrimary`, `runImportAbortWorkflow`; reuse `batchWriteItemsParallel` / `deleteUserPartition`. |
+| `infrastructure/` | **`aws_dynamodb_table.import_staging`** — same schema as primary; name pattern **`…-imports-in-progress`**; Lambda env **`DYNAMODB_IMPORT_STAGING_TABLE_NAME`**. |
+| `backend/` | Orchestration stages **10–11** call staging workflow; **`primaryDeleteStarted`** flag like restore. |
+| Docs | [`database/data_model.md`](./database/data_model.md) §8.5, [`api_contract.md`](./api_contract.md), [`backend_dev_and_prod_environments.md`](./backend_dev_and_prod_environments.md). |
+
+**Target API shape:** `runImportPlanning(…) → PersistPlan` then `persistImportPlanViaStaging(repo, plan, …)` wrapping **§8.7.2**.
+
 ---
 
 ## 9. Split / merge detection (implementation note)
@@ -385,11 +592,13 @@ Clients format `**priorImportCompletedAt`** in local time for display and cross-
   **Decision:** **Out of scope** for current milestone; single-Lambda planning remains until thresholds in §4.8 drive a redesign.
    `**Still needed`:** None for MVP.
 4. **Import during backup restore / table lock**
-  **Decision:** **Block** imports while restore lock or staging rules apply; surface a **clear error** (document env and behaviour with `[database/data_model.md](./database/data_model.md)` / restore docs when implemented).
-   `**Still needed`:** Wire to actual lock flag or API guard; document in `[api_contract.md](./api_contract.md)`.
+  **Decision:** **Block** imports while **`RESTORE_LOCK`** is held and block restore while **`IMPORT_LOCK`** is held; surface **`409 Conflict`**. Document env and behaviour with `[database/data_model.md](./database/data_model.md)` §8.5a / §8.2a and `[api_contract.md](./api_contract.md)`.
+   `**Still needed`:** Wire to actual lock flags in handlers.
 5. **Raw file blob storage vs persist-plan failure**
-  **Decision:** **Persist uploaded files** (see `[import_file_blob_storage.md](./import_file_blob_storage.md)`) so a **full re-import** or recovery is possible in future releases.
-   `**Still needed`:** Policy when **persist plan** fails after upload (**delete orphaned blob**, **retain for ops**, TTL); reference §4.8 “rollback of orphaned blobs.”
+  **Decision:** **Persist uploaded files** (see `[import_file_blob_storage.md](./import_file_blob_storage.md)`) so a **full re-import** or recovery is possible in future releases. Write blob **after** staging validates (**§8.7**) or in-place stage **10** success; on failure, **delete** blob when aborting staging or during **§8.6** compensation. Do **not** retain orphaned blobs for failed imports in MVP.
+6. **Import persistence: staging vs in-place saga**
+  **Decision:** **Prefer §8.7** (dedicated **import staging** table, now/next promote) for strong error protection — primary untouched until promote; per-user partition scope on both tables. **§8.6** compensating saga remains the **fallback** when import staging is not configured (e.g. early local dev). Physical layout and env vars: [`database/data_model.md`](./database/data_model.md) §8.5.
+   `**Still needed`:** Terraform table, `DYNAMODB_IMPORT_STAGING_TABLE_NAME`, repository promote/abort paths, optional **`POST /api/imports/abort`**.
 
 ---
 
@@ -408,7 +617,7 @@ Clients format `**priorImportCompletedAt`** in local time for display and cross-
 | `[import_field_mapping.md](./import_field_mapping.md)`                                                 | Upstream: file → parsed row.                                                                                                                                                                                    |
 | `[transfer_matching.md](./transfer_matching.md)`                                                       | Pairing + clustering exclusion.                                                                                                                                                                                 |
 | `[api_contract.md](./api_contract.md)`                                                                 | Wire types and import response.                                                                                                                                                                                 |
-| `[database/data_model.md](./database/data_model.md)`                                                   | DynamoDB attributes, `**GSI1`**, `**CLUSTER#…**`, `**FILE#` / `TRANSACTION_FILE`; keep `**cluster_id**` + `**GSI1**` aligned with **§6.5–§8.2 in this doc** (opaque persisted string once migrations complete). |
+| `[database/data_model.md](./database/data_model.md)`                                                   | DynamoDB attributes, `**GSI1`**, `**CLUSTER#…**`, `**FILE#` / `TRANSACTION_FILE`, **§8.5** import staging + **`IMPORT_LOCK`**; keep `**cluster_id**` + `**GSI1**` aligned with **§6.5–§8.2 in this doc**. |
 | `[transaction_analysis_clusters_and_categories.md](./transaction_analysis_clusters_and_categories.md)` | Business rules and ML context; must stay consistent on cluster meaning.                                                                                                                                         |
 | `[import_file_blob_storage.md](./import_file_blob_storage.md)`                                         | Optional raw file blob storage.                                                                                                                                                                                 |
 | `[../02_architecture/02_data_flow.md](../02_architecture/02_data_flow.md)`                             | Where import sits in the system story.                                                                                                                                                                          |

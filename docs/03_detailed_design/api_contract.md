@@ -86,6 +86,16 @@ When the multipart **`file`** bytes match **`content_sha256`** of a **`TRANSACTI
 | `priorImportFileName` | string | Filename (or default label) stored on the prior **`TRANSACTION_FILE.source.name`**. |
 | `priorImportCompletedAt` | number | Epoch **ms** UTC — prior **`timing.completed_at`**; align with **`GET /api/transaction-files`**. |
 
+### Import persistence failure (`5xx`)
+
+When the server cannot **fully commit** an import to the **primary** table, **`POST /api/imports`** returns **`5xx`** (generic error body unless a dedicated shape is added later). **No** new **`TRANSACTION_FILE`** row for that attempt. Clients treat **`5xx`** and timeouts as **“ledger unchanged”** for cluster/cache purposes — same as **`409 duplicate_blob`** (**§ SPA client obligations** below).
+
+**Preferred implementation** ([`import_transaction_files.md`](./import_transaction_files.md) **§8.7**): materialize the post-import ledger on a **per-user import-staging partition** (**next**), then **promote** to primary (**now**). Failure **before promote** clears **only that user's** staging partition; primary is untouched. **Fallback** (**§8.6**): in-place primary writes with compensating rollback.
+
+**Concurrent import (`409 Conflict`):** While **`IMPORT_LOCK`** (`SYSTEM#IMPORT_LOCK` on primary — [`database/data_model.md`](./database/data_model.md) §8.5a) is held for this user, a second **`POST /api/imports`** returns **`409`**. Same while **`RESTORE_LOCK`** is held (restore in progress).
+
+**Optional abort:** **`POST /api/imports/abort`** (when implemented) clears **`IMPORT_LOCK`** **first**, then deletes **this user's** import-staging partition only — mirror restore abort ([§6 **`POST /api/backup/restore/abort`**](#6-backup-and-restore)). Partial failure after lock cleared but staging not drained: retry abort (**idempotent**).
+
 ### Raw file archival (`IMPORT_BLOB_BACKEND`)
 
 When blob storage is **`filesystem`** or **`s3`** ([`import_file_blob_storage.md`](./import_file_blob_storage.md)), the server attempts to persist upload bytes and attach an optional **`blob`** map on the **`TRANSACTION_FILE`** row.

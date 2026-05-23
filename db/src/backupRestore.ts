@@ -291,7 +291,7 @@ async function flushBatchWritePut(
   }
 }
 
-async function batchWriteItemsParallel(
+export async function batchWriteItemsParallel(
   doc: DynamoDBDocumentClient,
   table: string,
   items: Record<string, unknown>[],

@@ -109,6 +109,22 @@ export interface RestoreLockRecord {
   backup_schema_version?: number;
 }
 
+/** Transient marker on primary table during import staging promote (`import_transaction_files.md` §8.7.3). */
+export interface ImportLockRecord {
+  entity_type: 'IMPORT_LOCK';
+  user_id: string;
+  import_file_id?: string;
+  /** Epoch ms UTC. */
+  import_started_at?: number;
+}
+
+/** Planning output for import persistence (stages 9–10). */
+export interface ImportPersistPlan {
+  toInsert: ImportTransactionInput[];
+  existingPatches: ExistingTransactionPatch[];
+  retiredClusterIds: string[];
+}
+
 /** One normalized row produced by import parsing before persistence. */
 export interface ImportTransactionInput {
   /** Must match the `userId` passed to `ingestImportBatch`. */

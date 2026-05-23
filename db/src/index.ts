@@ -12,7 +12,19 @@ export {
   validateBackupSnapshotForRestore,
 } from './backupRestore';
 export type { RunRestoreBackupWorkflowOptions } from './backupRestore';
-export { getDocumentClient, requireRestoreStagingTableName, requireTableName } from './dynamoClient';
+export {
+  ImportAbortStagingCleanupError,
+  IMPORT_ABORT_STAGING_CLEANUP_CODE,
+  runImportAbortWorkflow,
+  runImportStagingWorkflow,
+} from './importStaging';
+export type { RunImportStagingWorkflowInput } from './importStaging';
+export {
+  materializeImportPlanToItems,
+  validateMaterializedImportStaging,
+} from './importMaterialize';
+export type { MaterializeImportPlanInput } from './importMaterialize';
+export { getDocumentClient, getImportStagingTableName, requireImportStagingTableName, requireRestoreStagingTableName, requireTableName } from './dynamoClient';
 export {
   HEALTH_CHECK_PK,
   HEALTH_CHECK_SK,

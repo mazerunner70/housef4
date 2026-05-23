@@ -93,6 +93,14 @@ function createStubRepo(overrides = {}) {
     refreshStoredDashboardMetrics: async () => {
       log('refreshStoredDashboardMetrics');
     },
+
+    isImportStagingEnabled: () =>
+      overrides.importStagingEnabled ?? false,
+
+    persistImportPlanViaStaging: async (_userId, input) => {
+      log('persistImportPlanViaStaging');
+      repo.lastStagingPersist = input;
+    },
   };
 
   return repo;
@@ -245,4 +253,20 @@ test('executeImportOrchestration — missing account selector returns 400', asyn
   );
 
   assert.deepEqual(repo.callLog, []);
+});
+
+test('executeImportOrchestration — staging path uses persistImportPlanViaStaging (no in-place writes)', async () => {
+  const extracted = zeroRowExtracted();
+  const repo = createStubRepo({ importStagingEnabled: true });
+  const userId = 'user-orchestration-staging';
+
+  await executeImportOrchestration({ userId, repo, extracted });
+
+  assert.ok(repo.callLog.includes('persistImportPlanViaStaging'));
+  assert.ok(!repo.callLog.includes('patchExistingTransactionsAfterImport'));
+  assert.ok(!repo.callLog.includes('ingestImportBatch'));
+  assert.ok(!repo.callLog.includes('recordTransactionFile'));
+  assert.ok(!repo.callLog.includes('refreshStoredDashboardMetrics'));
+  assert.equal(repo.lastStagingPersist.importFileId, repo.lastStagingPersist.transactionFile.id);
+  assert.equal(repo.lastStagingPersist.transactionFile.content_sha256, computeImportBlobContentSha256(extracted.file.buffer));
 });

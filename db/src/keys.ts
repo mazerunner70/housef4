@@ -19,6 +19,8 @@ export const PROFILE_SK = 'PROFILE';
 export const METRICS_SK = 'METRICS';
 /** In-progress restore lock; `entity_type`: `RESTORE_LOCK` (see `data_model.md` 8.2a). */
 export const RESTORE_LOCK_SK = `${SYSTEM_PREFIX}RESTORE_LOCK`;
+/** In-progress import lock; `entity_type`: `IMPORT_LOCK` (see `data_model.md` 8.5a). */
+export const IMPORT_LOCK_SK = `${SYSTEM_PREFIX}IMPORT_LOCK`;
 
 export function userPk(userId: string): string {
   return `${USER_PREFIX}${userId}`;

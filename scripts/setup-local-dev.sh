@@ -36,6 +36,7 @@ VITE_PORT="${VITE_PORT:-5173}"
 API_PORT="${PORT:-3000}"
 TABLE="${DYNAMODB_TABLE_NAME:-housef4-local-table}"
 RESTORE_STAGING="${DYNAMODB_RESTORE_STAGING_TABLE_NAME:-housef4-local-restores-in-progress}"
+IMPORT_STAGING="${DYNAMODB_IMPORT_STAGING_TABLE_NAME:-housef4-local-imports-in-progress}"
 DDB_URL="${DYNAMODB_ENDPOINT:-http://localhost:8000}"
 
 echo
@@ -56,6 +57,7 @@ echo
 echo "    Terminal 1 — backend (use same user id as frontend .env.development):"
 echo "      export DYNAMODB_TABLE_NAME=${TABLE} \\"
 echo "        DYNAMODB_RESTORE_STAGING_TABLE_NAME=${RESTORE_STAGING} \\"
+echo "        DYNAMODB_IMPORT_STAGING_TABLE_NAME=${IMPORT_STAGING} \\"
 echo "        DYNAMODB_ENDPOINT=${DDB_URL} DEV_AUTH_USER_ID=local-dev APP_ENV=local PORT=${API_PORT}"
 echo "      pnpm --filter @housef4/backend run start:local"
 echo

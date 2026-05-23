@@ -6,7 +6,7 @@ phase: High-Level Architecture
 
 # Data Flow: Ingestion & Active Learning
 
-This diagram illustrates the core MVP workflow: how a user uploads data, how the system parses it and attempts automated mapping, and how the review queue supports active learning. **HTTP paths, methods, and JSON field names follow [`docs/03_detailed_design/api_contract.md`](../03_detailed_design/api_contract.md)** (dates in JSON are **epoch milliseconds UTC**, not ISO strings). **DynamoDB keys, entity types, and GSI1** for what gets stored are defined in [`docs/03_detailed_design/database/data_model.md`](../03_detailed_design/database/data_model.md). **Import and cluster-identity** behaviour (re-cluster, carry/split/merge, write-back) is in [`docs/03_detailed_design/import_transaction_files.md`](../03_detailed_design/import_transaction_files.md).
+This diagram illustrates the core MVP workflow: how a user uploads data, how the system parses it and attempts automated mapping, and how the review queue supports active learning. **HTTP paths, methods, and JSON field names follow [`docs/03_detailed_design/api_contract.md`](../03_detailed_design/api_contract.md)** (dates in JSON are **epoch milliseconds UTC**, not ISO strings). **DynamoDB keys, entity types, and GSI1** for what gets stored are defined in [`docs/03_detailed_design/database/data_model.md`](../03_detailed_design/database/data_model.md). **Import and cluster-identity** behaviour (re-cluster, carry/split/merge, write-back, **§8.7 now/next import staging**) is in [`docs/03_detailed_design/import_transaction_files.md`](../03_detailed_design/import_transaction_files.md).
 
 The off-line ML environment (per transaction-analysis design) stays out of the hot request path to avoid expensive cloud iteration loops.
 
@@ -27,6 +27,7 @@ sequenceDiagram
 
     Note over API, DB: 2. Categorization & persistence
     API->>DB: Query user's clusters / rules as needed
+    Note right of API: Preferred §8.7: materialize post-import ledger to import-staging (next), validate, promote per-user partition to primary (now). See import_transaction_files.md §8.7.
     alt Known / confident match
         API->>DB: Put txn (status CLASSIFIED, category set)
     else Ambiguous / new merchant

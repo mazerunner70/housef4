@@ -1,6 +1,6 @@
 # Import field mapping (CSV, OFX, QFX, QIF)
 
-Design note for mapping bank and PFM exports into the application’s normalized transaction model. Complements [`api_contract.md`](./api_contract.md) (`POST /api/imports`, `GET /api/transaction-files`) and the frontend `Transaction` type. After a successful import, row data and cluster aggregates are persisted as in [`database/data_model.md`](./database/data_model.md) (transactions, `CLUSTER#` items, profile); the server also stores one **`TRANSACTION_FILE`** item per run (import history: `source`, `format`, `timing`, `result` — see data model §3). **Downstream of parse:** how embeddings, `cluster_id` resolution, splits, merges, and write-back work is specified in [`import_transaction_files.md`](./import_transaction_files.md).
+Design note for mapping bank and PFM exports into the application’s normalized transaction model. Complements [`api_contract.md`](./api_contract.md) (`POST /api/imports`, `GET /api/transaction-files`) and the frontend `Transaction` type. After a successful import, row data and cluster aggregates are persisted as in [`database/data_model.md`](./database/data_model.md) (transactions, `CLUSTER#` items, profile); the server also stores one **`TRANSACTION_FILE`** item per run (import history: `source`, `format`, `timing`, `result` — see data model §3). **Downstream of parse:** how embeddings, `cluster_id` resolution, splits, merges, write-back, and **import staging promote** (**§8.7**) work is specified in [`import_transaction_files.md`](./import_transaction_files.md).
 
 ---
 

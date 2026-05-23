@@ -24,6 +24,8 @@ import {
 } from './keys';
 import { getDocumentClient, requireTableName } from './dynamoClient';
 import { runRestoreAbortWorkflow, runRestoreBackupWorkflow } from './backupRestore';
+import { runImportStagingWorkflow, runImportAbortWorkflow } from './importStaging';
+import { getImportStagingTableName } from './dynamoClient';
 import { collectUserPartitionItems } from './userPartition';
 import { formatTransactionsAsCsv } from './transactionCsvExport';
 import {
@@ -42,6 +44,7 @@ import {
   type DuplicateBlobImportMatch,
   type ExistingTransactionPatch,
   type ImportIngestResult,
+  type ImportPersistPlan,
   type ImportTransactionInput,
   type MetricsSnapshot,
   type PendingClusterRecord,
@@ -364,6 +367,26 @@ export interface FinanceRepository {
    * On staging cleanup failure after lock handling, rejects with `RestoreAbortStagingCleanupError`.
    */
   abortRestoreCleanup(userId: string): Promise<{ restore_lock_cleared: boolean }>;
+  /**
+   * §8.7 — materialize post-import partition to import staging, validate, promote to primary.
+   * Requires `DYNAMODB_IMPORT_STAGING_TABLE_NAME`. Includes `TRANSACTION_FILE` row and metrics refresh.
+   */
+  persistImportPlanViaStaging(
+    userId: string,
+    input: {
+      importFileId: string;
+      importStartedAt: number;
+      plan: ImportPersistPlan;
+      transactionFile: TransactionFileInput;
+      fileCurrency?: string;
+    },
+  ): Promise<void>;
+  /**
+   * Clear import lock on primary then import-staging partition (optional abort endpoint).
+   */
+  abortImportCleanup(userId: string): Promise<{ import_lock_cleared: boolean }>;
+  /** Whether import staging table env is configured (§8.7 vs §8.6 in-place fallback). */
+  isImportStagingEnabled(): boolean;
 }
 
 interface ClusterItem {
@@ -1619,5 +1642,37 @@ export class DynamoFinanceRepository implements FinanceRepository {
     userId: string,
   ): Promise<{ restore_lock_cleared: boolean }> {
     return runRestoreAbortWorkflow({ doc: this.doc, userId });
+  }
+
+  isImportStagingEnabled(): boolean {
+    return getImportStagingTableName() !== undefined;
+  }
+
+  async persistImportPlanViaStaging(
+    userId: string,
+    input: {
+      importFileId: string;
+      importStartedAt: number;
+      plan: ImportPersistPlan;
+      transactionFile: TransactionFileInput;
+      fileCurrency?: string;
+    },
+  ): Promise<void> {
+    await runImportStagingWorkflow({
+      doc: this.doc,
+      userId,
+      importFileId: input.importFileId,
+      importStartedAt: input.importStartedAt,
+      plan: input.plan,
+      transactionFile: input.transactionFile,
+      fileCurrency: input.fileCurrency,
+      refreshMetrics: () => this.refreshStoredDashboardMetrics(userId),
+    });
+  }
+
+  async abortImportCleanup(
+    userId: string,
+  ): Promise<{ import_lock_cleared: boolean }> {
+    return runImportAbortWorkflow({ doc: this.doc, userId });
   }
 }

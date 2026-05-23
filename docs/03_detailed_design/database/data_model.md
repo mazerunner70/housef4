@@ -28,7 +28,7 @@ This is the **canonical description** of how persisted application data is store
 - **Billing:** `PAY_PER_REQUEST` (on-demand).
 - **Base table keys**
   - **`PK`** (String) — partition key. User-scoped application rows use `USER#<user_id>`.
-  - **`SK`** (String) — sort key. Distinguishes entity type and id: `TXN#<transaction_id>`, `CLUSTER#<cluster_id>`, `FILE#<file_id>`, literal `PROFILE`, literal **`METRICS`** (dashboard aggregates), `SYSTEM#RESTORE_LOCK` (restore single-flight lock — see §8.2a), or `ACCOUNT#…`.
+  - **`SK`** (String) — sort key. Distinguishes entity type and id: `TXN#<transaction_id>`, `CLUSTER#<cluster_id>`, `FILE#<file_id>`, literal `PROFILE`, literal **`METRICS`** (dashboard aggregates), `SYSTEM#RESTORE_LOCK` (restore single-flight lock — see §8.2a), **`SYSTEM#IMPORT_LOCK`** (import single-flight lock — see §8.5a), or `ACCOUNT#…`.
 - **Global secondary index: `GSI1`**
   - **GSI1PK** (String) — `USER#<user_id>#CLUSTER#<cluster_id>` (see `clusterTxnGsi1Pk` in `db/src/keys.ts`). Enables all transactions in a **cluster** for a user to be found without a table scan.
   - **GSI1SK** (String) — `TXN#<transaction_id>` (same as base `SK` for that transaction) via `clusterTxnGsi1Sk`.
@@ -49,7 +49,7 @@ Every application item (except the health system row) includes:
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
-| **`entity_type`** | String | `TRANSACTION`, `CLUSTER`, `TRANSACTION_FILE`, `ACCOUNT`, `PROFILE`, `METRICS`, or **`RESTORE_LOCK`**. Used when reading and filtering. |
+| **`entity_type`** | String | `TRANSACTION`, `CLUSTER`, `TRANSACTION_FILE`, `ACCOUNT`, `PROFILE`, `METRICS`, **`RESTORE_LOCK`**, or **`IMPORT_LOCK`**. Used when reading and filtering. |
 
 ---
 
@@ -268,7 +268,7 @@ DynamoDB does **not** offer a single multi-item transaction that spans an arbitr
 2. **Clear staging partition:** delete every item with **`PK = USER#<user_id>`** on the **staging** table (paginated `Query` + `BatchWriteItem` **`DeleteRequest`**). Ensures no leftover rows from an aborted prior restore.
 3. **Materialize** validated items as full DynamoDB attribute maps (including **`GSI1*` / `GSI2*`** on transactions) and **batch write** them to the **staging** table only — same **`PK`/`SK`** pattern they will use on primary (see §§1–6). **Do not** write **`RESTORE_LOCK`** or **`SYSTEM#RESTORE_LOCK`** into staging from backup JSON (lock is primary-only operational metadata).
 4. **Validate materialized data** (lightweight): e.g. counts vs backup arrays, spot-check required attributes on a sample transaction; optional conditional **`TransactWriteItems`** checks only where small. Any failure → **stop**, respond **500**, **primary untouched** except lock — **release lock** after staging cleanup policy is defined (or leave lock + staging for ops retry).
-5. **Replace primary user data (not the lock yet):** paginated **delete** every application item on **primary** with **`PK = USER#<user_id>`** and **`SK`** matching **`TXN#`**, **`CLUSTER#`**, **`FILE#`**, **`ACCOUNT#`**, literal **`PROFILE`**, literal **`METRICS`** — **exclude** **`SK = SYSTEM#RESTORE_LOCK`**. Never touch **`health-check`** or other partitions.
+5. **Replace primary user data (not the lock yet):** paginated **delete** every application item on **primary** with **`PK = USER#<user_id>`** and **`SK`** matching **`TXN#`**, **`CLUSTER#`**, **`FILE#`**, **`ACCOUNT#`**, literal **`PROFILE`**, literal **`METRICS`** — **exclude** **`SK = SYSTEM#RESTORE_LOCK`** and **`SK = SYSTEM#IMPORT_LOCK`**. Never touch **`health-check`** or other partitions.
 6. **Copy staging → primary:** `Query` staging for **`PK = USER#<user_id>`** (paginated), **`BatchWriteItem`** **`PutRequest`** identical items onto **primary**. Parallelize batch fan-out where safe; **retry** idempotently on throttle.
 7. **Clear staging partition** for this user (same pattern as step 2).
 8. **Metrics refresh:** if backup omitted **`metrics`** or product prefers recompute, call **`refreshStoredDashboardMetrics`** after primary writes complete.
@@ -289,23 +289,60 @@ Exposes **`POST /api/backup/restore/abort`** ([`../api_contract.md`](../api_cont
 
 **Explicit non-goals (V1):** The abort endpoint **does not** invoke **`Lambda.Stop`** or any cancellation token — **no** guarantee that an invocation **currently executing** steps 5–6 stops immediately; callers assume restore **already failed**, timed out, or returned **500** while leaving **`RESTORE_LOCK`** (+ staging debris). Clearing staging **does not by itself repair** a primary partition already partially wiped mid-copy — ops escalation stays separate until async/recovery epics land.
 
+### 8.5 Import staging (now / next ledger)
+
+**Authoritative behaviour:** [`../import_transaction_files.md`](../import_transaction_files.md) **§8.7**. This section records the **physical** layout and env wiring.
+
+The **preferred** import persistence path mirrors **restore staging** (§8.2): write the **full post-import ledger** to a **second table** (**next**), validate, then **promote** to primary (**now**) by **per-user partition** delete + copy. **Fallback** when import staging is not configured: in-place primary writes with compensating saga — import doc **§8.6**.
+
+| Table | Role |
+|-------|------|
+| **Primary** | **Now** — committed ledger; all read APIs until promote completes. |
+| **Import staging** | **Next** — transient post-import materialization keyed by **`PK = USER#<user_id>`** during an in-flight import. Same **`SK`**, **GSI1**, and **GSI2** conventions as primary. |
+
+**Partition scope (mandatory):** All import-staging writes, validation queries, abort deletes, primary deletes for promote, and staging→primary **copy** operate on **`PK = USER#<user_id>` for the authenticated user only**. Other users may import concurrently under different partition keys. **Never `Scan`** the full import-staging table for routine import/abort/promote.
+
+**Workflow summary:** acquire **`IMPORT_LOCK`** (§8.5a) on primary → clear **this user's** import-staging partition → materialize **`PersistPlan`** to import staging → validate → (optional blob) → delete **this user's** ledger items on primary (exclude **`SYSTEM#IMPORT_LOCK`** and **`SYSTEM#RESTORE_LOCK`**) → batch **Put** copy import staging → primary → clear **this user's** import-staging partition → refresh metrics → release lock.
+
+**Promote / copy:** Reuse the same **`BatchWriteItem` Put** retry pattern as restore step 6 (`backupRestore.ts`). Hard copy failure after retries is **rare** at MVP corpus sizes; the meaningful risk is **timeout after primary delete** for **this user**. Keep **this user's import-staging partition** until primary copy succeeds; hold **`IMPORT_LOCK`** during retry.
+
+#### 8.5a Import in-progress lock (`entity_type: IMPORT_LOCK`)
+
+Single-flight marker on the **primary** table so overlapping imports for the same user return **409** and read APIs continue to serve **now** until promote completes.
+
+| Key | Value pattern |
+|-----|----------------|
+| `PK` | `USER#<user_id>` |
+| `SK` | **`SYSTEM#IMPORT_LOCK`** (constant — add e.g. `IMPORT_LOCK_SK` in `db/src/keys.ts`) |
+
+**Attributes (suggested):** `user_id` (String); **`import_started_at`** (Number, epoch ms UTC); **`import_file_id`** (String). Does **not** use GSI1/GSI2. **Do not** write lock rows to import staging.
+
+**Lifecycle**
+
+- **Acquire:** conditional **`PutItem`** **`attribute_not_exists(SK)`** before import-staging writes. If present → **409** on **`POST /api/imports`**. Also **409** if **`RESTORE_LOCK`** is held (and block restore during **`IMPORT_LOCK`**).
+- **Preserve during promote:** When deleting the user partition on primary for swap, **omit** `SK = SYSTEM#IMPORT_LOCK` and **`SK = SYSTEM#RESTORE_LOCK`**.
+- **Release:** **`DeleteItem`** after successful promote + import-staging cleanup, or import abort workflow.
+- **Abort (optional V1):** **`POST /api/imports/abort`** — **`DeleteItem` `IMPORT_LOCK` first**, then clear **this user's** import-staging partition only ([`../api_contract.md`](../api_contract.md)). Does not repair primary already partially wiped mid-promote.
+
 ---
 
 ### 8.3 Export mapping
 
-Export is the inverse: query all user-scoped entities listed above from **primary**, strip **`PK`/`SK`/GSI** fields from the JSON wire encoding (or reconstruct ids-only shapes — restore reconstructs full keys), emit one JSON document per §8.1. **Exclude** **`RESTORE_LOCK`** items from export payloads.
+Export is the inverse: query all user-scoped entities listed above from **primary**, strip **`PK`/`SK`/GSI** fields from the JSON wire encoding (or reconstruct ids-only shapes — restore reconstructs full keys), emit one JSON document per §8.1. **Exclude** **`RESTORE_LOCK`** and **`IMPORT_LOCK`** items from export payloads.
 
 ---
 
 ### 8.4 Infrastructure
 
-Provision **`aws_dynamodb_table`** for restore staging whose **name includes `restores_in_progress`** — canonical pattern **`${project_id}-${environment}-restores-in-progress`** — mirroring the primary table’s **attributes**, **`PK`/`SK`**, **GSI1**, **GSI2** (same Terraform patterns as [`infrastructure/main.tf`](../../../infrastructure/main.tf)). Lambda env e.g. **`DYNAMODB_RESTORE_STAGING_TABLE_NAME`**.
+Provision **`aws_dynamodb_table`** for **restore staging** whose **name includes `restores_in_progress`** — canonical pattern **`${project_id}-${environment}-restores-in-progress`** — mirroring the primary table’s **attributes**, **`PK`/`SK`**, **GSI1**, **GSI2** (same Terraform patterns as [`infrastructure/main.tf`](../../../infrastructure/main.tf)). Lambda env **`DYNAMODB_RESTORE_STAGING_TABLE_NAME`**.
 
-Lambda IAM: **`dynamodb:Query`**, **`BatchWriteItem`**, **`DeleteItem`**, **`PutItem`** on **both** primary and staging ARNs; restrict staging table access to restore paths only where practical.
+Provision a separate **`aws_dynamodb_table`** for **import staging** whose **name includes `imports_in_progress`** — canonical pattern **`${project_id}-${environment}-imports-in-progress`** — with the **same** key/GSI layout. Lambda env **`DYNAMODB_IMPORT_STAGING_TABLE_NAME`**. Behaviour: [`../import_transaction_files.md`](../import_transaction_files.md) **§8.7**, **§8.5** above.
+
+Lambda IAM: **`dynamodb:Query`**, **`BatchWriteItem`**, **`DeleteItem`**, **`PutItem`** on **primary** and on staging table ARNs used by restore and import paths; restrict staging table access to those workflows where practical.
 
 ## Related documentation
 
-- [`../import_transaction_files.md`](../import_transaction_files.md) — import pipeline, cluster id lifecycle, splits/merges, write-back, and **§7.5** import file history (`TRANSACTION_FILE`).
+- [`../import_transaction_files.md`](../import_transaction_files.md) — import pipeline, cluster id lifecycle, splits/merges, write-back, **§8.7** import staging (now/next), **§8.6** fallback saga, and import file history (`TRANSACTION_FILE`).
 - [`../api_contract.md`](../api_contract.md) — wire JSON and endpoints (`POST /api/imports`, `GET /api/transaction-files`, **`GET /api/backup/export`**, **`POST /api/backup/restore`**, **`POST /api/backup/restore/abort`** §6).
 - [`../backup-schema/`](../backup-schema/README.md) — versioned backup artifact field specs (e.g. [`v1.md`](../backup-schema/v1.md)).
 - [`../import_field_mapping.md`](../import_field_mapping.md) — from file fields to normalized import rows.
