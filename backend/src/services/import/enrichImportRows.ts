@@ -15,6 +15,7 @@ import {
   runClusterAndCategoryPipeline,
   type Assignment,
 } from './clusterPipeline';
+import type { LedgerSnapshot } from './ledgerSnapshot';
 import { computeIngestTransferPairings } from '../pairing';
 import { createMerchantEmbedder } from './merchantsEmbedder';
 import { cleanMerchantForClustering } from './merchantNormalize';
@@ -115,6 +116,8 @@ export type EnrichImportContext = {
   importAccountId: string;
   /** ISO 4217 when known from the parsed file (transfer pairing only). */
   importCurrency?: string;
+  /** §4.2 stage 6 output; required when `parsed.length > 0`. */
+  ledgerSnapshot?: LedgerSnapshot;
 };
 
 export async function enrichImportRows(
@@ -137,14 +140,13 @@ export async function enrichImportRows(
     };
   }
 
-  const existing = await repo.listTransactions(userId);
+  if (!ctx.ledgerSnapshot) {
+    throw new Error('enrichImportRows: ledgerSnapshot required when parsed rows exist');
+  }
+
+  const { transactions: existing, fileIdToAccountId } = ctx.ledgerSnapshot;
   const newTransactionIds = parsed.map(
     () => `txn_${randomUUID().replaceAll('-', '')}`,
-  );
-
-  const transactionFiles = await repo.listTransactionFiles(userId);
-  const fileIdToAccountId = new Map(
-    transactionFiles.map((f) => [f.id, f.account_id] as const),
   );
 
   const pairingByLegId = computeIngestTransferPairings({

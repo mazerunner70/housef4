@@ -57,6 +57,11 @@ function createStubRepo(overrides = {}) {
       return overrides.duplicate ?? null;
     },
 
+    listTransactions: async () => {
+      log('listTransactions');
+      return overrides.transactions ?? [];
+    },
+
     listTransactionFiles: async () => {
       log('listTransactionFiles');
       return overrides.transactionFiles ?? [];
@@ -153,6 +158,7 @@ test('executeImportOrchestration — zero-row CSV commits persist stages in §4.
   assert.ok(
     repo.callLog.indexOf('findDuplicateBlobImport') < repo.callLog.indexOf('listTransactionFiles'),
   );
+  assert.ok(!repo.callLog.includes('listTransactions'));
   assert.ok(
     repo.callLog.indexOf('listTransactionFiles') <
       repo.callLog.indexOf('patchExistingTransactionsAfterImport'),
