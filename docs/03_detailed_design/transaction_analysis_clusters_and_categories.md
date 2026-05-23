@@ -81,7 +81,7 @@ Low-confidence ML suggestions should align with **review queue** behaviour: sugg
 
 ## 4. Current system (gap analysis)
 
-Today, [`backend/src/services/import/enrichImportRows.ts`](../../backend/src/services/import/enrichImportRows.ts) defines:
+Today, [`backend/src/services/import/runImportPlanning.ts`](../../backend/src/services/import/runImportPlanning.ts) orchestrates planning (stages 7–9); cluster/category logic lives in [`clusterPipeline.ts`](../../backend/src/services/import/clusterPipeline.ts). Historically the import path used:
 
 - **`cluster_id`** = `CL_` + first 16 hex chars of SHA-256 of **trimmed, lowercased** `raw_merchant` (whitespace normalized only).
 - **Category** = inherited from any prior **CLASSIFIED** transaction with the same `cluster_id`, else `Uncategorized` and **`PENDING_REVIEW`**.

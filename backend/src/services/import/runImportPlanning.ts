@@ -1,6 +1,13 @@
+/**
+ * Import planning orchestration (§4.2 stages 7–9).
+ *
+ * Stages 7–8 are read-only on Dynamo; stage 9 assembles an in-memory `PersistPlan`
+ * consumed by `persistImportPlan` (stage 10). Cluster identity semantics are unchanged
+ * until corpus remint (§6.0) lands in a follow-up issue.
+ */
+
 import type {
   ExistingTransactionPatch,
-  FinanceRepository,
   TransactionRecord,
   TransferPairingAssignment,
 } from '@housef4/db';
@@ -17,6 +24,17 @@ import type { PersistPlan } from './persistPlan';
 import { computeIngestTransferPairings } from '../pairing';
 import { createMerchantEmbedder } from './merchantsEmbedder';
 import { cleanMerchantForClustering } from './merchantNormalize';
+
+export type ImportPlanningContext = Readonly<{
+  /** Financial account this file is imported into (`ACCOUNT#…`). */
+  importAccountId: string;
+  /** ISO 4217 when known from the parsed file (transfer pairing only). */
+  importCurrency?: string;
+  /** §4.2 stage 5 output; `newTransactionIds[i]` ↔ `parsed[i]`. */
+  newTransactionIds: readonly string[];
+  /** §4.2 stage 6 output; required when `parsed.length > 0`. */
+  ledgerSnapshot?: LedgerSnapshot;
+}>;
 
 function embeddingsNearEqual(a: number[] | undefined, b: number[]): boolean {
   if ((a?.length ?? -1) !== b.length) return false;
@@ -96,69 +114,15 @@ function buildExistingPatches(
   return patches;
 }
 
-export type EnrichImportContext = {
-  /** Financial account this file is imported into (`ACCOUNT#…`). */
-  importAccountId: string;
-  /** ISO 4217 when known from the parsed file (transfer pairing only). */
-  importCurrency?: string;
-  /** §4.2 stage 5 output; `newTransactionIds[i]` ↔ `parsed[i]`. */
-  newTransactionIds: readonly string[];
-  /** §4.2 stage 6 output; required when `parsed.length > 0`. */
-  ledgerSnapshot?: LedgerSnapshot;
-};
-
-export async function enrichImportRows(
+/** §4.2 stage 9 — assemble planning output from stages 7–8 artefacts. */
+function buildPersistPlan(
   userId: string,
   parsed: ParsedImportRow[],
-  repo: FinanceRepository,
-  ctx: EnrichImportContext,
-): Promise<PersistPlan> {
-  if (parsed.length === 0) {
-    return {
-      toInsert: [],
-      existingPatches: [],
-      retiredClusterIds: [],
-      summary: {
-        importRowCount: 0,
-        knownMerchants: 0,
-        unknownMerchants: 0,
-        newClustersTouched: 0,
-      },
-    };
-  }
-
-  if (!ctx.ledgerSnapshot) {
-    throw new Error('enrichImportRows: ledgerSnapshot required when parsed rows exist');
-  }
-  if (ctx.newTransactionIds.length !== parsed.length) {
-    throw new Error(
-      'enrichImportRows: newTransactionIds length must match parsed rows',
-    );
-  }
-
-  const { transactions: existing, fileIdToAccountId } = ctx.ledgerSnapshot;
-  const newTransactionIds = ctx.newTransactionIds;
-
-  const pairingByLegId = computeIngestTransferPairings({
-    importAccountId: ctx.importAccountId,
-    importCurrency: ctx.importCurrency,
-    parsed,
-    newTransactionIds,
-    existingTransactions: existing,
-    fileIdToAccountId,
-  });
-  /** `transfer_matching.md` §7: skip merchant clustering for any row already linked by `pairing_id`, not only legs paired this run. */
-  const pairedTxnIds = new Set<string>(Object.keys(pairingByLegId));
-  for (const t of existing) {
-    if (t.pairing_id) pairedTxnIds.add(t.id);
-  }
-
-  const embedder = await createMerchantEmbedder();
-  const { sources, assignments, existingSorted } =
-    await runClusterAndCategoryPipeline(existing, parsed, embedder, {
-      newTransactionIds,
-      pairedTxnIds,
-    });
+  existing: TransactionRecord[],
+  pairingByLegId: Readonly<Record<string, TransferPairingAssignment>>,
+  pipeline: Awaited<ReturnType<typeof runClusterAndCategoryPipeline>>,
+): PersistPlan {
+  const { sources, assignments, existingSorted } = pipeline;
 
   const existingPatches = buildExistingPatches(
     existingSorted,
@@ -196,4 +160,68 @@ export async function enrichImportRows(
       newClustersTouched,
     },
   };
+}
+
+const EMPTY_PLAN: PersistPlan = {
+  toInsert: [],
+  existingPatches: [],
+  retiredClusterIds: [],
+  summary: {
+    importRowCount: 0,
+    knownMerchants: 0,
+    unknownMerchants: 0,
+    newClustersTouched: 0,
+  },
+};
+
+/**
+ * §4.2 stages **7–9**: pairing → cluster/categorise → `PersistPlan`.
+ *
+ * Read-only on Dynamo (embedder init inside stage 8 may load a local model).
+ */
+export async function runImportPlanning(
+  userId: string,
+  parsed: ParsedImportRow[],
+  ctx: ImportPlanningContext,
+): Promise<PersistPlan> {
+  if (parsed.length === 0) {
+    return EMPTY_PLAN;
+  }
+
+  if (!ctx.ledgerSnapshot) {
+    throw new Error('runImportPlanning: ledgerSnapshot required when parsed rows exist');
+  }
+  if (ctx.newTransactionIds.length !== parsed.length) {
+    throw new Error(
+      'runImportPlanning: newTransactionIds length must match parsed rows',
+    );
+  }
+
+  const { transactions: existing, fileIdToAccountId } = ctx.ledgerSnapshot;
+  const newTransactionIds = ctx.newTransactionIds;
+
+  // --- Stage 7: Transfer pairing (`transfer_matching.md`, ingest-scoped). ---
+  const pairingByLegId = computeIngestTransferPairings({
+    importAccountId: ctx.importAccountId,
+    importCurrency: ctx.importCurrency,
+    parsed,
+    newTransactionIds,
+    existingTransactions: existing,
+    fileIdToAccountId,
+  });
+  /** `transfer_matching.md` §7: skip merchant clustering for any row already linked by `pairing_id`, not only legs paired this run. */
+  const pairedTxnIds = new Set<string>(Object.keys(pairingByLegId));
+  for (const t of existing) {
+    if (t.pairing_id) pairedTxnIds.add(t.id);
+  }
+
+  // --- Stage 8: Cluster and categorise (embeddings + DBSCAN + category rules). ---
+  const embedder = await createMerchantEmbedder();
+  const pipeline = await runClusterAndCategoryPipeline(existing, parsed, embedder, {
+    newTransactionIds,
+    pairedTxnIds,
+  });
+
+  // --- Stage 9: Build persist plan (inserts, patches, retired clusters, summary). ---
+  return buildPersistPlan(userId, parsed, existing, pairingByLegId, pipeline);
 }
