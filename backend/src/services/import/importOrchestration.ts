@@ -3,8 +3,9 @@
  *
  * **Stage order is authoritative** relative to numbered stages in
  * `docs/03_detailed_design/import_transaction_files.md` §4.2. Stages 6–9 are
- * still bundled inside `enrichImportRows`; later issues split snapshot,
- * PersistPlan, and planning without changing externally visible behaviour here.
+ * Stage 6 (`buildLedgerSnapshot`) is explicit; stages 7–9 remain in
+ * `enrichImportRows`; later issues split PersistPlan and planning without
+ * changing externally visible behaviour here.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -23,6 +24,7 @@ import {
 import { applyImportAmountNegation } from './canonical';
 import { computeImportBlobContentSha256 } from './blobFingerprint';
 import { enrichImportRows } from './enrichImportRows';
+import { buildLedgerSnapshot } from './ledgerSnapshot';
 import type { ExtractedImportUpload } from './multipartFile';
 import { parseImportBuffer } from './parseImportBuffer';
 
@@ -110,10 +112,15 @@ export async function executeImportOrchestration(
   // --- Stage 5: Allocate batch artefact IDs (`import_file_id`, per-row `transaction_id[]` minted inside planning). ---
   const importFileId = randomUUID();
 
-  // --- Stages 6–9: Ledger snapshot + pairing + cluster/categorise + persist intents (`enrichImportRows`). ---
+  // --- Stage 6: Load ledger snapshot (`listTransactions` + file→account map). ---
+  const ledgerSnapshot =
+    rows.length > 0 ? await buildLedgerSnapshot(userId, repo) : undefined;
+
+  // --- Stages 7–9: Pairing + cluster/categorise + persist intents (`enrichImportRows`). ---
   const enriched = await enrichImportRows(userId, rows, repo, {
     importAccountId: accountId,
     importCurrency,
+    ...(ledgerSnapshot && { ledgerSnapshot }),
   });
 
   // --- Stage 10–12: Persist (§8.7 staging when configured, else §8.6 in-place). ---
