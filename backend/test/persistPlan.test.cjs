@@ -9,6 +9,7 @@ const {
 const STAGE_10_ORDER = [
   'patchExistingTransactionsAfterImport',
   'ingestImportBatch',
+  'rebuildClusterAggregatesAfterImport',
   'retireClusterAggregates',
 ];
 
@@ -40,6 +41,12 @@ function createStubRepo(overrides = {}) {
     retireClusterAggregates: async (_userId, clusterIds) => {
       log('retireClusterAggregates');
       repo.lastRetiredClusterIds = clusterIds;
+    },
+
+    rebuildClusterAggregatesAfterImport: async (_userId, clusterIds, fileCurrency) => {
+      log('rebuildClusterAggregatesAfterImport');
+      repo.lastRebuiltClusterIds = clusterIds;
+      repo.lastRebuildCurrency = fileCurrency;
     },
   };
 
@@ -90,7 +97,7 @@ function assertStage10Order(callLog) {
   }
 }
 
-test('persistImportPlan — §8.6 write order patch → ingest → retire', async () => {
+test('persistImportPlan — §8.6 write order patch → ingest → rebuild → retire', async () => {
   const repo = createStubRepo();
   const plan = samplePlan();
   const userId = 'user-1';
@@ -110,11 +117,13 @@ test('persistImportPlan — §8.6 write order patch → ingest → retire', asyn
   assert.equal(repo.lastIngest.fileCurrency, 'USD');
   assert.deepEqual(repo.lastIngest.rows, plan.toInsert);
   assert.deepEqual(repo.lastRetiredClusterIds, plan.retiredClusterIds);
+  assert.deepEqual(repo.lastRebuiltClusterIds, ['CL_abc', 'CL_xyz']);
+  assert.equal(repo.lastRebuildCurrency, 'USD');
   assert.equal(result.rowCount, 1);
   assert.equal(result.knownMerchants, 1);
 });
 
-test('persistImportPlan — empty plan still runs all three stages', async () => {
+test('persistImportPlan — empty plan still runs all four stages', async () => {
   const repo = createStubRepo({
     ingestResult: {
       rowCount: 0,
@@ -146,6 +155,7 @@ test('persistImportPlan — empty plan still runs all three stages', async () =>
   assert.deepEqual(repo.lastPatches, []);
   assert.deepEqual(repo.lastIngest.rows, []);
   assert.deepEqual(repo.lastRetiredClusterIds, []);
+  assert.deepEqual(repo.lastRebuiltClusterIds, []);
 });
 
 test('toImportPersistPlan — projects write intents for staging (§8.7)', () => {

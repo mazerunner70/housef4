@@ -2,8 +2,8 @@
  * Import planning orchestration (§4.2 stages 7–9).
  *
  * Stages 7–8 are read-only on Dynamo; stage 9 assembles an in-memory `PersistPlan`
- * consumed by `persistImportPlan` (stage 10). Cluster identity semantics are unchanged
- * until corpus remint (§6.0) lands in a follow-up issue.
+ * consumed by `persistImportPlan` (stage 10). Transactional `cluster_id` values remint
+ * per physical embedding group on each corpus pass (§6.0).
  */
 
 import type {
@@ -34,6 +34,12 @@ export type ImportPlanningContext = Readonly<{
   newTransactionIds: readonly string[];
   /** §4.2 stage 6 output; required when `parsed.length > 0`. */
   ledgerSnapshot?: LedgerSnapshot;
+  /**
+   * Test-only: skip DBSCAN in stage 8; labels align with clusterable sources
+   * (existing clusterable first, then new clusterable rows in parse order).
+   * DBSCAN noise (`-1`) is split into singleton groups, matching production.
+   */
+  physicalGroupLabels?: readonly number[];
 }>;
 
 function embeddingsNearEqual(a: number[] | undefined, b: number[]): boolean {
@@ -220,6 +226,7 @@ export async function runImportPlanning(
   const pipeline = await runClusterAndCategoryPipeline(existing, parsed, embedder, {
     newTransactionIds,
     pairedTxnIds,
+    physicalGroupLabels: ctx.physicalGroupLabels,
   });
 
   // --- Stage 9: Build persist plan (inserts, patches, retired clusters, summary). ---

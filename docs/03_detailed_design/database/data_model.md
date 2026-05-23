@@ -77,7 +77,7 @@ Every application item (except the health system row) includes:
 | `cleaned_merchant` | String | Normalized merchant line for clustering. |
 | `amount` | Number | Canonical sign: money **from** this account (**negative**), money **into** this account (**positive**) — aligns with dashboards and spend/income rollups (`import_field_mapping.md` §8); use **`format.amount_negated`** on `TRANSACTION_FILE` when imports flipped raw signs. |
 | `file_amount` | Number (optional) | Parser-signed amount before optional import negation; set on transaction rows created by imports after this feature shipped (equals `amount` when `format.amount_negated` is false). Omitted on older rows. |
-| `cluster_id` | String (required once clustering has run); **legacy** rows may omit | Opaque grouping id (**`CL_`** + UUID recommended per **[`import_transaction_files.md`](../import_transaction_files.md)** §6.5–§6.6). **Never intentionally `null`/absent** solely because DBSCAN flagged noise—singleton/noise mints get their own ids. Drives **`GSI1`** and aligns with **`CLUSTER#…`** items. Omit **`GSI1*`** until migration/backfill if the attribute truly absent (**legacy-only** path). |
+| `cluster_id` | String (required once clustering has run); **legacy** rows may omit | Opaque grouping id (**`CL_`** + UUID recommended per **[`import_transaction_files.md`](../import_transaction_files.md)** §6.5–§6.6). **Reminted on every corpus re-cluster** (§6.0)—never carried forward purely because the embedding group stayed cohesive. **Never intentionally `null`/absent** solely because DBSCAN flagged noise—singleton/noise mints get their own ids. Drives **`GSI1`** and aligns with **`CLUSTER#…`** items. Omit **`GSI1*`** until migration/backfill if the attribute truly absent (**legacy-only** path). **`prior_cluster_ids`** (predecessor transactional ids before remint) is **planning-only** and **not** stored on transaction or **`CLUSTER#…`** items (§11.1). |
 | `category` | String | Current assigned category. |
 | `status` | String | `CLASSIFIED` \| `PENDING_REVIEW`. |
 | `is_recurring` | Boolean | Recurring flag. |
@@ -106,7 +106,7 @@ Represents a merchant **cluster** row for the review queue, aggregates, and tag 
 | `PK` | `USER#<user_id>` |
 | `SK` | `CLUSTER#<cluster_id>` |
 
-**Attributes (persisted)** — `ingestImportBatch`, `listPendingClusters`, `applyTagRule`.
+**Attributes (persisted)** — `rebuildClusterAggregatesAfterImport` (import stage 10), `listPendingClusters`, `applyTagRule`. `ingestImportBatch` writes **transactions only**; cluster rows are rebuilt from full GSI1 membership before retirement.
 
 | Attribute | Type | Notes |
 |-----------|------|--------|

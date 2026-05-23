@@ -2,7 +2,8 @@
  * §4.2 stage 9–10 — planning output shape and fixed-order Dynamo writes.
  *
  * Write order is mandatory (`import_transaction_files.md` §8.1, §8.6.2):
- * `patchExistingTransactionsAfterImport` → `ingestImportBatch` → `retireClusterAggregates`.
+ * `patchExistingTransactionsAfterImport` → `ingestImportBatch` →
+ * `rebuildClusterAggregatesAfterImport` → `retireClusterAggregates`.
  */
 
 import type {
@@ -12,6 +13,7 @@ import type {
   ImportPersistPlan,
   ImportTransactionInput,
 } from '@housef4/db';
+import { liveClusterIdsFromImportPlan } from '@housef4/db';
 
 /** In-memory outcome of import planning (stages 7–9) before any stage-10 writes. */
 export type PersistPlan = Readonly<{
@@ -59,6 +61,11 @@ export async function persistImportPlan(
     userId,
     plan.toInsert,
     importFileId,
+    fileCurrency,
+  );
+  await repo.rebuildClusterAggregatesAfterImport(
+    userId,
+    liveClusterIdsFromImportPlan(plan),
     fileCurrency,
   );
   await repo.retireClusterAggregates(userId, plan.retiredClusterIds);

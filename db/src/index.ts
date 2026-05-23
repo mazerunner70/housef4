@@ -24,6 +24,15 @@ export {
   validateMaterializedImportStaging,
 } from './importMaterialize';
 export type { MaterializeImportPlanInput } from './importMaterialize';
+export {
+  buildClusterAggregateItem,
+  clusterMembersFromTransactionItems,
+  liveClusterIdsFromImportPlan,
+} from './clusterAggregates';
+export type {
+  BuildClusterAggregateOptions,
+  ClusterAggregateMember,
+} from './clusterAggregates';
 export { getDocumentClient, getImportStagingTableName, requireImportStagingTableName, requireRestoreStagingTableName, requireTableName } from './dynamoClient';
 export {
   HEALTH_CHECK_PK,
