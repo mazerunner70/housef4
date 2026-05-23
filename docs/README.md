@@ -15,8 +15,8 @@ Welcome to the `housef4` monorepo.
 - **Backup/restore manual QA & env prerequisites:** [`03_detailed_design/backup_restore_manual_qa.md`](./03_detailed_design/backup_restore_manual_qa.md) — links to **`api_contract.md`** §6 and root **`README`** table for **`DYNAMODB_RESTORE_STAGING_TABLE_NAME`**
 - **Backup JSON schema by version:** `docs/03_detailed_design/backup-schema/` ([`README`](./03_detailed_design/backup-schema/README.md), current **[v1](./03_detailed_design/backup-schema/v1.md)**)
 - **Persistent data (DynamoDB single-table, keys, GSI):** `docs/03_detailed_design/database/data_model.md` (includes **`TRANSACTION_FILE`** / `FILE#` items)
-- **Transaction import, clustering, and cluster `cluster_id` lifecycle:** `docs/03_detailed_design/import_transaction_files.md`
-- **Internal transfers (`pairing_id`), canonical amount signs, clustering exclusion:** [`03_detailed_design/transfer_matching.md`](./03_detailed_design/transfer_matching.md)
+- **Transaction import (orchestration, clustering, opaque **`cluster_id`** mints incl. singletons):** [`03_detailed_design/import_transaction_files.md`](./03_detailed_design/import_transaction_files.md) — **Linear delivery plan / review slicing:** [`01_discovery/linear/import_pipeline_orchestration_delivery.md`](./01_discovery/linear/import_pipeline_orchestration_delivery.md)
+- **Internal transfers (`pairing_id`), canonical amount signs, clustering exclusion:** [`03_detailed_design/transfer_matching.md`](./03_detailed_design/transfer_matching.md) — **implementation reasoning (centre / sliding window):** [`transfer_matching_centre_window_algorithm.md`](./03_detailed_design/transfer_matching_centre_window_algorithm.md)
 - **UI routes & components (MVP journeys):** `docs/03_detailed_design/ui_component_flow.md`
 
 ## Setup

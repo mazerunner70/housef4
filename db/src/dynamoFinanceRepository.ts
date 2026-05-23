@@ -39,6 +39,7 @@ import {
   type AccountRecord,
   type BackupRestoreCounts,
   type BackupSnapshotV1,
+  type DuplicateBlobImportMatch,
   type ExistingTransactionPatch,
   type ImportIngestResult,
   type ImportTransactionInput,
@@ -255,6 +256,7 @@ function appendPartitionItemToBackupExport(
         item.row_count,
       );
       const accountId = wireString(item.account_id, '');
+      const contentSha256 = wireString(item.content_sha256, '');
       const rec: TransactionFileRecord = {
         user_id: wireString(item.user_id, userId),
         id: wireString(item.id, ''),
@@ -263,6 +265,7 @@ function appendPartitionItemToBackupExport(
         format: parseFormatFromItem(item),
         timing: parseTimingFromItem(item),
         result,
+        ...(contentSha256 ? { content_sha256: contentSha256 } : {}),
       };
       acc.transaction_files.push({
         entity_type: 'TRANSACTION_FILE',
@@ -273,6 +276,7 @@ function appendPartitionItemToBackupExport(
         format: rec.format,
         timing: rec.timing,
         result: rec.result,
+        ...(rec.content_sha256 ? { content_sha256: rec.content_sha256 } : {}),
       });
       break;
     }
@@ -317,6 +321,13 @@ export interface FinanceRepository {
     userId: string,
     input: TransactionFileInput,
   ): Promise<void>;
+  /**
+   * When a completed import stored `content_sha256`, returns metadata for duplicate-blob **409** responses.
+   */
+  findDuplicateBlobImport(
+    userId: string,
+    contentSha256Hex: string,
+  ): Promise<DuplicateBlobImportMatch | null>;
   listTransactionFiles(userId: string): Promise<TransactionFileRecord[]>;
   listAccounts(userId: string): Promise<AccountRecord[]>;
   getAccount(
@@ -669,6 +680,11 @@ function importTransactionToDynamoItem(
   }
   if (r.match_type !== undefined) {
     item.match_type = r.match_type;
+  }
+  if (r.pairing_id !== undefined) {
+    item.pairing_id = r.pairing_id;
+    if (r.pairing_source !== undefined) item.pairing_source = r.pairing_source;
+    if (r.pairing_confidence !== undefined) item.pairing_confidence = r.pairing_confidence;
   }
   return item;
 }
@@ -1061,6 +1077,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
     for (const p of patches) {
       const gsi1pk = clusterTxnGsi1Pk(userId, p.cluster_id);
       const gsi1sk = clusterTxnGsi1Sk(p.id);
+      const hasPairing = p.pairing_id !== undefined;
       await this.doc.send(
         new UpdateCommand({
           TableName: this.tableName,
@@ -1068,7 +1085,10 @@ export class DynamoFinanceRepository implements FinanceRepository {
           UpdateExpression:
             'SET cluster_id = :cid, category = :cat, #st = :st, cleaned_merchant = :cm, ' +
             'GSI1PK = :gpk, GSI1SK = :gsk, merchant_embedding = :me, ' +
-            'suggested_category = :sg, category_confidence = :cc, #mt = :mt',
+            'suggested_category = :sg, category_confidence = :cc, #mt = :mt' +
+            (hasPairing
+              ? ', pairing_id = :pid, pairing_source = :psrc, pairing_confidence = :pconf'
+              : ''),
           ExpressionAttributeNames: {
             '#st': 'status',
             '#mt': 'match_type',
@@ -1084,6 +1104,13 @@ export class DynamoFinanceRepository implements FinanceRepository {
             ':sg': p.suggested_category,
             ':cc': p.category_confidence,
             ':mt': p.match_type,
+            ...(hasPairing
+              ? {
+                  ':pid': p.pairing_id,
+                  ':psrc': p.pairing_source,
+                  ':pconf': p.pairing_confidence,
+                }
+              : {}),
           },
         }),
       );
@@ -1199,12 +1226,60 @@ export class DynamoFinanceRepository implements FinanceRepository {
       timing: input.timing,
       result: input.result,
     };
+    const h = input.content_sha256?.trim();
+    if (h) {
+      item.content_sha256 = h;
+    }
     await this.doc.send(
       new PutCommand({
         TableName: this.tableName,
         Item: item,
       }),
     );
+  }
+
+  async findDuplicateBlobImport(
+    userId: string,
+    contentSha256Hex: string,
+  ): Promise<DuplicateBlobImportMatch | null> {
+    const trimmed = contentSha256Hex.trim();
+    if (!trimmed) return null;
+    const pk = userPk(userId);
+    let startKey: Record<string, unknown> | undefined;
+    do {
+      const res = await this.doc.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          KeyConditionExpression: 'PK = :pk AND begins_with(SK, :fp)',
+          FilterExpression: '#h = :h AND entity_type = :et',
+          ExpressionAttributeNames: { '#h': 'content_sha256' },
+          ExpressionAttributeValues: {
+            ':pk': pk,
+            ':fp': FILE_PREFIX,
+            ':h': trimmed,
+            ':et': 'TRANSACTION_FILE',
+          },
+          ExclusiveStartKey: startKey,
+        }),
+      );
+      for (const raw of res.Items ?? []) {
+        const row = raw as Record<string, unknown>;
+        const fid = wireString(row.id, '');
+        if (!fid) continue;
+        const rowHash = wireString(row.content_sha256, '');
+        if (rowHash !== trimmed) continue;
+        const fallbackName = wireString(row.name, 'import');
+        const source = parseSourceFromItem(row, fallbackName);
+        const timing = parseTimingFromItem(row);
+        return {
+          importFileId: fid,
+          sourceName: source.name,
+          completedAt: timing.completed_at,
+        };
+      }
+      startKey = res.LastEvaluatedKey as Record<string, unknown> | undefined;
+    } while (startKey);
+    return null;
   }
 
   async listTransactionFiles(userId: string): Promise<TransactionFileRecord[]> {
@@ -1234,6 +1309,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
           row.row_count,
         );
         const accountId = wireString(row.account_id, '');
+        const contentSha256 = wireString(row.content_sha256, '');
         const rec: TransactionFileRecord = {
           user_id: wireString(row.user_id, userId),
           id: wireString(row.id, ''),
@@ -1242,6 +1318,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
           format: parseFormatFromItem(row),
           timing: parseTimingFromItem(row),
           result,
+          ...(contentSha256 ? { content_sha256: contentSha256 } : {}),
         };
         out.push(rec);
       }

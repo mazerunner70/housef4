@@ -31,6 +31,20 @@ export type {
   FormatTransactionsAsCsvInput,
   TransactionCsvColumn,
 } from './transactionCsvExport';
+export {
+  computeAutoTransferPairings,
+  computeAutoTransferPairingsSortedPools,
+  TRANSFER_PAIRING_DAY_MS,
+  utcCalendarDaysApart,
+  utcDayOrdinal,
+} from './transferPairing';
+export type {
+  PairingConfidence,
+  TransferPairingAssignment,
+  TransferPairingLeg,
+  TransferPairingOptions,
+  TransferPairingResult,
+} from './transferPairing';
 
 import type { FinanceRepository } from './dynamoFinanceRepository';
 import { DynamoFinanceRepository } from './dynamoFinanceRepository';

@@ -64,6 +64,28 @@ Optional fields are omitted when not applicable (e.g. `sourceFormat` when unknow
 | `newClustersTouched` | number (optional) | Distinct cluster ids in the new rows. |
 | `amountNegation` | object (optional) | **`applied`**: signs were negated for canonical import; **`suggestInterest`**: interest-line heuristic favored negation; **`suggestPriorImport`**: latest prior import for this account recorded `format.amount_negated`; **`explicitOverride`**: `negate_amounts` was set in the multipart request. |
 
+### Duplicate upload bytes (`409 Conflict`)
+
+When the multipart **`file`** bytes match **`content_sha256`** of a **`TRANSACTION_FILE`** already stored for this user ([`import_transaction_files.md`](./import_transaction_files.md) §11.2.1), the server returns **`409 Conflict`** and **does not** parse or ingest again. Body uses the same **camelCase** convention as the success payload.
+
+```json
+{
+  "error": "duplicate_blob",
+  "message": "This exact file was already imported. Check import history for details.",
+  "existingImportFileId": "550e8400-e29b-41d4-a716-446655440000",
+  "priorImportFileName": "chase-checking-2024-01.ofx",
+  "priorImportCompletedAt": 1775044700000
+}
+```
+
+| Field | Type | Notes |
+|--------|------|--------|
+| `error` | string | **`duplicate_blob`**. |
+| `message` | string | Server-defined; suitable to show in UI. |
+| `existingImportFileId` | string | Prior import / transaction-file id. |
+| `priorImportFileName` | string | Filename (or default label) stored on the prior **`TRANSACTION_FILE.source.name`**. |
+| `priorImportCompletedAt` | number | Epoch **ms** UTC — prior **`timing.completed_at`**; align with **`GET /api/transaction-files`**. |
+
 ### Raw file archival (`IMPORT_BLOB_BACKEND`)
 
 When blob storage is **`filesystem`** or **`s3`** ([`import_file_blob_storage.md`](./import_file_blob_storage.md)), the server attempts to persist upload bytes and attach an optional **`blob`** map on the **`TRANSACTION_FILE`** row.
@@ -73,6 +95,16 @@ When blob storage is **`filesystem`** or **`s3`** ([`import_file_blob_storage.md
 When **`IMPORT_BLOB_BACKEND`** is **`off`**, no blob is attempted (legacy behaviour).
 
 After a successful import, subsequent **`GET /api/metrics`**, **`GET /api/transactions`**, **`GET /api/review-queue`**, **`GET /api/accounts`**, and **`GET /api/transaction-files`** responses must reflect the new data (including any new account).
+
+### SPA client obligations (imports and `cluster_id`)
+
+Imports may **remint transactional `cluster_id`** values corpus-wide (see **[`import_transaction_files.md`](./import_transaction_files.md)** §6.0 / §11.1). SPA behaviour should stay aligned so users never drive tag rules or review actions against stale cluster handles:
+
+1. **On submit:** When **`POST /api/imports`** is **actually sent** (multipart request starts, after passing local guards such as account selection), **immediately clear or neutralize** client-held data that assumes prior **`cluster_id`** values remain valid—for example cached **transactions** lists, **review-queue** slices, **`cluster_id`‑keyed selection or routing**, and client-side mirrors of cluster aggregates—preferring a deliberate **pending-import** shell instead of clickable stale clusters.
+
+2. **On synchronous success:** A **`200 OK`** **`ImportParseResult`** from **`POST /api/imports`** is the authoritative signal that clustering and persistence for **this upload** have **committed**. **Invalidate and refetch** (at minimum **`GET /api/transactions`**, **`GET /api/review-queue`**, **`GET /api/metrics`**, **`GET /api/transaction-files`**; **`GET /api/accounts`** when affected) **or** perform a **full page reload** so obsolete **`cluster_id`** references disappear. **Do not** treat **`409 Conflict`** (**`duplicate_blob`**), other **`4xx`/`5xx`**, or request timeouts as “clusters changed” for purposes of wiping unrelated UI state—the response body and product rules dictate recovery.
+
+Design rationale and async-import follow-ups: [`import_transaction_files.md`](./import_transaction_files.md) §11.1 item **3**.
 
 ### Accounts listing
 
@@ -256,6 +288,7 @@ The server **does not emit `null`** for omitted optional keys (for example **`pa
 | `transactions[].pairing_id` | string (optional) | Shared id linking two legs of an **internal transfer**; distinct from `match_type`. Present only when persisted on the row (otherwise omitted). |
 | `transactions[].pairing_source` | string (optional) | Present when stored with `pairing_id`; how the leg was paired, e.g. `auto` or `user`. |
 | `transactions[].pairing_confidence` | string (optional) | Present when stored with `pairing_id`; pairing-quality label such as `exact` or `within_epsilon` (not numeric — see **`category_confidence`** for ML score). |
+| `transactions[].cluster_id` | string | Merchant **group** id (**`CL_`** + opaque suffix / UUID recommended — see **[`import_transaction_files.md`](./import_transaction_files.md)** §6.5–§6.6): **persisted whenever clustering runs.** Legacy rows may omit until backfilled; imports should populate **`CLUSTER#`** and **GSI1** per **[`database/data_model.md`](./database/data_model.md)** §1. |
 
 Other documented fields match the example payload (`raw_merchant`, `cluster_id`, `category`, `is_recurring`, `suggested_category`, …). See **`transfer_matching.md`** for semantics of **`pairing_*`** transfer fields versus **`match_type`**.
 
@@ -304,7 +337,8 @@ Fetches only clusters needing manual user mapping (Active Learning).
       "total_transactions": 14,
       "total_amount": 63.00,
       "suggested_category": null,
-      "currency": "USD"
+      "currency": "USD",
+      "previousCategoryId": "Groceries"
     }
   ]
 }
@@ -314,6 +348,7 @@ Fetches only clusters needing manual user mapping (Active Learning).
 |--------|------|--------|
 | `default_currency` | string | User profile default (ISO 4217). Used to format amounts when `pending_clusters[].currency` is omitted. |
 | `pending_clusters[].currency` | string (optional) | When set, from the import file metadata (e.g. OFX `CURDEF`) for the batch that last updated the cluster aggregate. |
+| `pending_clusters[].previousCategoryId` | string \| null | When **set**, unanimous **prior** transactional **`category`** among **existing** members before this ingest’s reassignment (**`CLUSTER.previous_category_id`** in **[`database/data_model.md`](./database/data_model.md)** §2). **Absent**/`null` when priors disagreed or were empty. Helps the client show “pick a definitive category”—see **[`import_transaction_files.md`](./import_transaction_files.md)** §7. |
 
 ## 5. Tag Rule Endpoint
 

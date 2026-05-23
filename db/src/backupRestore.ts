@@ -586,7 +586,8 @@ function materializeBackupItems(
   for (const row of snapshot.transaction_files) {
     const r = stripReservedWireKeys(row);
     const id = wireString(r.id, '');
-    addItem({
+    const contentShaHex = wireString(r.content_sha256, '');
+    const base: Record<string, unknown> = {
       ...r,
       PK: pk,
       SK: fileSk(id),
@@ -598,7 +599,11 @@ function materializeBackupItems(
       format: r.format ?? {},
       timing: r.timing,
       result: r.result,
-    });
+    };
+    if (contentShaHex) {
+      base.content_sha256 = contentShaHex;
+    }
+    addItem(base);
   }
 
   for (const row of snapshot.transactions) {

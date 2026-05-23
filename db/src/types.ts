@@ -55,6 +55,9 @@ export interface ExistingTransactionPatch {
   suggested_category: string | null;
   category_confidence: number;
   match_type: string;
+  pairing_id?: string;
+  pairing_source?: string;
+  pairing_confidence?: string;
 }
 
 export interface PendingClusterRecord {
@@ -129,6 +132,9 @@ export interface ImportTransactionInput {
   category_confidence?: number;
   match_type?: string;
   merchant_embedding?: number[];
+  pairing_id?: string;
+  pairing_source?: string;
+  pairing_confidence?: string;
 }
 
 export interface ImportIngestResult {
@@ -172,6 +178,17 @@ export interface TransactionFileTiming {
 }
 
 /**
+ * Existing import that matches duplicate raw-upload bytes (`import_transaction_files.md` §11.2.1).
+ */
+export interface DuplicateBlobImportMatch {
+  importFileId: string;
+  /** `TRANSACTION_FILE.source.name` from the prior ingest. */
+  sourceName: string;
+  /** `TRANSACTION_FILE.timing.completed_at` — epoch ms UTC. */
+  completedAt: number;
+}
+
+/**
  * One persisted import: sections match how the run proceeds — source file → format →
  * timing → result stats. See `database/data_model.md`.
  */
@@ -184,6 +201,11 @@ export interface TransactionFileInput {
   timing: TransactionFileTiming;
   /** Final batch summary (ingest + re-cluster), same shape as `ImportIngestResult`. */
   result: ImportIngestResult;
+  /**
+   * Lowercase hex SHA-256 of the multipart `file` bytes (duplicate detection).
+   * Omitted on legacy items and on old backups restored before this field existed.
+   */
+  content_sha256?: string;
 }
 
 /** Stored row: same sections as {@link TransactionFileInput} plus `user_id`. */

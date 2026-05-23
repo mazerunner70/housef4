@@ -1,6 +1,8 @@
-import { randomUUID } from 'node:crypto';
-
-import type { ImportTransactionInput, TransactionRecord } from '@housef4/db';
+import type {
+  ImportTransactionInput,
+  TransactionRecord,
+  TransferPairingAssignment,
+} from '@housef4/db';
 
 import {
   loadCategoryVectors,
@@ -11,8 +13,11 @@ import {
 import type { ParsedImportRow } from './canonical';
 import { dbscanCosine } from './dbscanCosine';
 import { cleanMerchantForClustering } from './merchantNormalize';
-import type { MerchantEmbedder } from './merchantsEmbedder';
-import { meanNormalized } from './merchantsEmbedder';
+import {
+  hashEmbedding,
+  meanNormalized,
+  type MerchantEmbedder,
+} from './merchantsEmbedder';
 import { findSplitClusterIds, resolveClusterIdByPhysicalGroup } from './clusterIdentity';
 
 export const DBSCAN_EPS = 0.3;
@@ -32,6 +37,25 @@ export type Assignment = {
   known_merchant: boolean;
   embedding: Float32Array;
 };
+
+const INTERNAL_TRANSFER_EMBEDDING = hashEmbedding('internal_transfer');
+
+/** Shared cluster bucket for internal transfers excluded from merchant clustering. */
+export const INTERNAL_TRANSFER_CLUSTER_ID = 'internal_transfer';
+
+/** Stable assignment for paired transfer legs (`transfer_matching.md` §7). */
+export function internalTransferAssignment(): Assignment {
+  return {
+    cluster_id: INTERNAL_TRANSFER_CLUSTER_ID,
+    category: 'Uncategorized',
+    status: 'CLASSIFIED',
+    suggested_category: null,
+    category_confidence: 1,
+    match_type: 'RULE',
+    known_merchant: true,
+    embedding: INTERNAL_TRANSFER_EMBEDDING,
+  };
+}
 
 /** DBSCAN uses -1 for all noise points; split into singleton groups for stable ids and rules. */
 function splitNoiseLabels(labels: number[]): number[] {
@@ -95,25 +119,14 @@ export type ClusterPipelineResult = {
   existingSorted: TransactionRecord[];
 };
 
-export async function runClusterAndCategoryPipeline(
-  existing: TransactionRecord[],
-  parsed: ParsedImportRow[],
+async function runClusterPipelineCore(
+  sources: SourceRow[],
   embedder: MerchantEmbedder,
-): Promise<ClusterPipelineResult> {
+): Promise<{
+  assignments: Assignment[];
+  clusterSuggestions: Map<string, CategorySuggestion>;
+}> {
   const categoryVectors = loadCategoryVectors(embedder.usesModel);
-
-  const existingSorted = [...existing].sort(
-    (a, b) => a.date - b.date || a.id.localeCompare(b.id),
-  );
-
-  const sources: SourceRow[] = [
-    ...existingSorted.map((record) => ({ kind: 'existing' as const, record })),
-    ...parsed.map((row) => ({
-      kind: 'new' as const,
-      row,
-      id: `txn_${randomUUID().replaceAll('-', '')}`,
-    })),
-  ];
 
   const cleanedTexts = sources.map((s) =>
     s.kind === 'existing'
@@ -223,7 +236,155 @@ export async function runClusterAndCategoryPipeline(
     };
   });
 
-  return { sources, assignments, clusterSuggestions, existingSorted };
+  return { assignments, clusterSuggestions };
+}
+
+function partitionParsedForClustering(
+  parsed: ParsedImportRow[],
+  newTransactionIds: readonly string[],
+  pairedTxnIds: ReadonlySet<string>,
+): { parsedClusterable: ParsedImportRow[]; newIdsClusterable: string[] } {
+  const parsedClusterable: ParsedImportRow[] = [];
+  const newIdsClusterable: string[] = [];
+  for (let i = 0; i < parsed.length; i++) {
+    const nid = newTransactionIds[i];
+    const row = parsed[i];
+    if (nid === undefined || row === undefined) continue;
+    if (pairedTxnIds.has(nid)) continue;
+    parsedClusterable.push(row);
+    newIdsClusterable.push(nid);
+  }
+  return { parsedClusterable, newIdsClusterable };
+}
+
+function sourcesClusterableFromPartition(
+  existingSortedClusterable: TransactionRecord[],
+  parsedClusterable: ParsedImportRow[],
+  newIdsClusterable: string[],
+): SourceRow[] {
+  const tail: SourceRow[] = parsedClusterable.map((row, i) => {
+    const id = newIdsClusterable[i];
+    if (id === undefined) {
+      throw new Error('sourcesClusterableFromPartition: missing id for clusterable row');
+    }
+    return { kind: 'new' as const, row, id };
+  });
+  return [
+    ...existingSortedClusterable.map((record) => ({ kind: 'existing' as const, record })),
+    ...tail,
+  ];
+}
+
+function mergeClusterAssignmentsForPairingSkips(
+  existingSorted: TransactionRecord[],
+  parsed: ParsedImportRow[],
+  newTransactionIds: readonly string[],
+  pairedTxnIds: ReadonlySet<string>,
+  innerAssignments: Assignment[],
+): Assignment[] {
+  const internalAssign = internalTransferAssignment();
+  const out: Assignment[] = [];
+  let idx = 0;
+  const takeInner = (): Assignment => {
+    const next = innerAssignments[idx];
+    if (next === undefined) {
+      throw new Error(
+        'mergeClusterAssignmentsForPairingSkips: inner assignment index overflow',
+      );
+    }
+    idx += 1;
+    return next;
+  };
+  for (const rec of existingSorted) {
+    out.push(pairedTxnIds.has(rec.id) ? internalAssign : takeInner());
+  }
+  for (let i = 0; i < parsed.length; i++) {
+    const id = newTransactionIds[i];
+    if (id === undefined) {
+      throw new Error('mergeClusterAssignmentsForPairingSkips: missing new id');
+    }
+    out.push(pairedTxnIds.has(id) ? internalAssign : takeInner());
+  }
+  if (idx !== innerAssignments.length) {
+    throw new Error(
+      'mergeClusterAssignmentsForPairingSkips: inner assignment count mismatch',
+    );
+  }
+  return out;
+}
+
+export async function runClusterAndCategoryPipeline(
+  existing: TransactionRecord[],
+  parsed: ParsedImportRow[],
+  embedder: MerchantEmbedder,
+  opts: {
+    newTransactionIds: readonly string[];
+    pairedTxnIds?: ReadonlySet<string>;
+  },
+): Promise<ClusterPipelineResult> {
+  if (opts.newTransactionIds.length !== parsed.length) {
+    throw new Error(
+      'runClusterAndCategoryPipeline: newTransactionIds length must match parsed rows',
+    );
+  }
+
+  const pairedTxnIds = opts.pairedTxnIds ?? new Set<string>();
+
+  const existingSorted = [...existing].sort(
+    (a, b) => a.date - b.date || a.id.localeCompare(b.id),
+  );
+
+  const sourcesFull: SourceRow[] = [
+    ...existingSorted.map((record) => ({ kind: 'existing' as const, record })),
+    ...parsed.map((row, i) => {
+      const id = opts.newTransactionIds[i];
+      if (id === undefined) {
+        throw new Error('runClusterAndCategoryPipeline: missing new transaction id');
+      }
+      return { kind: 'new' as const, row, id };
+    }),
+  ];
+
+  const existingSortedClusterable = existingSorted.filter(
+    (r) => !pairedTxnIds.has(r.id),
+  );
+  const { parsedClusterable, newIdsClusterable } = partitionParsedForClustering(
+    parsed,
+    opts.newTransactionIds,
+    pairedTxnIds,
+  );
+
+  const sourcesClusterable = sourcesClusterableFromPartition(
+    existingSortedClusterable,
+    parsedClusterable,
+    newIdsClusterable,
+  );
+
+  let clusterSuggestions: Map<string, CategorySuggestion>;
+  let assignmentsFull: Assignment[];
+
+  if (sourcesClusterable.length === 0) {
+    clusterSuggestions = new Map();
+    const internalAssign = internalTransferAssignment();
+    assignmentsFull = sourcesFull.map(() => internalAssign);
+  } else {
+    const inner = await runClusterPipelineCore(sourcesClusterable, embedder);
+    clusterSuggestions = inner.clusterSuggestions;
+    assignmentsFull = mergeClusterAssignmentsForPairingSkips(
+      existingSorted,
+      parsed,
+      opts.newTransactionIds,
+      pairedTxnIds,
+      inner.assignments,
+    );
+  }
+
+  return {
+    sources: sourcesFull,
+    assignments: assignmentsFull,
+    clusterSuggestions,
+    existingSorted,
+  };
 }
 
 /** §7.4: cluster ids present before import on some transaction but in none after. */
@@ -244,6 +405,7 @@ export function buildNewImportInputs(
   sources: SourceRow[],
   assignments: Assignment[],
   parsedLength: number,
+  pairingByLegId?: Readonly<Record<string, TransferPairingAssignment>>,
 ): ImportTransactionInput[] {
   const nExisting = sources.length - parsedLength;
   const out: ImportTransactionInput[] = [];
@@ -252,6 +414,7 @@ export function buildNewImportInputs(
     if (s.kind !== 'new') continue;
     const a = assignments[i];
     const row = s.row;
+    const pairing = pairingByLegId?.[s.id];
     out.push({
       user_id: userId,
       id: s.id,
@@ -269,6 +432,11 @@ export function buildNewImportInputs(
       category_confidence: a.category_confidence,
       match_type: a.match_type,
       merchant_embedding: Array.from(a.embedding),
+      ...(pairing && {
+        pairing_id: pairing.pairing_id,
+        pairing_source: pairing.pairing_source,
+        pairing_confidence: pairing.pairing_confidence,
+      }),
     });
   }
   return out;
