@@ -37,6 +37,7 @@ export type ImportPlanningContext = Readonly<{
   /**
    * Test-only: skip DBSCAN in stage 8; labels align with clusterable sources
    * (existing clusterable first, then new clusterable rows in parse order).
+   * DBSCAN noise (`-1`) is split into singleton groups, matching production.
    */
   physicalGroupLabels?: readonly number[];
 }>;

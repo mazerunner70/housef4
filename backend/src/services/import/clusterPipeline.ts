@@ -57,10 +57,31 @@ export function internalTransferAssignment(): Assignment {
   };
 }
 
-/** DBSCAN uses -1 for all noise points; split into singleton groups for stable ids and rules. */
-function splitNoiseLabels(labels: number[]): number[] {
+/** DBSCAN uses -1 for all noise points; split into singleton groups for stable ids and per-row categorization. */
+export function splitNoiseLabels(labels: number[]): number[] {
   let noiseSeq = -1000000;
   return labels.map((L) => (L === -1 ? noiseSeq-- : L));
+}
+
+function resolvePhysicalGroupLabels(
+  sources: SourceRow[],
+  embeddings: Float32Array[],
+  physicalGroupLabels?: readonly number[],
+): number[] {
+  if (physicalGroupLabels === undefined) {
+    const rawLabels =
+      sources.length <= 1
+        ? new Array(sources.length).fill(-1)
+        : dbscanCosine(embeddings, DBSCAN_EPS, DBSCAN_MIN_SAMPLES);
+    return splitNoiseLabels(rawLabels);
+  }
+  if (physicalGroupLabels.length !== sources.length) {
+    throw new Error(
+      'runClusterPipelineCore: physicalGroupLabels length must match clusterable sources',
+    );
+  }
+  // Same noise-splitting as the DBSCAN path so tests can pass raw `-1` labels.
+  return splitNoiseLabels([...physicalGroupLabels]);
 }
 
 /**
@@ -125,6 +146,7 @@ export type ClusterPipelineOpts = Readonly<{
   /**
    * Test-only: skip DBSCAN and use these labels for clusterable sources
    * (existing clusterable rows first, then new clusterable rows in parse order).
+   * DBSCAN noise (`-1`) is always split into singleton groups via `splitNoiseLabels`.
    */
   physicalGroupLabels?: readonly number[];
 }>;
@@ -150,20 +172,7 @@ async function runClusterPipelineCore(
   );
 
   let labels: number[];
-  if (physicalGroupLabels === undefined) {
-    const rawLabels =
-      sources.length <= 1
-        ? new Array(sources.length).fill(-1)
-        : dbscanCosine(embeddings, DBSCAN_EPS, DBSCAN_MIN_SAMPLES);
-    labels = splitNoiseLabels(rawLabels);
-  } else {
-    if (physicalGroupLabels.length !== sources.length) {
-      throw new Error(
-        'runClusterPipelineCore: physicalGroupLabels length must match clusterable sources',
-      );
-    }
-    labels = [...physicalGroupLabels];
-  }
+  labels = resolvePhysicalGroupLabels(sources, embeddings, physicalGroupLabels);
 
   const byLabel = new Map<number, number[]>();
   for (let i = 0; i < labels.length; i++) {
