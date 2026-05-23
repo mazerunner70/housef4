@@ -59,7 +59,7 @@ function samplePlan(overrides = {}) {
         file_amount: 4.5,
         cluster_id: 'CL_abc',
         category: 'Food',
-        status: 'pending',
+        status: 'PENDING_REVIEW',
         is_recurring: false,
         known_merchant: true,
       },
