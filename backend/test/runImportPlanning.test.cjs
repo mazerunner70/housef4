@@ -58,9 +58,7 @@ test('runImportPlanning — newTransactionIds length must match parsed rows', as
   );
 });
 
-test('runImportPlanning — single row produces insert intent (hash embedder)', async () => {
-  process.env.HOUSEF4_IMPORT_EMBEDDINGS = 'hash';
-
+test('runImportPlanning — single row produces insert intent', async () => {
   const parsed = [
     {
       date: 1_700_000_000_000,
