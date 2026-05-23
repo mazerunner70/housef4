@@ -18,7 +18,7 @@ import {
   meanNormalized,
   type MerchantEmbedder,
 } from './merchantsEmbedder';
-import { findSplitClusterIds, resolveClusterIdByPhysicalGroup } from './clusterIdentity';
+import { resolveClusterIdByPhysicalGroup } from './clusterIdentity';
 
 export const DBSCAN_EPS = 0.3;
 export const DBSCAN_MIN_SAMPLES = 3;
@@ -64,9 +64,9 @@ function splitNoiseLabels(labels: number[]): number[] {
 }
 
 /**
- * When cluster identity is conserved, pick the **plurality** category among existing
- * `CLASSIFIED` rows in the group. If a user (or data drift) left conflicting categories
- * on the same cluster, the majority wins; ties break lexicographically for stability.
+ * Pick the **plurality** category among existing `CLASSIFIED` rows in the physical group
+ * (§7). If a user (or data drift) left conflicting categories on the same group, the
+ * majority wins; ties break lexicographically for stability.
  */
 function inheritedCategoryForGroup(
   indices: number[],
@@ -119,9 +119,20 @@ export type ClusterPipelineResult = {
   existingSorted: TransactionRecord[];
 };
 
+export type ClusterPipelineOpts = Readonly<{
+  newTransactionIds: readonly string[];
+  pairedTxnIds?: ReadonlySet<string>;
+  /**
+   * Test-only: skip DBSCAN and use these labels for clusterable sources
+   * (existing clusterable rows first, then new clusterable rows in parse order).
+   */
+  physicalGroupLabels?: readonly number[];
+}>;
+
 async function runClusterPipelineCore(
   sources: SourceRow[],
   embedder: MerchantEmbedder,
+  physicalGroupLabels?: readonly number[],
 ): Promise<{
   assignments: Assignment[];
   clusterSuggestions: Map<string, CategorySuggestion>;
@@ -138,12 +149,21 @@ async function runClusterPipelineCore(
     cleanedTexts.map((t) => embedder.embed(t)),
   );
 
-  const rawLabels =
-    sources.length <= 1
-      ? new Array(sources.length).fill(-1)
-      : dbscanCosine(embeddings, DBSCAN_EPS, DBSCAN_MIN_SAMPLES);
-
-  const labels = splitNoiseLabels(rawLabels);
+  let labels: number[];
+  if (physicalGroupLabels === undefined) {
+    const rawLabels =
+      sources.length <= 1
+        ? new Array(sources.length).fill(-1)
+        : dbscanCosine(embeddings, DBSCAN_EPS, DBSCAN_MIN_SAMPLES);
+    labels = splitNoiseLabels(rawLabels);
+  } else {
+    if (physicalGroupLabels.length !== sources.length) {
+      throw new Error(
+        'runClusterPipelineCore: physicalGroupLabels length must match clusterable sources',
+      );
+    }
+    labels = [...physicalGroupLabels];
+  }
 
   const byLabel = new Map<number, number[]>();
   for (let i = 0; i < labels.length; i++) {
@@ -163,19 +183,10 @@ async function runClusterPipelineCore(
     (s) => (s.kind === 'existing' ? s.record.cluster_id : undefined),
   );
 
-  const splitClusterIds = findSplitClusterIds(
-    labels,
-    kindAtIndex,
-    previousClusterIdAtIndex,
-  );
-
   const labelResolution = resolveClusterIdByPhysicalGroup(
     byLabel,
     kindAtIndex,
     previousClusterIdAtIndex,
-    splitClusterIds,
-    cleanedTexts,
-    embeddings,
   );
 
   const clusterSuggestions = new Map<string, CategorySuggestion>();
@@ -191,10 +202,8 @@ async function runClusterPipelineCore(
   const assignments: Assignment[] = sources.map((_, i) => {
     const L = labels[i];
     const indices = byLabel.get(L)!;
-    const { cluster_id, conserve } = labelResolution.get(L)!;
-    const inherited = conserve
-      ? inheritedCategoryForGroup(indices, sources)
-      : null;
+    const { cluster_id } = labelResolution.get(L)!;
+    const inherited = inheritedCategoryForGroup(indices, sources);
     const suggestion = clusterSuggestions.get(cluster_id)!;
 
     if (inherited) {
@@ -317,10 +326,7 @@ export async function runClusterAndCategoryPipeline(
   existing: TransactionRecord[],
   parsed: ParsedImportRow[],
   embedder: MerchantEmbedder,
-  opts: {
-    newTransactionIds: readonly string[];
-    pairedTxnIds?: ReadonlySet<string>;
-  },
+  opts: ClusterPipelineOpts,
 ): Promise<ClusterPipelineResult> {
   if (opts.newTransactionIds.length !== parsed.length) {
     throw new Error(
@@ -368,7 +374,11 @@ export async function runClusterAndCategoryPipeline(
     const internalAssign = internalTransferAssignment();
     assignmentsFull = sourcesFull.map(() => internalAssign);
   } else {
-    const inner = await runClusterPipelineCore(sourcesClusterable, embedder);
+    const inner = await runClusterPipelineCore(
+      sourcesClusterable,
+      embedder,
+      opts.physicalGroupLabels,
+    );
     clusterSuggestions = inner.clusterSuggestions;
     assignmentsFull = mergeClusterAssignmentsForPairingSkips(
       existingSorted,

@@ -86,3 +86,46 @@ test('runImportPlanning — single row produces insert intent', async () => {
   assert.equal(plan.summary.newClustersTouched, 1);
   assert.equal(plan.summary.knownMerchants + plan.summary.unknownMerchants, 1);
 });
+
+test('runImportPlanning — §6.0 remint retires prior cluster ids on existing rows', async () => {
+  const priorClusterId = 'CL_prior_merchant';
+  const existingTxn = {
+    id: 'txn-existing-1',
+    user_id: 'user-1',
+    date: 1_699_000_000_000,
+    raw_merchant: 'Coffee Shop',
+    cleaned_merchant: 'coffee shop',
+    amount: -3,
+    cluster_id: priorClusterId,
+    category: 'Food',
+    status: 'CLASSIFIED',
+    is_recurring: false,
+    transaction_file_id: 'file-old',
+  };
+  const parsed = [
+    {
+      date: 1_700_000_000_000,
+      raw_merchant: 'Coffee Shop',
+      amount: -4.5,
+    },
+  ];
+
+  const plan = await runImportPlanning('user-1', parsed, {
+    importAccountId: 'acc-checking',
+    importCurrency: 'USD',
+    newTransactionIds: ['txn-new-1'],
+    ledgerSnapshot: {
+      transactions: [existingTxn],
+      fileIdToAccountId: new Map([['file-old', 'acc-checking']]),
+    },
+    // Force one physical group without relying on DBSCAN min_samples tuning.
+    physicalGroupLabels: [0, 0],
+  });
+
+  assert.equal(plan.toInsert.length, 1);
+  assert.notEqual(plan.toInsert[0].cluster_id, priorClusterId);
+  assert.equal(plan.existingPatches.length, 1);
+  assert.notEqual(plan.existingPatches[0].cluster_id, priorClusterId);
+  assert.equal(plan.existingPatches[0].cluster_id, plan.toInsert[0].cluster_id);
+  assert.ok(plan.retiredClusterIds.includes(priorClusterId));
+});

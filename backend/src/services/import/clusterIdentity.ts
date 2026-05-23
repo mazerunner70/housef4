@@ -1,20 +1,17 @@
-import { cosineDistance } from './dbscanCosine';
-import { stableClusterIdFromCleaned } from './stableClusterId';
+import { randomUUID } from 'node:crypto';
 
-function medoidIndex(indices: number[], embeddings: Float32Array[]): number {
-  let best = indices[0]!;
-  let bestSum = Infinity;
-  for (const i of indices) {
-    let s = 0;
-    for (const j of indices) {
-      s += cosineDistance(embeddings[i]!, embeddings[j]!);
-    }
-    if (s < bestSum) {
-      bestSum = s;
-      best = i;
+const MINT_ATTEMPTS = 16;
+
+/** §6.6: opaque `CL_<uuid>` scoped unique within one resolve pass. */
+function mintClusterId(usedMint: Set<string>): string {
+  for (let attempt = 0; attempt < MINT_ATTEMPTS; attempt++) {
+    const id = `CL_${randomUUID().replaceAll('-', '')}`;
+    if (!usedMint.has(id)) {
+      usedMint.add(id);
+      return id;
     }
   }
-  return best;
+  throw new Error('mintClusterId: exhausted uniqueness attempts');
 }
 
 /** DBSCAN + splitNoise: each group gets a distinct label value (negative for old noise, positive for DBSCAN). */
@@ -32,8 +29,22 @@ export function buildPreviousIdSet(
   return s;
 }
 
+/** §6.1: distinct sorted predecessor ids from existing members (planning-only). */
+export function priorClusterIdsForGroup(
+  groupIndices: number[],
+  kindAtIndex: ('existing' | 'new')[],
+  previousClusterIdAtIndex: (string | undefined)[],
+): readonly string[] {
+  return [...buildPreviousIdSet(
+    groupIndices,
+    kindAtIndex,
+    previousClusterIdAtIndex,
+  )].sort((a, b) => a.localeCompare(b));
+}
+
 /**
- * §8.1: for each old cluster id C, if existing rows with C land in 2+ physical label buckets → C is part of a split.
+ * §6.3: for each old cluster id C, if existing rows with C land in 2+ physical label buckets → C is part of a split.
+ * Planning/diagnostic only under §6.0 remint — does not affect id assignment.
  */
 export function findSplitClusterIds(
   labelPerIndex: number[],
@@ -45,13 +56,14 @@ export function findSplitClusterIds(
     if (kindAtIndex[i] !== 'existing') continue;
     const cid = previousClusterIdAtIndex[i];
     if (!cid) continue;
-    const L = labelPerIndex[i]!;
+    const label = labelPerIndex[i];
+    if (label === undefined) continue;
     let set = cToLabels.get(cid);
     if (!set) {
       set = new Set();
       cToLabels.set(cid, set);
     }
-    set.add(L);
+    set.add(label);
   }
   const split = new Set<string>();
   for (const [C, set] of cToLabels) {
@@ -60,71 +72,38 @@ export function findSplitClusterIds(
   return split;
 }
 
-function stableIdForGroup(
-  indices: number[],
-  cleanedTexts: string[],
-  embeddings: Float32Array[],
-): string {
-  if (indices.length === 1) {
-    return stableClusterIdFromCleaned(cleanedTexts[indices[0]!]!);
-  }
-  const med = medoidIndex(indices, embeddings);
-  return stableClusterIdFromCleaned(cleanedTexts[med]!);
-}
+export type ClusterGroupResolution = Readonly<{
+  cluster_id: string;
+  /** §6.0–§6.1 planning-only; distinct sorted predecessor ids from existing members. */
+  prior_cluster_ids: readonly string[];
+}>;
 
 /**
- * Resolves a stable logical `cluster_id` for each physical (embedding) group per
- * `import_transaction_files.md` §5 / §8.
+ * Resolves transactional `cluster_id` for each physical (embedding) group per
+ * `import_transaction_files.md` §6.0: always mint a fresh id; never carry prior ids.
  */
 export function resolveClusterIdByPhysicalGroup(
   byLabel: Map<number, number[]>,
   kindAtIndex: ('existing' | 'new')[],
   previousClusterIdAtIndex: (string | undefined)[],
-  splitClusterIds: Set<string>,
-  cleanedTexts: string[],
-  embeddings: Float32Array[],
-): Map<number, { cluster_id: string; conserve: boolean }> {
+): Map<number, ClusterGroupResolution> {
   const labelKeys = [...byLabel.keys()].sort((a, b) => a - b);
-  const out = new Map<number, { cluster_id: string; conserve: boolean }>();
+  const out = new Map<number, ClusterGroupResolution>();
   const usedMint = new Set<string>();
-  let mintSeq = 0;
-
-  const mint = (L: number, indices: number[]): string => {
-    for (;;) {
-      const base = stableIdForGroup(indices, cleanedTexts, embeddings);
-      const h = stableClusterIdFromCleaned(
-        `${base}::L${L}::M${mintSeq++}`,
-      );
-      if (!usedMint.has(h)) {
-        usedMint.add(h);
-        return h;
-      }
-    }
-  };
 
   for (const L of labelKeys) {
-    const indices = byLabel.get(L)!;
-    const previous = buildPreviousIdSet(
-      indices,
-      kindAtIndex,
-      previousClusterIdAtIndex,
-    );
-
-    if (previous.size > 1) {
-      out.set(L, { cluster_id: mint(L, indices), conserve: false });
-      continue;
+    const indices = byLabel.get(L);
+    if (!indices) {
+      throw new Error(`resolveClusterIdByPhysicalGroup: missing label ${L}`);
     }
-    if (previous.size === 1) {
-      const C = [...previous][0]!;
-      if (splitClusterIds.has(C)) {
-        out.set(L, { cluster_id: mint(L, indices), conserve: false });
-      } else {
-        out.set(L, { cluster_id: C, conserve: true });
-      }
-      continue;
-    }
-    // New-only: always mint a fresh id
-    out.set(L, { cluster_id: mint(L, indices), conserve: false });
+    out.set(L, {
+      cluster_id: mintClusterId(usedMint),
+      prior_cluster_ids: priorClusterIdsForGroup(
+        indices,
+        kindAtIndex,
+        previousClusterIdAtIndex,
+      ),
+    });
   }
 
   return out;
