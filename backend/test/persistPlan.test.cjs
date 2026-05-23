@@ -64,7 +64,7 @@ function samplePlan(overrides = {}) {
         known_merchant: true,
       },
     ],
-    existingPatches: [{ id: 'txn_old_1', cluster_id: 'CL_xyz', category: 'Food', status: 'pending' }],
+    existingPatches: [{ id: 'txn_old_1', cluster_id: 'CL_xyz', category: 'Food', status: 'PENDING_REVIEW' }],
     retiredClusterIds: ['CL_retired'],
     summary: {
       importRowCount: 1,
