@@ -85,6 +85,31 @@ function resolvePhysicalGroupLabels(
 }
 
 /**
+ * §7 — unanimous prior transactional `category` among **existing** members only.
+ * Returns `null` when no existing members, categories disagree, or any category is empty.
+ */
+export function unanimousPriorCategoryForGroup(
+  indices: number[],
+  sources: SourceRow[],
+): string | null {
+  let consensus: string | null = null;
+  let sawExisting = false;
+  for (const i of indices) {
+    const s = sources[i];
+    if (s.kind !== 'existing') continue;
+    sawExisting = true;
+    const c = s.record.category.trim();
+    if (!c) return null;
+    if (consensus === null) {
+      consensus = c;
+    } else if (consensus !== c) {
+      return null;
+    }
+  }
+  return sawExisting ? consensus : null;
+}
+
+/**
  * Pick the **plurality** category among existing `CLASSIFIED` rows in the physical group
  * (§7). If a user (or data drift) left conflicting categories on the same group, the
  * majority wins; ties break lexicographically for stability.
@@ -136,6 +161,8 @@ export type ClusterPipelineResult = {
   sources: SourceRow[];
   assignments: Assignment[];
   clusterSuggestions: Map<string, CategorySuggestion>;
+  /** §7 — `previousCategoryId` per minted `cluster_id` from physical groups. */
+  clusterHints: Record<string, { previousCategoryId: string | null }>;
   /** Same ordering as the first `existing.length` entries in `sources` / `assignments`. */
   existingSorted: TransactionRecord[];
 };
@@ -158,6 +185,7 @@ async function runClusterPipelineCore(
 ): Promise<{
   assignments: Assignment[];
   clusterSuggestions: Map<string, CategorySuggestion>;
+  clusterHints: Record<string, { previousCategoryId: string | null }>;
 }> {
   const categoryVectors = loadCategoryVectors(embedder.usesModel);
 
@@ -199,6 +227,7 @@ async function runClusterPipelineCore(
   );
 
   const clusterSuggestions = new Map<string, CategorySuggestion>();
+  const clusterHints: Record<string, { previousCategoryId: string | null }> = {};
   for (const L of labelResolution.keys()) {
     const meta = labelResolution.get(L)!;
     const indices = byLabel.get(L)!;
@@ -206,6 +235,9 @@ async function runClusterPipelineCore(
       meta.cluster_id,
       categorizeGroup(indices, cleanedTexts, embeddings, categoryVectors),
     );
+    clusterHints[meta.cluster_id] = {
+      previousCategoryId: unanimousPriorCategoryForGroup(indices, sources),
+    };
   }
 
   const assignments: Assignment[] = sources.map((_, i) => {
@@ -254,7 +286,7 @@ async function runClusterPipelineCore(
     };
   });
 
-  return { assignments, clusterSuggestions };
+  return { assignments, clusterSuggestions, clusterHints };
 }
 
 function partitionParsedForClustering(
@@ -377,6 +409,7 @@ export async function runClusterAndCategoryPipeline(
 
   let clusterSuggestions: Map<string, CategorySuggestion>;
   let assignmentsFull: Assignment[];
+  let clusterHints: Record<string, { previousCategoryId: string | null }> = {};
 
   if (sourcesClusterable.length === 0) {
     clusterSuggestions = new Map();
@@ -389,6 +422,7 @@ export async function runClusterAndCategoryPipeline(
       opts.physicalGroupLabels,
     );
     clusterSuggestions = inner.clusterSuggestions;
+    clusterHints = inner.clusterHints;
     assignmentsFull = mergeClusterAssignmentsForPairingSkips(
       existingSorted,
       parsed,
@@ -402,6 +436,7 @@ export async function runClusterAndCategoryPipeline(
     sources: sourcesFull,
     assignments: assignmentsFull,
     clusterSuggestions,
+    clusterHints,
     existingSorted,
   };
 }

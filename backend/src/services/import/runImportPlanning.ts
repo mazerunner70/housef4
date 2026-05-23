@@ -128,7 +128,7 @@ function buildPersistPlan(
   pairingByLegId: Readonly<Record<string, TransferPairingAssignment>>,
   pipeline: Awaited<ReturnType<typeof runClusterAndCategoryPipeline>>,
 ): PersistPlan {
-  const { sources, assignments, existingSorted } = pipeline;
+  const { sources, assignments, existingSorted, clusterHints } = pipeline;
 
   const existingPatches = buildExistingPatches(
     existingSorted,
@@ -159,6 +159,7 @@ function buildPersistPlan(
     toInsert,
     existingPatches,
     retiredClusterIds,
+    clusterHints,
     summary: {
       importRowCount: parsed.length,
       knownMerchants,
@@ -172,6 +173,7 @@ const EMPTY_PLAN: PersistPlan = {
   toInsert: [],
   existingPatches: [],
   retiredClusterIds: [],
+  clusterHints: {},
   summary: {
     importRowCount: 0,
     knownMerchants: 0,

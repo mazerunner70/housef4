@@ -211,6 +211,7 @@ export function materializeImportPlanToItems(
   const allItems = [...bySk.values()];
   for (const clusterId of liveClusterIdsFromImportPlan(plan)) {
     const prev = existingClusters.get(clusterId);
+    const hint = plan.clusterHints?.[clusterId];
     bySk.set(
       clusterSk(clusterId),
       buildClusterAggregateItem(
@@ -221,6 +222,7 @@ export function materializeImportPlanToItems(
           fileCurrency,
           assignedCategory: prev?.assigned_category ?? null,
           currency: prev?.currency,
+          previousCategoryId: hint?.previousCategoryId ?? null,
         },
       ),
     );

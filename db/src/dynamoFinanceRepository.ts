@@ -332,6 +332,7 @@ export interface FinanceRepository {
     userId: string,
     clusterIds: string[],
     fileCurrency?: string,
+    clusterHints?: Record<string, import('./types').ClusterAggregateHint>,
   ): Promise<void>;
   recordTransactionFile(
     userId: string,
@@ -980,6 +981,12 @@ export class DynamoFinanceRepository implements FinanceRepository {
               ? null
               : (item.suggested_category as string | null),
         };
+        if (item.previous_category_id !== undefined) {
+          rec.previous_category_id =
+            item.previous_category_id === null
+              ? null
+              : String(item.previous_category_id);
+        }
         if (item.currency != null && item.currency !== '') {
           rec.currency = String(item.currency);
         }
@@ -1111,6 +1118,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
     userId: string,
     clusterIds: string[],
     fileCurrency?: string,
+    clusterHints?: Record<string, import('./types').ClusterAggregateHint>,
   ): Promise<void> {
     if (clusterIds.length === 0) return;
     const pk = userPk(userId);
@@ -1118,11 +1126,13 @@ export class DynamoFinanceRepository implements FinanceRepository {
     for (const clusterId of clusterIds) {
       const members = await this.fetchClusterAggregateMembers(userId, clusterId);
       const prev = await this.fetchClusterAggregateMetadata(pk, clusterId);
+      const hint = clusterHints?.[clusterId];
       items.push(
         buildClusterAggregateItem(pk, clusterId, members, {
           fileCurrency,
           assignedCategory: prev?.assigned_category ?? null,
           currency: prev?.currency,
+          previousCategoryId: hint?.previousCategoryId ?? null,
         }),
       );
     }
@@ -1166,6 +1176,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
         members.push({
           raw_merchant: String(row.raw_merchant ?? ''),
           amount: Number(row.amount ?? 0),
+          category: String(row.category ?? ''),
           status: String(row.status ?? 'PENDING_REVIEW') as TransactionStatus,
           suggested_category:
             row.suggested_category === undefined

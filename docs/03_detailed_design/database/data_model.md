@@ -117,8 +117,8 @@ Represents a merchant **cluster** row for the review queue, aggregates, and tag 
 | `currency` | String (optional) | ISO 4217, denormalized from the import when known; preserved on later ingests that do not supply a new code. |
 | `suggested_category` | String or null | From batch / rules. |
 | `assigned_category` | String or null | User or rule assignment. |
-| `previous_category_id` | String or null (optional until implemented) | Unanimous **prior** transactional **`category`** among **existing** members that this corpus pass groups into **`cluster_id`**, persisted as a hint / diff baseline — see **`[import_transaction_files.md](../import_transaction_files.md)`** §7. |
-| `pending_review` | Boolean | `true` if still in review (filtered in review-queue listing). |
+| `previous_category_id` | String or null | Unanimous **prior** transactional **`category`** among **existing** members that this corpus pass groups into **`cluster_id`**, persisted as a hint / diff baseline — see **`[import_transaction_files.md](../import_transaction_files.md)`** §7. **`null`** when priors disagreed, were empty, or the group has no existing members. **Always written** on import rebuild (`rebuildClusterAggregatesAfterImport`); **legacy** CLUSTER rows may omit the attribute until the next corpus re-cluster pass — treat absent as **`null`**. |
+| `pending_review` | Boolean | `true` when the §7 review predicate matches: if **`previous_category_id`** is set, when authoritative **`assigned_category`** differs from it; otherwise when any member transaction is **`PENDING_REVIEW`**. Filtered in review-queue listing. |
 
 Clusters do not project to GSI1; transactions carry GSI1 for “all txns in cluster” updates.
 
