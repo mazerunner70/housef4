@@ -4,7 +4,7 @@
  * **Stage order is authoritative** relative to numbered stages in
  * `docs/03_detailed_design/import_transaction_files.md` §4.2. Stages 6–9 are
  * Stage 5 (`allocateBatchArtefactIds`) and stage 6 (`buildLedgerSnapshot`) are explicit;
- * stages 7–9 remain in `enrichImportRows` (returns `PersistPlan`); stage 10 is `persistImportPlan`.
+ * stages 7–9 are `runImportPlanning` (returns `PersistPlan`); stage 10 is `persistImportPlan`.
  */
 
 import type { FinanceRepository } from '@housef4/db';
@@ -21,7 +21,7 @@ import {
 import { allocateBatchArtefactIds } from './allocateBatchIds';
 import { applyImportAmountNegation } from './canonical';
 import { computeImportBlobContentSha256 } from './blobFingerprint';
-import { enrichImportRows } from './enrichImportRows';
+import { runImportPlanning } from './runImportPlanning';
 import { buildLedgerSnapshot } from './ledgerSnapshot';
 import type { ExtractedImportUpload } from './multipartFile';
 import { parseImportBuffer } from './parseImportBuffer';
@@ -115,8 +115,8 @@ export async function executeImportOrchestration(
   const ledgerSnapshot =
     rows.length > 0 ? await buildLedgerSnapshot(userId, repo) : undefined;
 
-  // --- Stages 7–9: Pairing + cluster/categorise + build `PersistPlan` (`enrichImportRows`). ---
-  const plan = await enrichImportRows(userId, rows, repo, {
+  // --- Stages 7–9: Pairing + cluster/categorise + build `PersistPlan` (`runImportPlanning`). ---
+  const plan = await runImportPlanning(userId, rows, {
     importAccountId: accountId,
     importCurrency,
     newTransactionIds: transactionIds,

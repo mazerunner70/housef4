@@ -11,7 +11,7 @@ This document is the **detailed design** for the server-side import pipeline: **
 
 **Raw upload bytes:** Today only metadata is stored on each `TRANSACTION_FILE`; persisting the original file to disk (local dev) or S3 (prod) is specified in `[import_file_blob_storage.md](./import_file_blob_storage.md)`.
 
-**Implementation pointers:** `backend/src/handlers/imports.ts` (HTTP ingress + delegate), `backend/src/services/import/importOrchestration.ts` (ordered §4.2 stages 2–12), `backend/src/services/import/enrichImportRows.ts` (planning bundle for stages **6–9** today), `backend/src/services/pairing/` (ingest-scoped pairing).
+**Implementation pointers:** `backend/src/handlers/imports.ts` (HTTP ingress + delegate), `backend/src/services/import/importOrchestration.ts` (ordered §4.2 stages 2–12), `backend/src/services/import/runImportPlanning.ts` (stages **7–9**), `backend/src/services/pairing/` (ingest-scoped pairing).
 
 **Status:** Orchestration modularity is a **target shape**; behaviour may still be bundled in fewer modules. Cluster rules below specify **intended** behaviour, including product decisions not yet fully implemented.
 
@@ -418,7 +418,7 @@ Compensation uses the checkpoint to undo **only** what ran. Example: failure dur
 
 | Layer | Responsibility |
 | ----- | -------------- |
-| Planning (`runImportPlanning` / `enrichImportRows`) | Build **`ImportRollbackManifest`** alongside **`PersistPlan`**. |
+| Planning (`runImportPlanning`) | Build **`ImportRollbackManifest`** alongside **`PersistPlan`**. |
 | `persistImportPlan(repo, plan, manifest, …)` | Checkpoints, **`try/catch`**, invoke **`compensateFailedImport`**. |
 | `db/` | `compensateFailedImport`, bulk delete by **GSI2**, full-item **`Put`** restore helpers; optional `deleteAccountIfEmpty`. |
 | Blob | **`ImportBlobStore.delete`** on compensation ([`import_file_blob_storage.md`](./import_file_blob_storage.md)). |
