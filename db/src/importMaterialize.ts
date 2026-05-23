@@ -1,4 +1,9 @@
 import {
+  buildClusterAggregateItem,
+  clusterMembersFromTransactionItems,
+  liveClusterIdsFromImportPlan,
+} from './clusterAggregates';
+import {
   clusterSk,
   clusterTxnGsi1Pk,
   clusterTxnGsi1Sk,
@@ -77,118 +82,18 @@ function importTransactionToDynamoItem(
   return item;
 }
 
-interface ClusterItem {
-  cluster_id: string;
-  sample_merchants: string[];
-  total_transactions: number;
-  total_amount: number;
-  suggested_category: string | null;
+function clusterItemFromDynamo(item: Record<string, unknown>): {
   assigned_category: string | null;
-  pending_review: boolean;
   currency?: string;
-}
-
-function uniqSampleMerchants(merchants: string[], cap: number): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const m of merchants) {
-    const t = m.trim();
-    if (!t || seen.has(t)) continue;
-    seen.add(t);
-    out.push(t);
-    if (out.length >= cap) break;
-  }
-  return out;
-}
-
-function bestSuggestedFromRows(rows: ImportTransactionInput[]): string | null {
-  let best: string | null = null;
-  let bestC = -1;
-  for (const r of rows) {
-    if (r.suggested_category == null || r.suggested_category === '') continue;
-    const c = r.category_confidence ?? 0;
-    if (c > bestC) {
-      bestC = c;
-      best = r.suggested_category;
-    }
-  }
-  return best;
-}
-
-function clusterItemFromDynamo(item: Record<string, unknown>): ClusterItem {
+} {
   const cur = item.currency;
   return {
-    cluster_id: String(item.cluster_id),
-    sample_merchants: (item.sample_merchants as string[]) ?? [],
-    total_transactions: Number(item.total_transactions ?? 0),
-    total_amount: Number(item.total_amount ?? 0),
-    suggested_category:
-      item.suggested_category === undefined
-        ? null
-        : (item.suggested_category as string | null),
     assigned_category:
       item.assigned_category === undefined
         ? null
         : (item.assigned_category as string | null),
-    pending_review: Boolean(item.pending_review),
     ...(cur != null && cur !== '' ? { currency: String(cur) } : {}),
   };
-}
-
-function buildClusterItemsForIngest(
-  pk: string,
-  byCluster: Map<
-    string,
-    { rows: ImportTransactionInput[]; merchants: string[] }
-  >,
-  existing: Map<string, ClusterItem>,
-  fileCurrency?: string,
-): Record<string, unknown>[] {
-  const clusterItems: Record<string, unknown>[] = [];
-  for (const [clusterId, g] of byCluster) {
-    const prev = existing.get(clusterId);
-    let total_transactions = g.rows.length;
-    let total_amount = 0;
-    for (const x of g.rows) total_amount += Math.abs(x.amount);
-    if (prev) {
-      total_transactions += prev.total_transactions;
-      total_amount += prev.total_amount;
-    }
-    const mergedMerchants = uniqSampleMerchants(
-      [...(prev?.sample_merchants ?? []), ...g.merchants],
-      8,
-    );
-    const pending_review =
-      g.rows.some((x) => x.status === 'PENDING_REVIEW') ||
-      (prev?.pending_review ?? false);
-
-    const batchSuggestion = bestSuggestedFromRows(g.rows);
-    const suggested_category =
-      batchSuggestion ?? prev?.suggested_category ?? null;
-
-    const normalized = fileCurrency?.trim().toUpperCase();
-    const fromFile =
-      normalized && /^[A-Z]{3}$/.test(normalized) ? normalized : undefined;
-    const clusterCurrency = fromFile ?? prev?.currency;
-
-    const clusterItem: Record<string, unknown> = {
-      PK: pk,
-      SK: clusterSk(clusterId),
-      entity_type: 'CLUSTER',
-      cluster_id: clusterId,
-      sample_merchants: mergedMerchants.slice(0, 3),
-      total_transactions,
-      total_amount,
-      suggested_category,
-      assigned_category: prev?.assigned_category ?? null,
-      pending_review,
-    };
-    if (clusterCurrency) {
-      clusterItem.currency = clusterCurrency;
-    }
-    clusterItems.push(clusterItem);
-  }
-  return clusterItems;
 }
 
 function applyPatchToTransactionItem(
@@ -257,7 +162,7 @@ export interface MaterializeImportPlanInput {
 
 /**
  * Pure projection of post-import Dynamo items for staging (`import_transaction_files.md` §8.7.2 step 3).
- * Matches in-place persist order: patch existing → ingest new (+ cluster upserts) → retire clusters → file row.
+ * Matches in-place persist order: patch existing → ingest new → rebuild clusters → retire clusters → file row.
  */
 export function materializeImportPlanToItems(
   input: MaterializeImportPlanInput,
@@ -296,35 +201,29 @@ export function materializeImportPlanToItems(
     );
   }
 
-  const existingClusters = new Map<string, ClusterItem>();
+  const existingClusters = new Map<string, ReturnType<typeof clusterItemFromDynamo>>();
   for (const item of bySk.values()) {
     if (item.entity_type !== 'CLUSTER') continue;
     const cid = wireString(item.cluster_id, '');
     if (cid) existingClusters.set(cid, clusterItemFromDynamo(item));
   }
 
-  const byCluster = new Map<
-    string,
-    { rows: ImportTransactionInput[]; merchants: string[] }
-  >();
-  for (const r of plan.toInsert) {
-    let g = byCluster.get(r.cluster_id);
-    if (!g) {
-      g = { rows: [], merchants: [] };
-      byCluster.set(r.cluster_id, g);
-    }
-    g.rows.push(r);
-    g.merchants.push(r.raw_merchant);
-  }
-
-  for (const clusterItem of buildClusterItemsForIngest(
-    pk,
-    byCluster,
-    existingClusters,
-    fileCurrency,
-  )) {
-    const sk = clusterItem.SK;
-    if (typeof sk === 'string') bySk.set(sk, clusterItem);
+  const allItems = [...bySk.values()];
+  for (const clusterId of liveClusterIdsFromImportPlan(plan)) {
+    const prev = existingClusters.get(clusterId);
+    bySk.set(
+      clusterSk(clusterId),
+      buildClusterAggregateItem(
+        pk,
+        clusterId,
+        clusterMembersFromTransactionItems(allItems, clusterId),
+        {
+          fileCurrency,
+          assignedCategory: prev?.assigned_category ?? null,
+          currency: prev?.currency,
+        },
+      ),
+    );
   }
 
   bySk.set(fileSk(importFileId), transactionFileToDynamoItem(userId, transactionFile));

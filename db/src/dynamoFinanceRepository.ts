@@ -37,6 +37,10 @@ import {
 } from './dashboardMetrics';
 import { dbLog } from './structuredLog';
 import {
+  buildClusterAggregateItem,
+  type ClusterAggregateMember,
+} from './clusterAggregates';
+import {
   BACKUP_SCHEMA_VERSION_V1,
   type AccountRecord,
   type BackupRestoreCounts,
@@ -320,6 +324,15 @@ export interface FinanceRepository {
   getDefaultCurrencyCode(userId: string): Promise<string>;
   /** Remove CLUSTER# aggregate items whose ids are no longer referenced (import splits/merges). */
   retireClusterAggregates(userId: string, clusterIds: string[]): Promise<void>;
+  /**
+   * Rebuild `CLUSTER#…` aggregates from live GSI1 membership after patch + ingest (§8.3).
+   * Required when corpus remint assigns new ids to existing transactions.
+   */
+  rebuildClusterAggregatesAfterImport(
+    userId: string,
+    clusterIds: string[],
+    fileCurrency?: string,
+  ): Promise<void>;
   recordTransactionFile(
     userId: string,
     input: TransactionFileInput,
@@ -389,43 +402,23 @@ export interface FinanceRepository {
   isImportStagingEnabled(): boolean;
 }
 
-interface ClusterItem {
-  cluster_id: string;
-  sample_merchants: string[];
-  total_transactions: number;
-  total_amount: number;
-  suggested_category: string | null;
+interface ClusterAggregateMetadata {
   assigned_category: string | null;
-  pending_review: boolean;
-  /** ISO 4217 from the latest import that set this aggregate, when known. */
   currency?: string;
 }
 
-function bestSuggestedFromRows(rows: ImportTransactionInput[]): string | null {
-  let best: string | null = null;
-  let bestC = -1;
-  for (const r of rows) {
-    if (r.suggested_category == null || r.suggested_category === '') continue;
-    const c = r.category_confidence ?? 0;
-    if (c > bestC) {
-      bestC = c;
-      best = r.suggested_category;
-    }
-  }
-  return best;
-}
-
-function uniqSampleMerchants(merchants: string[], cap: number): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const m of merchants) {
-    const t = m.trim();
-    if (!t || seen.has(t)) continue;
-    seen.add(t);
-    out.push(t);
-    if (out.length >= cap) break;
-  }
-  return out;
+function parseClusterAggregateMetadata(
+  item: Record<string, unknown> | undefined,
+): ClusterAggregateMetadata | null {
+  if (!item || item.entity_type !== 'CLUSTER') return null;
+  const cur = item.currency;
+  return {
+    assigned_category:
+      item.assigned_category === undefined
+        ? null
+        : (item.assigned_category as string | null),
+    ...(cur != null && cur !== '' ? { currency: String(cur) } : {}),
+  };
 }
 
 /** `result` or legacy `ingest` + `row_count`. */
@@ -825,99 +818,6 @@ export class DynamoFinanceRepository implements FinanceRepository {
     return { ...s, net_worth };
   }
 
-  private async fetchExistingClustersForIngest(
-    pk: string,
-    clusterIds: string[],
-  ): Promise<Map<string, ClusterItem>> {
-    const existing = new Map<string, ClusterItem>();
-    for (const cid of clusterIds) {
-      const got = await this.doc.send(
-        new GetCommand({
-          TableName: this.tableName,
-          Key: { PK: pk, SK: clusterSk(cid) },
-        }),
-      );
-      if (got.Item?.entity_type !== 'CLUSTER') {
-        continue;
-      }
-      const d = got.Item;
-      const cur = d.currency;
-      existing.set(cid, {
-        cluster_id: String(d.cluster_id),
-        sample_merchants: (d.sample_merchants as string[]) ?? [],
-        total_transactions: Number(d.total_transactions ?? 0),
-        total_amount: Number(d.total_amount ?? 0),
-        suggested_category:
-          d.suggested_category === undefined
-            ? null
-            : (d.suggested_category as string | null),
-        assigned_category:
-          d.assigned_category === undefined
-            ? null
-            : (d.assigned_category as string | null),
-        pending_review: Boolean(d.pending_review),
-        ...(cur != null && cur !== '' ? { currency: String(cur) } : {}),
-      });
-    }
-    return existing;
-  }
-
-  private buildClusterItemsForIngest(
-    pk: string,
-    byCluster: Map<
-      string,
-      { rows: ImportTransactionInput[]; merchants: string[] }
-    >,
-    existing: Map<string, ClusterItem>,
-    fileCurrency?: string,
-  ): Record<string, unknown>[] {
-    const clusterItems: Record<string, unknown>[] = [];
-    for (const [clusterId, g] of byCluster) {
-      const prev = existing.get(clusterId);
-      let total_transactions = g.rows.length;
-      let total_amount = 0;
-      for (const x of g.rows) total_amount += Math.abs(x.amount);
-      if (prev) {
-        total_transactions += prev.total_transactions;
-        total_amount += prev.total_amount;
-      }
-      const mergedMerchants = uniqSampleMerchants(
-        [...(prev?.sample_merchants ?? []), ...g.merchants],
-        8,
-      );
-      const pending_review =
-        g.rows.some((x) => x.status === 'PENDING_REVIEW') ||
-        (prev?.pending_review ?? false);
-
-      const batchSuggestion = bestSuggestedFromRows(g.rows);
-      const suggested_category =
-        batchSuggestion ?? prev?.suggested_category ?? null;
-
-      const normalized = fileCurrency?.trim().toUpperCase();
-      const fromFile =
-        normalized && /^[A-Z]{3}$/.test(normalized) ? normalized : undefined;
-      const clusterCurrency = fromFile ?? prev?.currency;
-
-      const clusterItem: Record<string, unknown> = {
-        PK: pk,
-        SK: clusterSk(clusterId),
-        entity_type: 'CLUSTER',
-        cluster_id: clusterId,
-        sample_merchants: mergedMerchants.slice(0, 3),
-        total_transactions,
-        total_amount,
-        suggested_category,
-        assigned_category: prev?.assigned_category ?? null,
-        pending_review,
-      };
-      if (clusterCurrency) {
-        clusterItem.currency = clusterCurrency;
-      }
-      clusterItems.push(clusterItem);
-    }
-    return clusterItems;
-  }
-
   async getMetrics(userId: string): Promise<MetricsSnapshot> {
     const pk = userPk(userId);
     const [profile, metricsRow] = await Promise.all([
@@ -1144,7 +1044,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
     userId: string,
     rows: ImportTransactionInput[],
     transactionFileId: string,
-    fileCurrency?: string,
+    _fileCurrency?: string,
   ): Promise<ImportIngestResult> {
     if (rows.length === 0) {
       return {
@@ -1177,32 +1077,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
       );
     }
 
-    const byCluster = new Map<
-      string,
-      { rows: ImportTransactionInput[]; merchants: string[] }
-    >();
-    for (const r of rows) {
-      let g = byCluster.get(r.cluster_id);
-      if (!g) {
-        g = { rows: [], merchants: [] };
-        byCluster.set(r.cluster_id, g);
-      }
-      g.rows.push(r);
-      g.merchants.push(r.raw_merchant);
-    }
-
-    const existing = await this.fetchExistingClustersForIngest(
-      pk,
-      [...byCluster.keys()],
-    );
-    const clusterItems = this.buildClusterItemsForIngest(
-      pk,
-      byCluster,
-      existing,
-      fileCurrency,
-    );
-
-    await batchWriteAll(this.doc, this.tableName, [...txnItems, ...clusterItems]);
+    await batchWriteAll(this.doc, this.tableName, txnItems);
 
     await this.ensureProfile(userId);
 
@@ -1230,6 +1105,82 @@ export class DynamoFinanceRepository implements FinanceRepository {
         }),
       );
     }
+  }
+
+  async rebuildClusterAggregatesAfterImport(
+    userId: string,
+    clusterIds: string[],
+    fileCurrency?: string,
+  ): Promise<void> {
+    if (clusterIds.length === 0) return;
+    const pk = userPk(userId);
+    const items: Record<string, unknown>[] = [];
+    for (const clusterId of clusterIds) {
+      const members = await this.fetchClusterAggregateMembers(userId, clusterId);
+      const prev = await this.fetchClusterAggregateMetadata(pk, clusterId);
+      items.push(
+        buildClusterAggregateItem(pk, clusterId, members, {
+          fileCurrency,
+          assignedCategory: prev?.assigned_category ?? null,
+          currency: prev?.currency,
+        }),
+      );
+    }
+    if (items.length > 0) {
+      await batchWriteAll(this.doc, this.tableName, items);
+    }
+  }
+
+  private async fetchClusterAggregateMetadata(
+    pk: string,
+    clusterId: string,
+  ): Promise<ClusterAggregateMetadata | null> {
+    const got = await this.doc.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: { PK: pk, SK: clusterSk(clusterId) },
+      }),
+    );
+    return parseClusterAggregateMetadata(got.Item as Record<string, unknown> | undefined);
+  }
+
+  private async fetchClusterAggregateMembers(
+    userId: string,
+    clusterId: string,
+  ): Promise<ClusterAggregateMember[]> {
+    const gsi1pk = clusterTxnGsi1Pk(userId, clusterId);
+    const members: ClusterAggregateMember[] = [];
+    let startKey: Record<string, unknown> | undefined;
+
+    do {
+      const res = await this.doc.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          IndexName: GSI1,
+          KeyConditionExpression: 'GSI1PK = :gpk',
+          ExpressionAttributeValues: { ':gpk': gsi1pk },
+          ExclusiveStartKey: startKey,
+        }),
+      );
+      for (const row of res.Items ?? []) {
+        members.push({
+          raw_merchant: String(row.raw_merchant ?? ''),
+          amount: Number(row.amount ?? 0),
+          status: String(row.status ?? 'PENDING_REVIEW') as TransactionStatus,
+          suggested_category:
+            row.suggested_category === undefined
+              ? undefined
+              : (row.suggested_category as string | null),
+          category_confidence:
+            row.category_confidence === undefined
+              ? undefined
+              : Number(row.category_confidence),
+        });
+      }
+      startKey = res.LastEvaluatedKey as Record<string, unknown> | undefined;
+    } while (startKey);
+
+    return members;
   }
 
   async recordTransactionFile(

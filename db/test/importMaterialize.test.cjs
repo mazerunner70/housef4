@@ -121,6 +121,12 @@ test('materializeImportPlanToItems — adds file row and new txn without mutatin
   assert.ok(materialized.some((i) => i.id === importFileId && i.entity_type === 'TRANSACTION_FILE'));
   assert.ok(!materialized.some((i) => i.cluster_id === 'CL_old' && i.entity_type === 'CLUSTER'));
   assert.ok(materialized.some((i) => i.cluster_id === 'CL_new' && i.entity_type === 'CLUSTER'));
+  const remintCluster = materialized.find(
+    (i) => i.cluster_id === 'CL_remint' && i.entity_type === 'CLUSTER',
+  );
+  assert.ok(remintCluster);
+  assert.equal(remintCluster.total_transactions, 1);
+  assert.equal(remintCluster.total_amount, 10);
 });
 
 test('materializeImportPlanToItems — zero-row import adds TRANSACTION_FILE only', () => {

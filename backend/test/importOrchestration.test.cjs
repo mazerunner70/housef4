@@ -90,6 +90,11 @@ function createStubRepo(overrides = {}) {
       repo.lastRetiredClusterIds = clusterIds;
     },
 
+    rebuildClusterAggregatesAfterImport: async (_userId, clusterIds) => {
+      log('rebuildClusterAggregatesAfterImport');
+      repo.lastRebuiltClusterIds = clusterIds;
+    },
+
     recordTransactionFile: async (_userId, input) => {
       log('recordTransactionFile');
       repo.lastTransactionFile = input;
@@ -114,6 +119,7 @@ function createStubRepo(overrides = {}) {
 const PERSIST_STAGE_ORDER = [
   'patchExistingTransactionsAfterImport',
   'ingestImportBatch',
+  'rebuildClusterAggregatesAfterImport',
   'retireClusterAggregates',
   'recordTransactionFile',
   'refreshStoredDashboardMetrics',

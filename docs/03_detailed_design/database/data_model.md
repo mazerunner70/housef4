@@ -106,7 +106,7 @@ Represents a merchant **cluster** row for the review queue, aggregates, and tag 
 | `PK` | `USER#<user_id>` |
 | `SK` | `CLUSTER#<cluster_id>` |
 
-**Attributes (persisted)** — `ingestImportBatch`, `listPendingClusters`, `applyTagRule`.
+**Attributes (persisted)** — `rebuildClusterAggregatesAfterImport` (import stage 10), `listPendingClusters`, `applyTagRule`. `ingestImportBatch` writes **transactions only**; cluster rows are rebuilt from full GSI1 membership before retirement.
 
 | Attribute | Type | Notes |
 |-----------|------|--------|
