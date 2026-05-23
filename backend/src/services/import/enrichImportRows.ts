@@ -1,8 +1,11 @@
+import { randomUUID } from 'node:crypto';
+
 import type {
   ExistingTransactionPatch,
   FinanceRepository,
   ImportTransactionInput,
   TransactionRecord,
+  TransferPairingAssignment,
 } from '@housef4/db';
 
 import type { ParsedImportRow } from './canonical';
@@ -12,33 +15,69 @@ import {
   runClusterAndCategoryPipeline,
   type Assignment,
 } from './clusterPipeline';
+import { computeIngestTransferPairings } from '../pairing';
 import { createMerchantEmbedder } from './merchantsEmbedder';
 import { cleanMerchantForClustering } from './merchantNormalize';
 
 function embeddingsNearEqual(a: number[] | undefined, b: number[]): boolean {
-  if (!a || a.length !== b.length) return false;
+  if ((a?.length ?? -1) !== b.length) return false;
+  if (!a) return false;
   for (let i = 0; i < a.length; i++) {
-    if (Math.abs(a[i]! - b[i]!) > 1e-4) return false;
+    const av = a[i];
+    const bv = b[i];
+    if (av === undefined || bv === undefined) return false;
+    if (Math.abs(av - bv) > 1e-4) return false;
   }
   return true;
+}
+
+function pairingPatchDelta(
+  old: TransactionRecord,
+  pairing?: TransferPairingAssignment,
+): Partial<
+  Pick<
+    ExistingTransactionPatch,
+    'pairing_id' | 'pairing_source' | 'pairing_confidence'
+  >
+> {
+  if (!pairing) return {};
+  if (
+    old.pairing_id === pairing.pairing_id &&
+    old.pairing_source === pairing.pairing_source &&
+    old.pairing_confidence === pairing.pairing_confidence
+  ) {
+    return {};
+  }
+  return {
+    pairing_id: pairing.pairing_id,
+    pairing_source: pairing.pairing_source,
+    pairing_confidence: pairing.pairing_confidence,
+  };
 }
 
 function buildExistingPatches(
   existingSorted: TransactionRecord[],
   assignments: Assignment[],
+  pairingByLegId?: Readonly<Record<string, TransferPairingAssignment>>,
 ): ExistingTransactionPatch[] {
   const patches: ExistingTransactionPatch[] = [];
   for (let i = 0; i < existingSorted.length; i++) {
-    const old = existingSorted[i]!;
-    const a = assignments[i]!;
+    const old = existingSorted[i];
+    const a = assignments[i];
+    if (old === undefined || a === undefined) {
+      throw new Error('buildExistingPatches: misaligned existing vs assignments');
+    }
     const cleaned =
       old.cleaned_merchant ?? cleanMerchantForClustering(old.raw_merchant);
     const emb = Array.from(a.embedding);
+    const pairingExtras = pairingPatchDelta(old, pairingByLegId?.[old.id]);
+    const hasPairingUpdate = Object.keys(pairingExtras).length > 0;
     if (
       old.cluster_id === a.cluster_id &&
       old.category === a.category &&
       old.status === a.status &&
-      embeddingsNearEqual(old.merchant_embedding, emb)
+      embeddingsNearEqual(old.merchant_embedding, emb) &&
+      !hasPairingUpdate
     ) {
       continue;
     }
@@ -52,6 +91,7 @@ function buildExistingPatches(
       suggested_category: a.suggested_category,
       category_confidence: a.category_confidence,
       match_type: a.match_type,
+      ...pairingExtras,
     });
   }
   return patches;
@@ -70,10 +110,18 @@ export type EnrichImportResult = {
   };
 };
 
+export type EnrichImportContext = {
+  /** Financial account this file is imported into (`ACCOUNT#…`). */
+  importAccountId: string;
+  /** ISO 4217 when known from the parsed file (transfer pairing only). */
+  importCurrency?: string;
+};
+
 export async function enrichImportRows(
   userId: string,
   parsed: ParsedImportRow[],
   repo: FinanceRepository,
+  ctx: EnrichImportContext,
 ): Promise<EnrichImportResult> {
   if (parsed.length === 0) {
     return {
@@ -90,17 +138,48 @@ export async function enrichImportRows(
   }
 
   const existing = await repo.listTransactions(userId);
+  const newTransactionIds = parsed.map(
+    () => `txn_${randomUUID().replaceAll('-', '')}`,
+  );
+
+  const transactionFiles = await repo.listTransactionFiles(userId);
+  const fileIdToAccountId = new Map(
+    transactionFiles.map((f) => [f.id, f.account_id] as const),
+  );
+
+  const pairingByLegId = computeIngestTransferPairings({
+    importAccountId: ctx.importAccountId,
+    importCurrency: ctx.importCurrency,
+    parsed,
+    newTransactionIds,
+    existingTransactions: existing,
+    fileIdToAccountId,
+  });
+  /** `transfer_matching.md` §7: skip merchant clustering for any row already linked by `pairing_id`, not only legs paired this run. */
+  const pairedTxnIds = new Set<string>(Object.keys(pairingByLegId));
+  for (const t of existing) {
+    if (t.pairing_id) pairedTxnIds.add(t.id);
+  }
+
   const embedder = await createMerchantEmbedder();
   const { sources, assignments, existingSorted } =
-    await runClusterAndCategoryPipeline(existing, parsed, embedder);
+    await runClusterAndCategoryPipeline(existing, parsed, embedder, {
+      newTransactionIds,
+      pairedTxnIds,
+    });
 
-  const existingPatches = buildExistingPatches(existingSorted, assignments);
+  const existingPatches = buildExistingPatches(
+    existingSorted,
+    assignments,
+    pairingByLegId,
+  );
 
   const toInsert = buildNewImportInputs(
     userId,
     sources,
     assignments,
     parsed.length,
+    pairingByLegId,
   );
 
   const retiredClusterIds = computeRetiredClusterIds(existing, assignments);

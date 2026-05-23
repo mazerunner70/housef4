@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Create the app single-table and restore-staging replica on DynamoDB Local if they do not exist
-# (schema aligned with infrastructure/main.tf + dynamodb_restore_staging.tf).
+# Create the app single-table, restore-staging, and import-staging replicas on DynamoDB Local if they do not exist
+# (schema aligned with infrastructure/main.tf + dynamodb_restore_staging.tf + dynamodb_import_staging.tf).
 set -euo pipefail
 
 ENDPOINT="${DYNAMODB_ENDPOINT:-http://localhost:8000}"
 TABLE="${DYNAMODB_TABLE_NAME:-housef4-local-table}"
 STAGING_TABLE="${DYNAMODB_RESTORE_STAGING_TABLE_NAME:-housef4-local-restores-in-progress}"
+IMPORT_STAGING_TABLE="${DYNAMODB_IMPORT_STAGING_TABLE_NAME:-housef4-local-imports-in-progress}"
 REGION="${AWS_REGION:-eu-west-2}"
 
 export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-local}"
@@ -96,6 +97,7 @@ ensure_dynamo_table() {
 
 ensure_dynamo_table "$TABLE"
 ensure_dynamo_table "$STAGING_TABLE"
+ensure_dynamo_table "$IMPORT_STAGING_TABLE"
 
 # GET /api/health reads this row (same PK/SK as Terraform aws_dynamodb_table_item).
 aws dynamodb put-item \

@@ -64,6 +64,38 @@ Optional fields are omitted when not applicable (e.g. `sourceFormat` when unknow
 | `newClustersTouched` | number (optional) | Distinct cluster ids in the new rows. |
 | `amountNegation` | object (optional) | **`applied`**: signs were negated for canonical import; **`suggestInterest`**: interest-line heuristic favored negation; **`suggestPriorImport`**: latest prior import for this account recorded `format.amount_negated`; **`explicitOverride`**: `negate_amounts` was set in the multipart request. |
 
+### Duplicate upload bytes (`409 Conflict`)
+
+When the multipart **`file`** bytes match **`content_sha256`** of a **`TRANSACTION_FILE`** already stored for this user ([`import_transaction_files.md`](./import_transaction_files.md) §11.2.1), the server returns **`409 Conflict`** and **does not** parse or ingest again. Body uses the same **camelCase** convention as the success payload.
+
+```json
+{
+  "error": "duplicate_blob",
+  "message": "This exact file was already imported. Check import history for details.",
+  "existingImportFileId": "550e8400-e29b-41d4-a716-446655440000",
+  "priorImportFileName": "chase-checking-2024-01.ofx",
+  "priorImportCompletedAt": 1775044700000
+}
+```
+
+| Field | Type | Notes |
+|--------|------|--------|
+| `error` | string | **`duplicate_blob`**. |
+| `message` | string | Server-defined; suitable to show in UI. |
+| `existingImportFileId` | string | Prior import / transaction-file id. |
+| `priorImportFileName` | string | Filename (or default label) stored on the prior **`TRANSACTION_FILE.source.name`**. |
+| `priorImportCompletedAt` | number | Epoch **ms** UTC — prior **`timing.completed_at`**; align with **`GET /api/transaction-files`**. |
+
+### Import persistence failure (`5xx`)
+
+When the server cannot **fully commit** an import to the **primary** table, **`POST /api/imports`** returns **`5xx`** (generic error body unless a dedicated shape is added later). **No** new **`TRANSACTION_FILE`** row for that attempt. Clients treat **`5xx`** and timeouts as **“ledger unchanged”** for cluster/cache purposes — same as **`409 duplicate_blob`** (**§ SPA client obligations** below).
+
+**Preferred implementation** ([`import_transaction_files.md`](./import_transaction_files.md) **§8.7**): materialize the post-import ledger on a **per-user import-staging partition** (**next**), then **promote** to primary (**now**). Failure **before promote** clears **only that user's** staging partition; primary is untouched. **Fallback** (**§8.6**): in-place primary writes with compensating rollback.
+
+**Concurrent import (`409 Conflict`):** While **`IMPORT_LOCK`** (`SYSTEM#IMPORT_LOCK` on primary — [`database/data_model.md`](./database/data_model.md) §8.5a) is held for this user, a second **`POST /api/imports`** returns **`409`**. Same while **`RESTORE_LOCK`** is held (restore in progress).
+
+**Optional abort:** **`POST /api/imports/abort`** (when implemented) clears **`IMPORT_LOCK`** **first**, then deletes **this user's** import-staging partition only — mirror restore abort ([§6 **`POST /api/backup/restore/abort`**](#6-backup-and-restore)). Partial failure after lock cleared but staging not drained: retry abort (**idempotent**).
+
 ### Raw file archival (`IMPORT_BLOB_BACKEND`)
 
 When blob storage is **`filesystem`** or **`s3`** ([`import_file_blob_storage.md`](./import_file_blob_storage.md)), the server attempts to persist upload bytes and attach an optional **`blob`** map on the **`TRANSACTION_FILE`** row.
@@ -73,6 +105,16 @@ When blob storage is **`filesystem`** or **`s3`** ([`import_file_blob_storage.md
 When **`IMPORT_BLOB_BACKEND`** is **`off`**, no blob is attempted (legacy behaviour).
 
 After a successful import, subsequent **`GET /api/metrics`**, **`GET /api/transactions`**, **`GET /api/review-queue`**, **`GET /api/accounts`**, and **`GET /api/transaction-files`** responses must reflect the new data (including any new account).
+
+### SPA client obligations (imports and `cluster_id`)
+
+Imports may **remint transactional `cluster_id`** values corpus-wide (see **[`import_transaction_files.md`](./import_transaction_files.md)** §6.0 / §11.1). SPA behaviour should stay aligned so users never drive tag rules or review actions against stale cluster handles:
+
+1. **On submit:** When **`POST /api/imports`** is **actually sent** (multipart request starts, after passing local guards such as account selection), **immediately clear or neutralize** client-held data that assumes prior **`cluster_id`** values remain valid—for example cached **transactions** lists, **review-queue** slices, **`cluster_id`‑keyed selection or routing**, and client-side mirrors of cluster aggregates—preferring a deliberate **pending-import** shell instead of clickable stale clusters.
+
+2. **On synchronous success:** A **`200 OK`** **`ImportParseResult`** from **`POST /api/imports`** is the authoritative signal that clustering and persistence for **this upload** have **committed**. **Invalidate and refetch** (at minimum **`GET /api/transactions`**, **`GET /api/review-queue`**, **`GET /api/metrics`**, **`GET /api/transaction-files`**; **`GET /api/accounts`** when affected) **or** perform a **full page reload** so obsolete **`cluster_id`** references disappear. **Do not** treat **`409 Conflict`** (**`duplicate_blob`**), other **`4xx`/`5xx`**, or request timeouts as “clusters changed” for purposes of wiping unrelated UI state—the response body and product rules dictate recovery.
+
+Design rationale and async-import follow-ups: [`import_transaction_files.md`](./import_transaction_files.md) §11.1 item **3**.
 
 ### Accounts listing
 
@@ -233,15 +275,15 @@ Optional query: **`transactionFileId`** (string, UUID of a persisted import / `T
       "is_recurring": false,
       "transaction_file_id": "550e8400-e29b-41d4-a716-446655440000",
       "match_type": "RULE",
-      "match_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-      "match_source": "auto",
-      "match_confidence": "exact"
+      "pairing_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "pairing_source": "auto",
+      "pairing_confidence": "exact"
     }
   ]
 }
 ```
 
-The server **does not emit `null`** for omitted optional keys (for example **`match_id`**) — the property is absent unless persisted on the row. **`match_confidence`** here is a **string label** describing transfer-pair quality; numeric categorization certainty remains **`category_confidence`**.
+The server **does not emit `null`** for omitted optional keys (for example **`pairing_id`**) — the property is absent unless persisted on the row. **`pairing_confidence`** here is a **string label** describing transfer-pair quality; numeric categorization certainty remains **`category_confidence`**.
 
 | Field | Type | Notes |
 |--------|------|--------|
@@ -253,11 +295,12 @@ The server **does not emit `null`** for omitted optional keys (for example **`ma
 | `transactions[].cleaned_merchant` | string | Normalized merchant line for clustering and rules (see `transaction_analysis_clusters_and_categories.md`); always present on `GET /api/transactions` (derived when not stored). |
 | `transactions[].transaction_file_id` | string | Id of the `TRANSACTION_FILE` import that created this row. |
 | `transactions[].match_type` | string (optional) | How categorization was matched (rule vs ML, etc.). |
-| `transactions[].match_id` | string (optional) | Shared id linking two legs of an **internal transfer**; distinct from `match_type`. Present only when persisted on the row (otherwise omitted). |
-| `transactions[].match_source` | string (optional) | Present when stored with `match_id`; how the leg was paired, e.g. `auto` or `user`. |
-| `transactions[].match_confidence` | string (optional) | Present when stored with `match_id`; pairing-quality label such as `exact` or `within_epsilon` (not numeric — see **`category_confidence`** for ML score). |
+| `transactions[].pairing_id` | string (optional) | Shared id linking two legs of an **internal transfer**; distinct from `match_type`. Present only when persisted on the row (otherwise omitted). |
+| `transactions[].pairing_source` | string (optional) | Present when stored with `pairing_id`; how the leg was paired, e.g. `auto` or `user`. |
+| `transactions[].pairing_confidence` | string (optional) | Present when stored with `pairing_id`; pairing-quality label such as `exact` or `within_epsilon` (not numeric — see **`category_confidence`** for ML score). |
+| `transactions[].cluster_id` | string | Merchant **group** id (**`CL_`** + opaque suffix / UUID recommended — see **[`import_transaction_files.md`](./import_transaction_files.md)** §6.5–§6.6): **persisted whenever clustering runs.** Legacy rows may omit until backfilled; imports should populate **`CLUSTER#`** and **GSI1** per **[`database/data_model.md`](./database/data_model.md)** §1. |
 
-Other documented fields match the example payload (`raw_merchant`, `cluster_id`, `category`, `is_recurring`, `suggested_category`, …). See **`transfer_matching.md`** for semantics of **`match_*`** transfer fields versus **`match_type`**.
+Other documented fields match the example payload (`raw_merchant`, `cluster_id`, `category`, `is_recurring`, `suggested_category`, …). See **`transfer_matching.md`** for semantics of **`pairing_*`** transfer fields versus **`match_type`**.
 
 ### Transaction CSV export
 
@@ -277,7 +320,7 @@ Optional query parameters match **`GET /api/transactions`**:
 - **Success:** **`200 OK`** with **`Content-Type: text/csv; charset=utf-8`** and **`Content-Disposition: attachment`** suggesting `housef4-transactions-<epoch_ms>.csv`.
 - **`date`** is exported as a numeric epoch **milliseconds UTC** cell (same convention as JSON APIs).
 
-CSV columns (header row), in order: **`user_id`**, **`id`**, **`date`**, **`raw_merchant`**, **`cleaned_merchant`** (derived like **`GET /api/transactions`** when not stored), **`amount`**, **`file_amount`** (empty when not stored), **`cluster_id`**, **`category`**, **`status`**, **`is_recurring`**, **`transaction_file_id`**, **`account_id`**, **`account_name`**, **`import_file_name`**, **`import_source_format`**, **`import_file_currency`**, **`import_amount_negated`** (`true` / `false`, empty when the import predates this field), **`suggested_category`**, **`category_confidence`**, **`match_type`**, **`match_id`**, **`match_source`**, **`match_confidence`**, **`merchant_embedding_json`** (JSON array in one cell, empty when absent).
+CSV columns (header row), in order: **`user_id`**, **`id`**, **`date`**, **`raw_merchant`**, **`cleaned_merchant`** (derived like **`GET /api/transactions`** when not stored), **`amount`**, **`file_amount`** (empty when not stored), **`cluster_id`**, **`category`**, **`status`**, **`is_recurring`**, **`transaction_file_id`**, **`account_id`**, **`account_name`**, **`import_file_name`**, **`import_source_format`**, **`import_file_currency`**, **`import_amount_negated`** (`true` / `false`, empty when the import predates this field), **`suggested_category`**, **`category_confidence`**, **`match_type`**, **`pairing_id`**, **`pairing_source`**, **`pairing_confidence`**, **`merchant_embedding_json`** (JSON array in one cell, empty when absent).
 
 #### Errors
 
@@ -304,7 +347,8 @@ Fetches only clusters needing manual user mapping (Active Learning).
       "total_transactions": 14,
       "total_amount": 63.00,
       "suggested_category": null,
-      "currency": "USD"
+      "currency": "USD",
+      "previousCategoryId": "Groceries"
     }
   ]
 }
@@ -314,6 +358,7 @@ Fetches only clusters needing manual user mapping (Active Learning).
 |--------|------|--------|
 | `default_currency` | string | User profile default (ISO 4217). Used to format amounts when `pending_clusters[].currency` is omitted. |
 | `pending_clusters[].currency` | string (optional) | When set, from the import file metadata (e.g. OFX `CURDEF`) for the batch that last updated the cluster aggregate. |
+| `pending_clusters[].previousCategoryId` | string \| null | When **set**, unanimous **prior** transactional **`category`** among **existing** members before this ingest’s reassignment (**`CLUSTER.previous_category_id`** in **[`database/data_model.md`](./database/data_model.md)** §2). **Absent**/`null` when priors disagreed or were empty. Helps the client show “pick a definitive category”—see **[`import_transaction_files.md`](./import_transaction_files.md)** §7. |
 
 ## 5. Tag Rule Endpoint
 
@@ -497,4 +542,4 @@ Restore semantics are **full overwrite only**: merging backup data with current 
 
 Additive changes only unless noted otherwise; clients SHOULD tolerate unknown JSON keys.
 
-- **Transactions — internal transfer fields:** **`GET /api/transactions`** and **`GET /api/transactions/export`** may include optional **`match_id`**, **`match_source`**, and **`match_confidence`** on a row when those attributes exist in storage (paired transfer legs — see [`transfer_matching.md`](./transfer_matching.md)). Rows without internal-transfer metadata omit these keys (not **`null`**). **`match_confidence`** is a string label, not related to **`category_confidence`** (numeric).
+- **Transactions — internal transfer fields:** **`GET /api/transactions`** and **`GET /api/transactions/export`** may include optional **`pairing_id`**, **`pairing_source`**, and **`pairing_confidence`** on a row when those attributes exist in storage (paired transfer legs — see [`transfer_matching.md`](./transfer_matching.md)). Rows without internal-transfer metadata omit these keys (not **`null`**). **`pairing_confidence`** is a string label, not related to **`category_confidence`** (numeric). Restore and Dynamo reads still accept legacy **`match_*`** keys for the same semantics.

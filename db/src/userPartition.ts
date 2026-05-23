@@ -8,9 +8,13 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 
-import { requireRestoreStagingTableName, requireTableName } from './dynamoClient';
-import { RESTORE_LOCK_SK, userPk } from './keys';
-import type { RestoreLockRecord } from './types';
+import {
+  requireImportStagingTableName,
+  requireRestoreStagingTableName,
+  requireTableName,
+} from './dynamoClient';
+import { IMPORT_LOCK_SK, RESTORE_LOCK_SK, userPk } from './keys';
+import type { ImportLockRecord, RestoreLockRecord } from './types';
 
 export class RestoreLockConflictError extends Error {
   readonly code = 'RESTORE_LOCK_CONFLICT' as const;
@@ -21,18 +25,34 @@ export class RestoreLockConflictError extends Error {
   }
 }
 
+export class ImportLockConflictError extends Error {
+  readonly code = 'IMPORT_LOCK_CONFLICT' as const;
+
+  constructor(
+    readonly userId: string,
+    readonly reason: 'import_in_progress' | 'restore_in_progress' = 'import_in_progress',
+  ) {
+    super(
+      reason === 'restore_in_progress'
+        ? `restore in progress for user ${userId}`
+        : `import lock already exists for user ${userId}`,
+    );
+    this.name = 'ImportLockConflictError';
+  }
+}
+
 const PK = 'PK';
 const SK = 'SK';
 
 /** Which DynamoDB backing store to use; name is resolved from environment. */
-export type UserPartitionDataset = 'primary' | 'restore_staging';
+export type UserPartitionDataset = 'primary' | 'restore_staging' | 'import_staging';
 
 export function resolveUserPartitionDataset(
   dataset: UserPartitionDataset,
 ): string {
-  return dataset === 'primary'
-    ? requireTableName()
-    : requireRestoreStagingTableName();
+  if (dataset === 'primary') return requireTableName();
+  if (dataset === 'restore_staging') return requireRestoreStagingTableName();
+  return requireImportStagingTableName();
 }
 
 type DeleteBatchReq = Record<
@@ -76,7 +96,7 @@ export interface QueryUserPartitionPagesOptions {
   dataset: UserPartitionDataset;
   userId: string;
   /**
-   * When true, omit the `RESTORE_LOCK` row from yielded pages (e.g. backup export).
+   * When true, omit system lock rows from yielded pages (backup export).
    * @default false
    */
   excludeRestoreLock?: boolean;
@@ -110,7 +130,9 @@ export async function* queryUserPartitionPages(
       | undefined;
     const items = (res.Items ?? []) as Record<string, unknown>[];
     const page = excludeLock
-      ? items.filter((it) => it[SK] !== RESTORE_LOCK_SK)
+      ? items.filter(
+          (it) => it[SK] !== RESTORE_LOCK_SK && it[SK] !== IMPORT_LOCK_SK,
+        )
       : items;
     yield page;
   } while (ExclusiveStartKey);
@@ -139,9 +161,9 @@ export interface DeleteUserPartitionOptions {
 
 /**
  * Deletes every item under `PK = USER#<userId>` using paginated `Query` + `BatchWriteItem`
- * deletes. On **`primary`**, omits `RESTORE_LOCK_SK` so the single-flight lock survives
- * mid-restore wipes (`data_model.md` 8.2a); use **`releaseRestoreLock`** to remove it. On
- * **`restore_staging`**, deletes every sort key under the partition.
+ * deletes. On **`primary`**, omits `RESTORE_LOCK_SK` and `IMPORT_LOCK_SK` so single-flight
+ * locks survive mid-promote wipes; use **`releaseRestoreLock`** / **`releaseImportLock`** to remove them. On
+ * staging datasets, deletes every sort key under the partition.
  */
 export async function deleteUserPartition(opts: DeleteUserPartitionOptions): Promise<void> {
   const excludeLock = opts.dataset === 'primary';
@@ -170,7 +192,9 @@ export async function deleteUserPartition(opts: DeleteUserPartitionOptions): Pro
     for (const it of items) {
       const skVal = it[SK];
       if (typeof skVal !== 'string' || !skVal) continue;
-      if (excludeLock && skVal === RESTORE_LOCK_SK) continue;
+      if (excludeLock && (skVal === RESTORE_LOCK_SK || skVal === IMPORT_LOCK_SK)) {
+        continue;
+      }
       keys.push({ PK: pk, SK: skVal });
     }
     await batchDeleteKeys(opts.docClient, tableName, keys);
@@ -189,6 +213,10 @@ export async function acquireRestoreLock(
   userId: string,
   body: AcquireRestoreLockInput,
 ): Promise<void> {
+  const importLock = await getImportLock(docClient, userId);
+  if (importLock) {
+    throw new RestoreLockConflictError(userId);
+  }
   const pk = userPk(userId);
   const tableName = requireTableName();
   const item: Record<string, unknown> = {
@@ -284,5 +312,101 @@ export async function getRestoreLock(
     ...(backup_schema_version === undefined
       ? {}
       : { backup_schema_version }),
+  };
+}
+
+export interface AcquireImportLockInput {
+  import_file_id: string;
+  /** Epoch ms UTC. */
+  import_started_at: number;
+}
+
+/** Conditional `PutItem` on primary — throws {@link ImportLockConflictError} when blocked. */
+export async function acquireImportLock(
+  docClient: DynamoDBDocumentClient,
+  userId: string,
+  body: AcquireImportLockInput,
+): Promise<void> {
+  const restoreLock = await getRestoreLock(docClient, userId);
+  if (restoreLock) {
+    throw new ImportLockConflictError(userId, 'restore_in_progress');
+  }
+  const pk = userPk(userId);
+  const tableName = requireTableName();
+  const item: Record<string, unknown> = {
+    [PK]: pk,
+    [SK]: IMPORT_LOCK_SK,
+    entity_type: 'IMPORT_LOCK',
+    user_id: userId,
+    import_file_id: body.import_file_id,
+    import_started_at: body.import_started_at,
+  };
+  try {
+    await docClient.send(
+      new PutCommand({
+        TableName: tableName,
+        Item: item,
+        ConditionExpression: 'attribute_not_exists(#sk)',
+        ExpressionAttributeNames: { '#sk': SK },
+      }),
+    );
+  } catch (e) {
+    if (e instanceof ConditionalCheckFailedException) {
+      throw new ImportLockConflictError(userId, 'import_in_progress');
+    }
+    throw e;
+  }
+}
+
+/** Idempotent `DeleteItem` on **`IMPORT_LOCK`** on **primary**. */
+export async function releaseImportLock(
+  docClient: DynamoDBDocumentClient,
+  userId: string,
+): Promise<void> {
+  await docClient.send(
+    new DeleteCommand({
+      TableName: requireTableName(),
+      Key: { [PK]: userPk(userId), [SK]: IMPORT_LOCK_SK },
+    }),
+  );
+}
+
+/** Deletes **`IMPORT_LOCK`** on **primary** if present. */
+export async function deleteImportLockIfPresent(
+  docClient: DynamoDBDocumentClient,
+  userId: string,
+): Promise<boolean> {
+  const res = await docClient.send(
+    new DeleteCommand({
+      TableName: requireTableName(),
+      Key: { [PK]: userPk(userId), [SK]: IMPORT_LOCK_SK },
+      ReturnValues: 'ALL_OLD',
+    }),
+  );
+  const attrs = res.Attributes as Record<string, unknown> | undefined;
+  return attrs != null && Object.keys(attrs).length > 0;
+}
+
+/** Reads the import lock row on **primary** if present. */
+export async function getImportLock(
+  docClient: DynamoDBDocumentClient,
+  userId: string,
+): Promise<ImportLockRecord | null> {
+  const res = await docClient.send(
+    new GetCommand({
+      TableName: requireTableName(),
+      Key: { [PK]: userPk(userId), [SK]: IMPORT_LOCK_SK },
+    }),
+  );
+  const item = res.Item as Record<string, unknown> | undefined;
+  if (item?.entity_type !== 'IMPORT_LOCK') return null;
+  const persistedUserId = item.user_id;
+  const import_started_at = parseOptionalFiniteNumber(item.import_started_at);
+  const import_file_id = item.import_file_id;
+  return {
+    entity_type: 'IMPORT_LOCK',
+    user_id: typeof persistedUserId === 'string' ? persistedUserId : userId,
+    ...(typeof import_file_id === 'string' ? { import_file_id } : {}),
+    ...(import_started_at === undefined ? {} : { import_started_at }),
   };
 }

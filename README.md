@@ -10,6 +10,7 @@ Restore uses a **second** DynamoDB table (staging). The API Lambda must receive 
 |----------|---------|
 | `DYNAMODB_TABLE_NAME` | Primary application single-table (`${project}-${env}-…` — see Terraform `aws_dynamodb_table.app_table`). |
 | `DYNAMODB_RESTORE_STAGING_TABLE_NAME` | Restore staging replica; physical name **`${project_id}-${environment}-restores-in-progress`** (**[`infrastructure/dynamodb_restore_staging.tf`](infrastructure/dynamodb_restore_staging.tf)**). |
+| `DYNAMODB_IMPORT_STAGING_TABLE_NAME` | Import staging replica (now/next promote); physical name **`${project_id}-${environment}-imports-in-progress`** (**[`infrastructure/dynamodb_import_staging.tf`](infrastructure/dynamodb_import_staging.tf)**). When set, imports use §8.7 staging instead of in-place writes. |
 | `APP_ENV` | `local`, `staging`, or `production` — wired from Terraform **`var.app_env`**. |
 
 **AWS:** Values are injected on deploy; **`terraform output dynamodb_restore_staging_table_name`** prints the staging table name after apply.

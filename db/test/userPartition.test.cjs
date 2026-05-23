@@ -13,12 +13,14 @@ const {
   collectUserPartitionItems,
   deleteUserPartition,
   acquireRestoreLock,
+  acquireImportLock,
   releaseRestoreLock,
   deleteRestoreLockIfPresent,
   getRestoreLock,
   RestoreLockConflictError,
+  ImportLockConflictError,
 } = require('../dist/userPartition');
-const { RESTORE_LOCK_SK, userPk } = require('../dist/keys');
+const { IMPORT_LOCK_SK, RESTORE_LOCK_SK, userPk } = require('../dist/keys');
 
 /**
  * @param {import('node:test').TestContext} t
@@ -140,6 +142,7 @@ test('deleteUserPartition skips RESTORE_LOCK on primary when option omitted', as
           Items: [
             { PK: userPk('u42'), SK: 'TXN#a' },
             { PK: userPk('u42'), SK: RESTORE_LOCK_SK },
+            { PK: userPk('u42'), SK: IMPORT_LOCK_SK },
           ],
         });
       }
@@ -258,6 +261,9 @@ test('acquireRestoreLock succeeds on conditional put against DYNAMODB_TABLE_NAME
   let putCount = 0;
   const docClient = {
     send(cmd) {
+      if (cmd instanceof GetCommand) {
+        return Promise.resolve({});
+      }
       assert.ok(cmd instanceof PutCommand);
       assert.equal(cmd.input.TableName, 'tbl');
       putCount += 1;
@@ -275,7 +281,10 @@ test('acquireRestoreLock succeeds on conditional put against DYNAMODB_TABLE_NAME
 test('acquireRestoreLock maps ConditionalCheckFailedException to RestoreLockConflictError', async (t) => {
   withEnv(t, { DYNAMODB_TABLE_NAME: 'ignored' });
   const docClient = {
-    send() {
+    send(cmd) {
+      if (cmd instanceof GetCommand) {
+        return Promise.resolve({});
+      }
       throw new ConditionalCheckFailedException({
         message: 'conditional failure',
         $metadata: {},
@@ -287,6 +296,34 @@ test('acquireRestoreLock maps ConditionalCheckFailedException to RestoreLockConf
     () => acquireRestoreLock(docClient, 'user2', { restore_started_at: 5 }),
     (err) =>
       err instanceof RestoreLockConflictError && err.userId === 'user2',
+  );
+});
+
+test('acquireImportLock rejects when restore lock is present', async (t) => {
+  withEnv(t, { DYNAMODB_TABLE_NAME: 'tbl' });
+  const docClient = {
+    send(cmd) {
+      if (cmd instanceof GetCommand) {
+        return Promise.resolve({
+          Item: {
+            entity_type: 'RESTORE_LOCK',
+            user_id: 'user3',
+            restore_started_at: 1,
+          },
+        });
+      }
+      assert.fail('should not put when restore lock exists');
+    },
+  };
+  await assert.rejects(
+    () =>
+      acquireImportLock(docClient, 'user3', {
+        import_file_id: 'f1',
+        import_started_at: 2,
+      }),
+    (err) =>
+      err instanceof ImportLockConflictError &&
+      err.reason === 'restore_in_progress',
   );
 });
 

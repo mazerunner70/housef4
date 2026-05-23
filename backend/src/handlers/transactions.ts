@@ -48,14 +48,14 @@ export async function getTransactionsPayload(
       if (t.match_type !== undefined) {
         row.match_type = t.match_type;
       }
-      if (t.match_id !== undefined) {
-        row.match_id = t.match_id;
+      if (t.pairing_id !== undefined) {
+        row.pairing_id = t.pairing_id;
       }
-      if (t.match_source !== undefined) {
-        row.match_source = t.match_source;
+      if (t.pairing_source !== undefined) {
+        row.pairing_source = t.pairing_source;
       }
-      if (t.match_confidence !== undefined) {
-        row.match_confidence = t.match_confidence;
+      if (t.pairing_confidence !== undefined) {
+        row.pairing_confidence = t.pairing_confidence;
       }
       if (t.file_amount !== undefined) {
         row.file_amount = t.file_amount;

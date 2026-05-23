@@ -16,7 +16,7 @@ You are the Backend Architect for this monorepo. Your domain is strictly within 
 ## Directory Structure & Architecture
 You strictly enforce a clean, layered, modular directory structure inside `backend/src/` to maintain separation of concerns:
 - **`handlers/` (or `api/`)**: The entry points for requests (e.g., AWS Lambda handlers, Express routes). Responsible *only* for parsing the HTTP request, passing it to the service layer, and formatting the HTTP response. Absolutely no business logic here.
-- **`services/`**: The core business logic layer. Services orchestrate operations, enforce business rules, and call the database clients.
+- **`services/`**: The core business logic layer. Services orchestrate operations, enforce business rules, and call the database clients. Subfolders group domains (for example **`services/import/`** for file ingest and **`services/pairing/`** for internal-transfer pairing orchestration—the pure matcher also lives under **`db/`**).
 - **`models/`**: Defines data structures and validation schemas (e.g., Zod or custom validators) to strictly type incoming payloads and internal objects.
 - **`clients/`**: The data access layer. Contains database clients (e.g., RDS/Postgres abstractions, specific Lambda service clients, or ORMs) and handles direct data fetching and persistence.
 

@@ -35,11 +35,11 @@ export interface TransactionRecord {
   category_confidence?: number;
   match_type?: string;
   /** Shared id when this row is one leg of an internal transfer pair; distinct from `match_type`. See `docs/03_detailed_design/transfer_matching.md`. */
-  match_id?: string;
+  pairing_id?: string;
   /** `auto` \| `user` — how the transfer link was established. */
-  match_source?: string;
+  pairing_source?: string;
   /** e.g. `exact` \| `within_epsilon` — transfer pairing quality. */
-  match_confidence?: string;
+  pairing_confidence?: string;
   /** Import file id for the `TRANSACTION_FILE` row that created this transaction (same id as in `FILE#…` / `importFileId`). */
   transaction_file_id: string;
 }
@@ -55,6 +55,9 @@ export interface ExistingTransactionPatch {
   suggested_category: string | null;
   category_confidence: number;
   match_type: string;
+  pairing_id?: string;
+  pairing_source?: string;
+  pairing_confidence?: string;
 }
 
 export interface PendingClusterRecord {
@@ -106,6 +109,22 @@ export interface RestoreLockRecord {
   backup_schema_version?: number;
 }
 
+/** Transient marker on primary table during import staging promote (`import_transaction_files.md` §8.7.3). */
+export interface ImportLockRecord {
+  entity_type: 'IMPORT_LOCK';
+  user_id: string;
+  import_file_id?: string;
+  /** Epoch ms UTC. */
+  import_started_at?: number;
+}
+
+/** Planning output for import persistence (stages 9–10). */
+export interface ImportPersistPlan {
+  toInsert: ImportTransactionInput[];
+  existingPatches: ExistingTransactionPatch[];
+  retiredClusterIds: string[];
+}
+
 /** One normalized row produced by import parsing before persistence. */
 export interface ImportTransactionInput {
   /** Must match the `userId` passed to `ingestImportBatch`. */
@@ -129,6 +148,9 @@ export interface ImportTransactionInput {
   category_confidence?: number;
   match_type?: string;
   merchant_embedding?: number[];
+  pairing_id?: string;
+  pairing_source?: string;
+  pairing_confidence?: string;
 }
 
 export interface ImportIngestResult {
@@ -172,6 +194,17 @@ export interface TransactionFileTiming {
 }
 
 /**
+ * Existing import that matches duplicate raw-upload bytes (`import_transaction_files.md` §11.2.1).
+ */
+export interface DuplicateBlobImportMatch {
+  importFileId: string;
+  /** `TRANSACTION_FILE.source.name` from the prior ingest. */
+  sourceName: string;
+  /** `TRANSACTION_FILE.timing.completed_at` — epoch ms UTC. */
+  completedAt: number;
+}
+
+/**
  * One persisted import: sections match how the run proceeds — source file → format →
  * timing → result stats. See `database/data_model.md`.
  */
@@ -184,6 +217,11 @@ export interface TransactionFileInput {
   timing: TransactionFileTiming;
   /** Final batch summary (ingest + re-cluster), same shape as `ImportIngestResult`. */
   result: ImportIngestResult;
+  /**
+   * Lowercase hex SHA-256 of the multipart `file` bytes (duplicate detection).
+   * Omitted on legacy items and on old backups restored before this field existed.
+   */
+  content_sha256?: string;
 }
 
 /** Stored row: same sections as {@link TransactionFileInput} plus `user_id`. */

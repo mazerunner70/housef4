@@ -194,6 +194,7 @@ Clients infer archival only from **`GET /api/transaction-files`** — presence o
 |----------|-----------|
 | Blob **`Put`** fails after ingest succeeded | **Non-fatal (V1 — mandatory):** **`200`** + **`TRANSACTION_FILE` without `blob`**; log + **`import.blob_write_failed`** — see bullets above. **Do not** return **`5xx`** solely for blob failure (includes throttle, **`AccessDenied`**, disk full during **`Put`**) when the metadata-only **`recordTransactionFile`** succeeds. |
 | Dynamo **`recordTransactionFile`** fails after blob **`Put`** | **Delete** object with same key (compensating `DeleteObject` / `unlink`); retry Dynamo once; **`5xx`** if the **`TRANSACTION_FILE`** row cannot be persisted. |
+| Import **aborted** before promote (**§8.7**) | **Delete** blob if written; clear **this user's** import-staging partition only — [`import_transaction_files.md`](./import_transaction_files.md) **§8.7.4**. Primary (**now**) unchanged. |
 
 Detect incomplete **`Put`** (e.g. compare written bytes to buffer length); failed **`Put`** follows the **non-fatal** row above, not a silent partial object.
 
@@ -227,7 +228,7 @@ When implementing, update in the **same change set**:
 2. [`api_contract.md`](./api_contract.md) — `transaction_files[]` shape if exposed to clients.
 3. [`backend_dev_and_prod_environments.md`](./backend_dev_and_prod_environments.md) — §5 env table rows for blob vars.
 4. [`02_data_flow.md`](../02_architecture/02_data_flow.md) — note object store step after parse/ingest.
-5. [`import_transaction_files.md`](./import_transaction_files.md) — cross-link from persistence / pipeline overview.
+5. [`import_transaction_files.md`](./import_transaction_files.md) — cross-link from persistence / pipeline overview (**§8.7** import staging, **§8.6** fallback).
 
 ---
 

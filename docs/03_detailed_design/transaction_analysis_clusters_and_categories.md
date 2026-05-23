@@ -2,7 +2,7 @@
 
 This document defines the **two-layer model** used in ML experimentation ([`ml-training/notebooks/experimentation.ipynb`](../../ml-training/notebooks/experimentation.ipynb)) and outlines how to align it with the live backend. It complements the [`transaction_analysis_expert`](../../.agents/skills/transaction_analysis_expert/SKILL.md) skill (clustering, categorization, low-cost storage) and [`import_field_mapping.md`](./import_field_mapping.md) (canonical `raw_merchant`).
 
-**Internal transfers:** Transactions linked by **`match_id`** are **not** merchant spend; the clustering pipeline must **exclude** them (see [`transfer_matching.md`](./transfer_matching.md)).
+**Internal transfers:** Transactions linked by **`pairing_id`** are **not** merchant spend; the clustering pipeline must **exclude** them (see [`transfer_matching.md`](./transfer_matching.md)).
 
 ---
 
@@ -135,7 +135,7 @@ You do not lose prior mappings if **learning is keyed on stable production ident
 
 **1. Never use raw DBSCAN labels as `cluster_id`.** Integer labels from a notebook or batch job (`0`, `3`, `-1`, …) are **not durable** across runs (§2.4). Persist only a **stable** id (e.g. `CL_<hash(normalized_merchant)>` or a persisted UUID tied to a cluster record). Offline `-1` is an analysis artifact; it should not appear in the database as the user’s cluster key.
 
-**2. How “-1” maps in production.** Rows that *look* like noise in a one-off DBSCAN run should still receive a **deterministic singleton** `cluster_id` in the app (same normalized string → same id). When the user classifies one of those transactions, they are classifying that **stable id**. A **later import** of the same merchant line (after the same normalizer) resolves to the **same** `cluster_id`, so the existing **CLASSIFIED** / tag-rule behaviour in step 2 above still applies and the category is retained.
+**2. How notebook “−1” (noise) maps in production.** The **import pipeline** mints fresh opaque **`cluster_id`** strings (**`CL_` + UUID** recommended — [`import_transaction_files.md`](./import_transaction_files.md) §6.5–§6.6): **never** persist **`null`** or DBSCAN integers as the Dynamo cluster handle for “unassigned” rows. Optionally combine that with **deterministic singleton** ids derived from normalized merchant/medoid hashing so repeat merchants collide on the **same string id** across imports (**§5**). Use **`cleaned_merchant` fallbacks / secondary lookup** wherever splits/merges re-mint UUIDs so category inheritance survives churn.
 
 **3. If you change how `cluster_id` is computed** (new regex in the cleaner, switch from hash(raw) to hash(cleaned), new embedding centroids):
 

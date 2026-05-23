@@ -24,6 +24,8 @@ import {
 } from './keys';
 import { getDocumentClient, requireTableName } from './dynamoClient';
 import { runRestoreAbortWorkflow, runRestoreBackupWorkflow } from './backupRestore';
+import { runImportStagingWorkflow, runImportAbortWorkflow } from './importStaging';
+import { getImportStagingTableName } from './dynamoClient';
 import { collectUserPartitionItems } from './userPartition';
 import { formatTransactionsAsCsv } from './transactionCsvExport';
 import {
@@ -39,8 +41,10 @@ import {
   type AccountRecord,
   type BackupRestoreCounts,
   type BackupSnapshotV1,
+  type DuplicateBlobImportMatch,
   type ExistingTransactionPatch,
   type ImportIngestResult,
+  type ImportPersistPlan,
   type ImportTransactionInput,
   type MetricsSnapshot,
   type PendingClusterRecord,
@@ -146,14 +150,14 @@ function transactionRecordToBackupWire(rec: TransactionRecord): Record<string, u
   if (rec.match_type !== undefined) {
     row.match_type = rec.match_type;
   }
-  if (rec.match_id !== undefined) {
-    row.match_id = rec.match_id;
+  if (rec.pairing_id !== undefined) {
+    row.pairing_id = rec.pairing_id;
   }
-  if (rec.match_source !== undefined) {
-    row.match_source = rec.match_source;
+  if (rec.pairing_source !== undefined) {
+    row.pairing_source = rec.pairing_source;
   }
-  if (rec.match_confidence !== undefined) {
-    row.match_confidence = rec.match_confidence;
+  if (rec.pairing_confidence !== undefined) {
+    row.pairing_confidence = rec.pairing_confidence;
   }
   return row;
 }
@@ -255,6 +259,7 @@ function appendPartitionItemToBackupExport(
         item.row_count,
       );
       const accountId = wireString(item.account_id, '');
+      const contentSha256 = wireString(item.content_sha256, '');
       const rec: TransactionFileRecord = {
         user_id: wireString(item.user_id, userId),
         id: wireString(item.id, ''),
@@ -263,6 +268,7 @@ function appendPartitionItemToBackupExport(
         format: parseFormatFromItem(item),
         timing: parseTimingFromItem(item),
         result,
+        ...(contentSha256 ? { content_sha256: contentSha256 } : {}),
       };
       acc.transaction_files.push({
         entity_type: 'TRANSACTION_FILE',
@@ -273,6 +279,7 @@ function appendPartitionItemToBackupExport(
         format: rec.format,
         timing: rec.timing,
         result: rec.result,
+        ...(rec.content_sha256 ? { content_sha256: rec.content_sha256 } : {}),
       });
       break;
     }
@@ -317,6 +324,13 @@ export interface FinanceRepository {
     userId: string,
     input: TransactionFileInput,
   ): Promise<void>;
+  /**
+   * When a completed import stored `content_sha256`, returns metadata for duplicate-blob **409** responses.
+   */
+  findDuplicateBlobImport(
+    userId: string,
+    contentSha256Hex: string,
+  ): Promise<DuplicateBlobImportMatch | null>;
   listTransactionFiles(userId: string): Promise<TransactionFileRecord[]>;
   listAccounts(userId: string): Promise<AccountRecord[]>;
   getAccount(
@@ -353,6 +367,26 @@ export interface FinanceRepository {
    * On staging cleanup failure after lock handling, rejects with `RestoreAbortStagingCleanupError`.
    */
   abortRestoreCleanup(userId: string): Promise<{ restore_lock_cleared: boolean }>;
+  /**
+   * §8.7 — materialize post-import partition to import staging, validate, promote to primary.
+   * Requires `DYNAMODB_IMPORT_STAGING_TABLE_NAME`. Includes `TRANSACTION_FILE` row and metrics refresh.
+   */
+  persistImportPlanViaStaging(
+    userId: string,
+    input: {
+      importFileId: string;
+      importStartedAt: number;
+      plan: ImportPersistPlan;
+      transactionFile: TransactionFileInput;
+      fileCurrency?: string;
+    },
+  ): Promise<void>;
+  /**
+   * Clear import lock on primary then import-staging partition (optional abort endpoint).
+   */
+  abortImportCleanup(userId: string): Promise<{ import_lock_cleared: boolean }>;
+  /** Whether import staging table env is configured (§8.7 vs §8.6 in-place fallback). */
+  isImportStagingEnabled(): boolean;
 }
 
 interface ClusterItem {
@@ -548,22 +582,32 @@ function copyFileAmountIfPresent(
   if (Number.isFinite(fa)) rec.file_amount = fa;
 }
 
-const OPTIONAL_TXN_STRING_KEYS = [
-  'match_type',
-  'match_id',
-  'match_source',
-  'match_confidence',
-] as const;
-
 function copyOptionalTxnStringFields(
   item: Record<string, unknown>,
   rec: TransactionRecord,
 ): void {
-  for (const k of OPTIONAL_TXN_STRING_KEYS) {
-    const v = item[k];
-    if (v !== undefined && v !== null) {
-      rec[k] = wireString(v, '');
-    }
+  const mt = item.match_type;
+  if (mt !== undefined && mt !== null) {
+    rec.match_type = wireString(mt, '');
+  }
+}
+
+/** Reads transfer pairing fields; prefers `pairing_*`, falls back to legacy Dynamo keys `match_*`. */
+function copyTransferPairingFields(
+  item: Record<string, unknown>,
+  rec: TransactionRecord,
+): void {
+  const pid = item.pairing_id ?? item.match_id;
+  if (pid !== undefined && pid !== null) {
+    rec.pairing_id = wireString(pid, '');
+  }
+  const src = item.pairing_source ?? item.match_source;
+  if (src !== undefined && src !== null) {
+    rec.pairing_source = wireString(src, '');
+  }
+  const conf = item.pairing_confidence ?? item.match_confidence;
+  if (conf !== undefined && conf !== null) {
+    rec.pairing_confidence = wireString(conf, '');
   }
 }
 
@@ -589,6 +633,7 @@ function transactionOptionalFields(
     rec.category_confidence = Number(item.category_confidence);
   }
   copyOptionalTxnStringFields(item, rec);
+  copyTransferPairingFields(item, rec);
   copyFileAmountIfPresent(item, rec);
 }
 
@@ -658,6 +703,11 @@ function importTransactionToDynamoItem(
   }
   if (r.match_type !== undefined) {
     item.match_type = r.match_type;
+  }
+  if (r.pairing_id !== undefined) {
+    item.pairing_id = r.pairing_id;
+    if (r.pairing_source !== undefined) item.pairing_source = r.pairing_source;
+    if (r.pairing_confidence !== undefined) item.pairing_confidence = r.pairing_confidence;
   }
   return item;
 }
@@ -1050,6 +1100,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
     for (const p of patches) {
       const gsi1pk = clusterTxnGsi1Pk(userId, p.cluster_id);
       const gsi1sk = clusterTxnGsi1Sk(p.id);
+      const hasPairing = p.pairing_id !== undefined;
       await this.doc.send(
         new UpdateCommand({
           TableName: this.tableName,
@@ -1057,7 +1108,10 @@ export class DynamoFinanceRepository implements FinanceRepository {
           UpdateExpression:
             'SET cluster_id = :cid, category = :cat, #st = :st, cleaned_merchant = :cm, ' +
             'GSI1PK = :gpk, GSI1SK = :gsk, merchant_embedding = :me, ' +
-            'suggested_category = :sg, category_confidence = :cc, #mt = :mt',
+            'suggested_category = :sg, category_confidence = :cc, #mt = :mt' +
+            (hasPairing
+              ? ', pairing_id = :pid, pairing_source = :psrc, pairing_confidence = :pconf'
+              : ''),
           ExpressionAttributeNames: {
             '#st': 'status',
             '#mt': 'match_type',
@@ -1073,6 +1127,13 @@ export class DynamoFinanceRepository implements FinanceRepository {
             ':sg': p.suggested_category,
             ':cc': p.category_confidence,
             ':mt': p.match_type,
+            ...(hasPairing
+              ? {
+                  ':pid': p.pairing_id,
+                  ':psrc': p.pairing_source,
+                  ':pconf': p.pairing_confidence,
+                }
+              : {}),
           },
         }),
       );
@@ -1188,12 +1249,60 @@ export class DynamoFinanceRepository implements FinanceRepository {
       timing: input.timing,
       result: input.result,
     };
+    const h = input.content_sha256?.trim();
+    if (h) {
+      item.content_sha256 = h;
+    }
     await this.doc.send(
       new PutCommand({
         TableName: this.tableName,
         Item: item,
       }),
     );
+  }
+
+  async findDuplicateBlobImport(
+    userId: string,
+    contentSha256Hex: string,
+  ): Promise<DuplicateBlobImportMatch | null> {
+    const trimmed = contentSha256Hex.trim();
+    if (!trimmed) return null;
+    const pk = userPk(userId);
+    let startKey: Record<string, unknown> | undefined;
+    do {
+      const res = await this.doc.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          KeyConditionExpression: 'PK = :pk AND begins_with(SK, :fp)',
+          FilterExpression: '#h = :h AND entity_type = :et',
+          ExpressionAttributeNames: { '#h': 'content_sha256' },
+          ExpressionAttributeValues: {
+            ':pk': pk,
+            ':fp': FILE_PREFIX,
+            ':h': trimmed,
+            ':et': 'TRANSACTION_FILE',
+          },
+          ExclusiveStartKey: startKey,
+        }),
+      );
+      for (const raw of res.Items ?? []) {
+        const row = raw as Record<string, unknown>;
+        const fid = wireString(row.id, '');
+        if (!fid) continue;
+        const rowHash = wireString(row.content_sha256, '');
+        if (rowHash !== trimmed) continue;
+        const fallbackName = wireString(row.name, 'import');
+        const source = parseSourceFromItem(row, fallbackName);
+        const timing = parseTimingFromItem(row);
+        return {
+          importFileId: fid,
+          sourceName: source.name,
+          completedAt: timing.completed_at,
+        };
+      }
+      startKey = res.LastEvaluatedKey as Record<string, unknown> | undefined;
+    } while (startKey);
+    return null;
   }
 
   async listTransactionFiles(userId: string): Promise<TransactionFileRecord[]> {
@@ -1223,6 +1332,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
           row.row_count,
         );
         const accountId = wireString(row.account_id, '');
+        const contentSha256 = wireString(row.content_sha256, '');
         const rec: TransactionFileRecord = {
           user_id: wireString(row.user_id, userId),
           id: wireString(row.id, ''),
@@ -1231,6 +1341,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
           format: parseFormatFromItem(row),
           timing: parseTimingFromItem(row),
           result,
+          ...(contentSha256 ? { content_sha256: contentSha256 } : {}),
         };
         out.push(rec);
       }
@@ -1531,5 +1642,37 @@ export class DynamoFinanceRepository implements FinanceRepository {
     userId: string,
   ): Promise<{ restore_lock_cleared: boolean }> {
     return runRestoreAbortWorkflow({ doc: this.doc, userId });
+  }
+
+  isImportStagingEnabled(): boolean {
+    return getImportStagingTableName() !== undefined;
+  }
+
+  async persistImportPlanViaStaging(
+    userId: string,
+    input: {
+      importFileId: string;
+      importStartedAt: number;
+      plan: ImportPersistPlan;
+      transactionFile: TransactionFileInput;
+      fileCurrency?: string;
+    },
+  ): Promise<void> {
+    await runImportStagingWorkflow({
+      doc: this.doc,
+      userId,
+      importFileId: input.importFileId,
+      importStartedAt: input.importStartedAt,
+      plan: input.plan,
+      transactionFile: input.transactionFile,
+      fileCurrency: input.fileCurrency,
+      refreshMetrics: () => this.refreshStoredDashboardMetrics(userId),
+    });
+  }
+
+  async abortImportCleanup(
+    userId: string,
+  ): Promise<{ import_lock_cleared: boolean }> {
+    return runImportAbortWorkflow({ doc: this.doc, userId });
   }
 }
