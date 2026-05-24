@@ -8,6 +8,7 @@ import {
   extractImportMultipart,
   MultipartFileTooLargeError,
 } from '../services/import/multipartFile';
+import { createImportStageTracer } from '../services/import/importStageTracing';
 import type { InternalRequest } from '../types';
 
 /**
@@ -24,11 +25,16 @@ export async function postImportPayload(
     throw new HttpError(400, 'Request body is empty');
   }
 
+  const tracer = createImportStageTracer({ userId });
+
   // §4.2 stage 1 — Ingress (`extractImportMultipart`).
   let extracted;
   try {
-    extracted = await extractImportMultipart(req.headers, buf);
+    extracted = await tracer.run('1', () =>
+      extractImportMultipart(req.headers, buf),
+    );
   } catch (e) {
+    tracer.emitSummary('error');
     if (e instanceof MultipartFileTooLargeError) {
       throw new HttpError(413, e.message, {
         error: 'Import file exceeds maximum size',
@@ -39,6 +45,7 @@ export async function postImportPayload(
     throw e;
   }
   if (!extracted?.file.buffer.length) {
+    tracer.emitSummary('error');
     throw new HttpError(
       400,
       'Expected multipart/form-data with a non-empty part named "file"',
@@ -47,5 +54,5 @@ export async function postImportPayload(
 
   const repo = getFinanceRepository();
 
-  return executeImportOrchestration({ userId, repo, extracted });
+  return executeImportOrchestration({ userId, repo, extracted, tracer });
 }

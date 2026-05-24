@@ -587,7 +587,7 @@ Clients format `**priorImportCompletedAt`** in local time for display and cross-
    **Mechanism (implemented):** Conditional **`PutItem`** on primary **`SYSTEM#IMPORT_LOCK`** (`acquireImportLock` / `releaseImportLock` in `db/`); **`409 Conflict`** with **`import_in_progress`** or **`restore_in_progress`** — see [`api_contract.md`](./api_contract.md) and **§8.5a** / **§8.7.3**. Orchestration acquires the lock **before** primary-table writes (e.g. `createAccount`) and **before** stage-6 corpus reads; staging promote skips a second acquire via **`importLockAlreadyHeld`**.
 2. **Per-stage metrics and tracing**
   **Decision:** Emit **clear success/failure and duration per orchestration stage** (correlate with `import_file_id` where available).
-   `**Still needed`:** Metric names, dimensions, CloudWatch vs structured logs—and align with §4.8 “per-stage observability.”
+   **Mechanism (implemented):** Structured JSON logs plus **CloudWatch Metrics via EMF** (`aws-embedded-metrics`, namespace **`Housef4/Import`**) on Lambda; local dev logs only. See [`import_observability.md`](./import_observability.md).
 3. **Scale-out (SQS / workers)**
   **Decision:** **Out of scope** for current milestone; single-Lambda planning remains until thresholds in §4.8 drive a redesign.
    `**Still needed`:** None for MVP.

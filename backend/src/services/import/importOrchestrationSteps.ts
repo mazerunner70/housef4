@@ -25,6 +25,7 @@ import {
 } from './importPersistPhase';
 import { runImportPlanning } from './runImportPlanning';
 import type { PersistPlan } from './persistPlan';
+import type { ImportStageTracer } from './importStageTracing';
 
 export type AccountSelector = Readonly<{
   newName: string;
@@ -164,17 +165,35 @@ export async function runImportPlanningStages(
   repo: FinanceRepository,
   accountId: string,
   parsed: ParsedImportUpload,
+  tracer?: ImportStageTracer,
 ): Promise<PersistPlan> {
   const { rows } = parsed;
-  const { transactionIds } = allocateBatchArtefactIds(rows.length);
-  const ledgerSnapshot =
-    rows.length > 0 ? await buildLedgerSnapshot(userId, repo) : undefined;
+  const { transactionIds } = await (tracer?.run('5', () =>
+    Promise.resolve(allocateBatchArtefactIds(rows.length)),
+  ) ?? Promise.resolve(allocateBatchArtefactIds(rows.length)));
+
+  if (rows.length === 0) {
+    tracer?.markSkipped('6', 'zero_rows');
+    tracer?.markSkipped('7', 'zero_rows');
+    tracer?.markSkipped('8', 'zero_rows');
+    tracer?.markSkipped('9', 'zero_rows');
+    return runImportPlanning(userId, rows, {
+      importAccountId: accountId,
+      importCurrency: parsed.currency,
+      newTransactionIds: transactionIds,
+    });
+  }
+
+  const ledgerSnapshot = tracer
+    ? await tracer.run('6', () => buildLedgerSnapshot(userId, repo))
+    : await buildLedgerSnapshot(userId, repo);
 
   return runImportPlanning(userId, rows, {
     importAccountId: accountId,
     importCurrency: parsed.currency,
     newTransactionIds: transactionIds,
-    ...(ledgerSnapshot && { ledgerSnapshot }),
+    ledgerSnapshot,
+    tracer,
   });
 }
 
@@ -241,6 +260,7 @@ export async function persistImportResult(params: {
   importStartedAt: number;
   importCurrency?: string;
   transactionFileInput: TransactionFileInput;
+  tracer?: ImportStageTracer;
 }): Promise<void> {
   const persistParams = {
     userId: params.userId,
@@ -250,6 +270,7 @@ export async function persistImportResult(params: {
     importStartedAt: params.importStartedAt,
     importCurrency: params.importCurrency,
     transactionFileInput: params.transactionFileInput,
+    tracer: params.tracer,
   };
 
   if (params.repo.isImportStagingEnabled()) {

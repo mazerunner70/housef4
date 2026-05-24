@@ -2,6 +2,7 @@ import type { FinanceRepository } from '@housef4/db';
 import { ImportLockConflictError } from '@housef4/db';
 
 import { importLockConflictHttpError } from './importLockHttp';
+import type { ImportStageTracer } from './importStageTracing';
 import { persistImportPlan, toImportPersistPlan, type PersistPlan } from './persistPlan';
 
 type TransactionFileInput = Parameters<
@@ -16,6 +17,7 @@ type PersistImportPhaseParams = Readonly<{
   importStartedAt: number;
   importCurrency?: string;
   transactionFileInput: TransactionFileInput;
+  tracer?: ImportStageTracer;
 }>;
 
 async function mapImportLockConflict<T>(fn: () => Promise<T>): Promise<T> {
@@ -61,7 +63,22 @@ export async function persistImportViaStaging(
     importStartedAt,
     importCurrency,
     transactionFileInput,
+    tracer,
   } = params;
+
+  if (tracer) {
+    await tracer.run('10', () =>
+      repo.persistImportPlanViaStaging(userId, {
+        importFileId,
+        importStartedAt,
+        plan: toImportPersistPlan(plan),
+        transactionFile: transactionFileInput,
+        fileCurrency: importCurrency,
+        importLockAlreadyHeld: true,
+      }),
+    );
+    return;
+  }
 
   await repo.persistImportPlanViaStaging(userId, {
     importFileId,
@@ -84,27 +101,48 @@ export async function persistImportInPlace(
     importFileId,
     importCurrency,
     transactionFileInput,
+    tracer,
   } = params;
 
   try {
-    const result = await persistImportPlan({
-      userId,
-      repo,
-      plan,
-      importFileId,
-      fileCurrency: importCurrency,
-    });
+    const result = await (tracer?.run('10', () =>
+      persistImportPlan({
+        userId,
+        repo,
+        plan,
+        importFileId,
+        fileCurrency: importCurrency,
+      }),
+    ) ??
+      persistImportPlan({
+        userId,
+        repo,
+        plan,
+        importFileId,
+        fileCurrency: importCurrency,
+      }));
 
-    await repo.recordTransactionFile(userId, {
-      ...transactionFileInput,
-      result: {
-        ...result,
-        existingTransactionsUpdated: plan.existingPatches.length,
-        newClustersTouched: plan.summary.newClustersTouched,
-      },
-    });
+    await (tracer?.run('11', () =>
+      repo.recordTransactionFile(userId, {
+        ...transactionFileInput,
+        result: {
+          ...result,
+          existingTransactionsUpdated: plan.existingPatches.length,
+          newClustersTouched: plan.summary.newClustersTouched,
+        },
+      }),
+    ) ??
+      repo.recordTransactionFile(userId, {
+        ...transactionFileInput,
+        result: {
+          ...result,
+          existingTransactionsUpdated: plan.existingPatches.length,
+          newClustersTouched: plan.summary.newClustersTouched,
+        },
+      }));
 
-    await repo.refreshStoredDashboardMetrics(userId);
+    await (tracer?.run('12', () => repo.refreshStoredDashboardMetrics(userId)) ??
+      repo.refreshStoredDashboardMetrics(userId));
   } catch (e) {
     await releaseImportLockBestEffort(repo, userId);
     throw e;

@@ -21,6 +21,7 @@ import {
 } from './clusterPipeline';
 import type { LedgerSnapshot } from './ledgerSnapshot';
 import type { PersistPlan } from './persistPlan';
+import type { ImportStageTracer } from './importStageTracing';
 import { computeIngestTransferPairings } from '../pairing';
 import { createMerchantEmbedder } from './merchantsEmbedder';
 import { cleanMerchantForClustering } from './merchantNormalize';
@@ -34,6 +35,8 @@ export type ImportPlanningContext = Readonly<{
   newTransactionIds: readonly string[];
   /** §4.2 stage 6 output; required when `parsed.length > 0`. */
   ledgerSnapshot?: LedgerSnapshot;
+  /** Optional §4.2 stages **7–9** timing (orchestration). */
+  tracer?: ImportStageTracer;
   /**
    * Test-only: skip DBSCAN in stage 8; labels align with clusterable sources
    * (existing clusterable first, then new clusterable rows in parse order).
@@ -207,16 +210,29 @@ export async function runImportPlanning(
 
   const { transactions: existing, fileIdToAccountId } = ctx.ledgerSnapshot;
   const newTransactionIds = ctx.newTransactionIds;
+  const tracer = ctx.tracer;
 
   // --- Stage 7: Transfer pairing (`transfer_matching.md`, ingest-scoped). ---
-  const pairingByLegId = computeIngestTransferPairings({
-    importAccountId: ctx.importAccountId,
-    importCurrency: ctx.importCurrency,
-    parsed,
-    newTransactionIds,
-    existingTransactions: existing,
-    fileIdToAccountId,
-  });
+  const pairingByLegId = await (tracer?.run('7', async () =>
+    computeIngestTransferPairings({
+      importAccountId: ctx.importAccountId,
+      importCurrency: ctx.importCurrency,
+      parsed,
+      newTransactionIds,
+      existingTransactions: existing,
+      fileIdToAccountId,
+    }),
+  ) ??
+    Promise.resolve(
+      computeIngestTransferPairings({
+        importAccountId: ctx.importAccountId,
+        importCurrency: ctx.importCurrency,
+        parsed,
+        newTransactionIds,
+        existingTransactions: existing,
+        fileIdToAccountId,
+      }),
+    ));
   /** `transfer_matching.md` §7: skip merchant clustering for any row already linked by `pairing_id`, not only legs paired this run. */
   const pairedTxnIds = new Set<string>(Object.keys(pairingByLegId));
   for (const t of existing) {
@@ -225,12 +241,23 @@ export async function runImportPlanning(
 
   // --- Stage 8: Cluster and categorise (embeddings + DBSCAN + category rules). ---
   const embedder = await createMerchantEmbedder();
-  const pipeline = await runClusterAndCategoryPipeline(existing, parsed, embedder, {
-    newTransactionIds,
-    pairedTxnIds,
-    physicalGroupLabels: ctx.physicalGroupLabels,
-  });
+  const pipeline = await (tracer?.run('8', () =>
+    runClusterAndCategoryPipeline(existing, parsed, embedder, {
+      newTransactionIds,
+      pairedTxnIds,
+      physicalGroupLabels: ctx.physicalGroupLabels,
+    }),
+  ) ??
+    runClusterAndCategoryPipeline(existing, parsed, embedder, {
+      newTransactionIds,
+      pairedTxnIds,
+      physicalGroupLabels: ctx.physicalGroupLabels,
+    }));
 
   // --- Stage 9: Build persist plan (inserts, patches, retired clusters, summary). ---
-  return buildPersistPlan(userId, parsed, existing, pairingByLegId, pipeline);
+  return (
+    tracer?.run('9', async () =>
+      buildPersistPlan(userId, parsed, existing, pairingByLegId, pipeline),
+    ) ?? buildPersistPlan(userId, parsed, existing, pairingByLegId, pipeline)
+  );
 }
