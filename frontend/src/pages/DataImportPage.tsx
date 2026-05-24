@@ -108,7 +108,7 @@ export function DataImportPage() {
     setError(null)
     setPhase('parsing')
     setFileLabel(file.name)
-    neutralizeClusterKeyedCaches(queryClient)
+    await neutralizeClusterKeyedCaches(queryClient)
     try {
       const result = await postImport(
         file,
