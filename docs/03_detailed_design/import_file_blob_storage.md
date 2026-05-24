@@ -8,7 +8,7 @@ related:
   - ./api_contract.md
   - ./backend_dev_and_prod_environments.md
   - ../02_architecture/03_infrastructure_map.md
-status: Design proposal — not implemented
+status: Implemented (HOU-45)
 ---
 
 # Import raw file retention (local filesystem vs S3)

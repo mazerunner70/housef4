@@ -63,6 +63,11 @@ output "cloudfront_domain_name" {
   value       = aws_cloudfront_distribution.app.domain_name
 }
 
+output "import_blob_bucket_name" {
+  description = "S3 bucket for raw import file archives (import_file_blob_storage.md)"
+  value       = aws_s3_bucket.import_blob_archive.id
+}
+
 output "frontend_bucket_name" {
   description = "S3 bucket for Vite build artifacts (sync via CI or aws s3 sync)"
   value       = aws_s3_bucket.frontend_bucket.id

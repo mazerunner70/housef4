@@ -151,6 +151,15 @@ export type TransactionFileTiming = {
   completed_at: number
 }
 
+/** Raw upload archival descriptor when blob storage succeeded (`import_file_blob_storage.md`). */
+export type TransactionFileBlob = {
+  kind: 'filesystem' | 's3'
+  key: string
+  bucket?: string
+  content_sha256: string
+  stored_bytes: number
+}
+
 export type TransactionFile = {
   user_id: string
   id: string
@@ -161,6 +170,8 @@ export type TransactionFile = {
   timing: TransactionFileTiming
   /** Ingest + re-cluster summary (matches `ImportIngestSnapshot`). */
   result: ImportIngestSnapshot
+  /** Present when raw bytes were archived; omitted when storage is off or blob Put failed. */
+  blob?: TransactionFileBlob
 }
 
 export type TransactionFilesResponse = {

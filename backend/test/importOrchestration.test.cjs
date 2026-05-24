@@ -302,7 +302,7 @@ test('executeImportOrchestration — staging path uses persistImportPlanViaStagi
   assert.ok(repo.callLog.includes('persistImportPlanViaStaging'));
   assert.ok(!repo.callLog.includes('patchExistingTransactionsAfterImport'));
   assert.ok(!repo.callLog.includes('ingestImportBatch'));
-  assert.ok(!repo.callLog.includes('recordTransactionFile'));
+  assert.ok(repo.callLog.includes('recordTransactionFile'));
   assert.ok(!repo.callLog.includes('refreshStoredDashboardMetrics'));
   assert.equal(repo.lastStagingPersist.importFileId, repo.lastStagingPersist.transactionFile.id);
   assert.equal(repo.lastStagingPersist.transactionFile.content_sha256, computeImportBlobContentSha256(extracted.file.buffer));

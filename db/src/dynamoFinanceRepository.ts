@@ -54,6 +54,7 @@ import {
   type BackupSnapshotV1,
   type DuplicateBlobImportMatch,
   type ExistingTransactionPatch,
+  type ImportBlobRef,
   type ImportIngestResult,
   type ImportPersistPlan,
   type ImportTransactionInput,
@@ -241,6 +242,7 @@ function appendTransactionFileToBackupExport(
   );
   const accountId = wireString(item.account_id, '');
   const contentSha256 = wireString(item.content_sha256, '');
+  const blob = parseBlobFromItem(item);
   const rec: TransactionFileRecord = {
     user_id: wireString(item.user_id, userId),
     id: wireString(item.id, ''),
@@ -250,6 +252,7 @@ function appendTransactionFileToBackupExport(
     timing: parseTimingFromItem(item),
     result,
     ...(contentSha256 ? { content_sha256: contentSha256 } : {}),
+    ...(blob ? { blob } : {}),
   };
   acc.transaction_files.push({
     entity_type: 'TRANSACTION_FILE',
@@ -261,6 +264,7 @@ function appendTransactionFileToBackupExport(
     timing: rec.timing,
     result: rec.result,
     ...(rec.content_sha256 ? { content_sha256: rec.content_sha256 } : {}),
+    ...(rec.blob ? { blob: rec.blob } : {}),
   });
 }
 
@@ -543,6 +547,49 @@ function parseTimingFromItem(item: Record<string, unknown>): TransactionFileTimi
   }
   const completed = Number(item.imported_at ?? item.completed_at ?? 0);
   return { started_at: completed, completed_at: completed };
+}
+
+function parseBlobFromItem(item: Record<string, unknown>): ImportBlobRef | undefined {
+  const b = item.blob;
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return undefined;
+  const o = b as Record<string, unknown>;
+  const kind = wireString(o.kind, '');
+  if (kind !== 'filesystem' && kind !== 's3') return undefined;
+  const key = wireString(o.key, '');
+  const contentSha256 = wireString(o.content_sha256, '');
+  const storedBytes = Number(o.stored_bytes ?? NaN);
+  if (!key || !contentSha256 || !Number.isFinite(storedBytes)) return undefined;
+  const bucket = wireString(o.bucket, '');
+  return {
+    kind,
+    key,
+    ...(bucket ? { bucket } : {}),
+    content_sha256: contentSha256,
+    stored_bytes: storedBytes,
+  };
+}
+
+function transactionFileRecordFromItem(
+  row: Record<string, unknown>,
+  userId: string,
+): TransactionFileRecord {
+  const fallbackName = wireString(row.name, 'import');
+  const source = parseSourceFromItem(row, fallbackName);
+  const result = parseTransactionFileResult(row.result, row.ingest, row.row_count);
+  const accountId = wireString(row.account_id, '');
+  const contentSha256 = wireString(row.content_sha256, '');
+  const blob = parseBlobFromItem(row);
+  return {
+    user_id: wireString(row.user_id, userId),
+    id: wireString(row.id, ''),
+    account_id: accountId.length > 0 ? accountId : '',
+    source,
+    format: parseFormatFromItem(row),
+    timing: parseTimingFromItem(row),
+    result,
+    ...(contentSha256 ? { content_sha256: contentSha256 } : {}),
+    ...(blob ? { blob } : {}),
+  };
 }
 
 type PutBatch = Record<
@@ -1278,6 +1325,9 @@ export class DynamoFinanceRepository implements FinanceRepository {
     if (h) {
       item.content_sha256 = h;
     }
+    if (input.blob) {
+      item.blob = input.blob;
+    }
     await this.doc.send(
       new PutCommand({
         TableName: this.tableName,
@@ -1349,26 +1399,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
       for (const item of res.Items ?? []) {
         if (item.entity_type !== 'TRANSACTION_FILE') continue;
         const row = item as Record<string, unknown>;
-        const fallbackName = wireString(row.name, 'import');
-        const source = parseSourceFromItem(row, fallbackName);
-        const result = parseTransactionFileResult(
-          row.result,
-          row.ingest,
-          row.row_count,
-        );
-        const accountId = wireString(row.account_id, '');
-        const contentSha256 = wireString(row.content_sha256, '');
-        const rec: TransactionFileRecord = {
-          user_id: wireString(row.user_id, userId),
-          id: wireString(row.id, ''),
-          account_id: accountId.length > 0 ? accountId : '',
-          source,
-          format: parseFormatFromItem(row),
-          timing: parseTimingFromItem(row),
-          result,
-          ...(contentSha256 ? { content_sha256: contentSha256 } : {}),
-        };
-        out.push(rec);
+        out.push(transactionFileRecordFromItem(row, userId));
       }
       startKey = res.LastEvaluatedKey as Record<string, unknown> | undefined;
     } while (startKey);

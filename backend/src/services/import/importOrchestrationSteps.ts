@@ -260,6 +260,9 @@ export async function persistImportResult(params: {
   importStartedAt: number;
   importCurrency?: string;
   transactionFileInput: TransactionFileInput;
+  extracted: ExtractedImportUpload;
+  contentSha256: string;
+  accountId: string;
   tracer?: ImportStageTracer;
 }): Promise<void> {
   const persistParams = {
@@ -270,6 +273,9 @@ export async function persistImportResult(params: {
     importStartedAt: params.importStartedAt,
     importCurrency: params.importCurrency,
     transactionFileInput: params.transactionFileInput,
+    extracted: params.extracted,
+    contentSha256: params.contentSha256,
+    accountId: params.accountId,
     tracer: params.tracer,
   };
 

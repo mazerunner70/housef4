@@ -2,8 +2,11 @@ import type { FinanceRepository } from '@housef4/db';
 import { ImportLockConflictError } from '@housef4/db';
 
 import { importLockConflictHttpError } from './importLockHttp';
+import { attachImportBlobAndRecordFile } from './importBlobPersist';
+import { getImportBlobStore } from './importBlobStore';
 import type { ImportStageTracer } from './importStageTracing';
 import { persistImportPlan, toImportPersistPlan, type PersistPlan } from './persistPlan';
+import type { ExtractedImportUpload } from './multipartFile';
 
 type TransactionFileInput = Parameters<
   FinanceRepository['recordTransactionFile']
@@ -17,6 +20,9 @@ type PersistImportPhaseParams = Readonly<{
   importStartedAt: number;
   importCurrency?: string;
   transactionFileInput: TransactionFileInput;
+  extracted: ExtractedImportUpload;
+  contentSha256: string;
+  accountId: string;
   tracer?: ImportStageTracer;
 }>;
 
@@ -77,17 +83,34 @@ export async function persistImportViaStaging(
         importLockAlreadyHeld: true,
       }),
     );
-    return;
+  } else {
+    await repo.persistImportPlanViaStaging(userId, {
+      importFileId,
+      importStartedAt,
+      plan: toImportPersistPlan(plan),
+      transactionFile: transactionFileInput,
+      fileCurrency: importCurrency,
+      importLockAlreadyHeld: true,
+    });
   }
 
-  await repo.persistImportPlanViaStaging(userId, {
-    importFileId,
-    importStartedAt,
-    plan: toImportPersistPlan(plan),
-    transactionFile: transactionFileInput,
-    fileCurrency: importCurrency,
-    importLockAlreadyHeld: true,
-  });
+  const recordBlob = () =>
+    attachImportBlobAndRecordFile({
+      userId,
+      repo,
+      store: getImportBlobStore(),
+      extracted: params.extracted,
+      contentSha256: params.contentSha256,
+      importFileId,
+      accountId: params.accountId,
+      transactionFileInput,
+    });
+
+  if (tracer) {
+    await tracer.run('11', recordBlob);
+  } else {
+    await recordBlob();
+  }
 }
 
 /** §8.6 — in-place persist (`IMPORT_LOCK` already held by orchestration). */
@@ -123,21 +146,39 @@ export async function persistImportInPlace(
       }));
 
     await (tracer?.run('11', () =>
-      repo.recordTransactionFile(userId, {
-        ...transactionFileInput,
-        result: {
-          ...result,
-          existingTransactionsUpdated: plan.existingPatches.length,
-          newClustersTouched: plan.summary.newClustersTouched,
+      attachImportBlobAndRecordFile({
+        userId,
+        repo,
+        store: getImportBlobStore(),
+        extracted: params.extracted,
+        contentSha256: params.contentSha256,
+        importFileId,
+        accountId: params.accountId,
+        transactionFileInput: {
+          ...transactionFileInput,
+          result: {
+            ...result,
+            existingTransactionsUpdated: plan.existingPatches.length,
+            newClustersTouched: plan.summary.newClustersTouched,
+          },
         },
       }),
     ) ??
-      repo.recordTransactionFile(userId, {
-        ...transactionFileInput,
-        result: {
-          ...result,
-          existingTransactionsUpdated: plan.existingPatches.length,
-          newClustersTouched: plan.summary.newClustersTouched,
+      attachImportBlobAndRecordFile({
+        userId,
+        repo,
+        store: getImportBlobStore(),
+        extracted: params.extracted,
+        contentSha256: params.contentSha256,
+        importFileId,
+        accountId: params.accountId,
+        transactionFileInput: {
+          ...transactionFileInput,
+          result: {
+            ...result,
+            existingTransactionsUpdated: plan.existingPatches.length,
+            newClustersTouched: plan.summary.newClustersTouched,
+          },
         },
       }));
 

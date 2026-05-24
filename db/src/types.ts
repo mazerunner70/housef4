@@ -215,6 +215,22 @@ export interface DuplicateBlobImportMatch {
 }
 
 /**
+ * Raw upload bytes descriptor on `TRANSACTION_FILE` (`import_file_blob_storage.md` §5).
+ * No presigned URLs or secrets — logical object location only.
+ */
+export interface ImportBlobRef {
+  kind: 'filesystem' | 's3';
+  /** Logical key under backend root / bucket, e.g. `imports/<user_id>/<import_file_id>/<file>`. */
+  key: string;
+  /** S3 bucket name when `kind === 's3'`. */
+  bucket?: string;
+  /** Lowercase hex SHA-256 of body at write time. */
+  content_sha256: string;
+  /** Must equal `source.size_bytes` after a successful blob write. */
+  stored_bytes: number;
+}
+
+/**
  * One persisted import: sections match how the run proceeds — source file → format →
  * timing → result stats. See `database/data_model.md`.
  */
@@ -232,6 +248,8 @@ export interface TransactionFileInput {
    * Omitted on legacy items and on old backups restored before this field existed.
    */
   content_sha256?: string;
+  /** Present when raw bytes were archived; omitted when storage is off or blob Put failed (§8 V1). */
+  blob?: ImportBlobRef;
 }
 
 /** Stored row: same sections as {@link TransactionFileInput} plus `user_id`. */

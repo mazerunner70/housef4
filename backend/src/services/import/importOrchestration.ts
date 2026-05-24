@@ -120,6 +120,9 @@ export async function executeImportOrchestration(
         importStartedAt,
         importCurrency: parsed.currency,
         transactionFileInput,
+        extracted,
+        contentSha256,
+        accountId,
         tracer,
       });
 

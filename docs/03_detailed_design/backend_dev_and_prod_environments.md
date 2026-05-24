@@ -95,6 +95,11 @@ Centralize configuration in one module used by both entry points. Suggested vari
 | `DYNAMODB_ENDPOINT` | e.g. `http://localhost:8000` | *unset* | When set, SDK client uses local emulator. |
 | `COGNITO_*` / `AWS_COGNITO_*` | Optional | Required for verifying JWTs if you validate in Lambda | Only needed if the local server verifies real JWTs. |
 | `DEV_AUTH_USER_ID` | Optional fixed UUID/sub | *never set* | See §6; **omit in prod** via Terraform/IaC guardrails. Used from **§14 Step 3** onward for local dev. |
+| `IMPORT_BLOB_BACKEND` | `off` (default) or `filesystem` for archival | `s3` (Terraform sets on Lambda) | When `filesystem`, set **`IMPORT_BLOB_LOCAL_ROOT`** (absolute path; default `./var/housef4/import-blobs`). When `s3`, set **`IMPORT_BLOB_S3_BUCKET`**. See [`import_file_blob_storage.md`](./import_file_blob_storage.md). |
+| `IMPORT_BLOB_LOCAL_ROOT` | e.g. `./var/housef4/import-blobs` (gitignored) | *unset* | Filesystem blob root when **`IMPORT_BLOB_BACKEND=filesystem`**. |
+| `IMPORT_BLOB_S3_BUCKET` | *unset* (use filesystem locally) | From Terraform **`aws_s3_bucket.import_blob_archive`** | Required when **`IMPORT_BLOB_BACKEND=s3`**. |
+
+**Orphan policy (MVP):** failed imports do **not** retain blobs — compensating **`delete`** on Dynamo failure after blob **`Put`**, and no blob write before successful ingest/staging promote. No TTL sweeper in V1; ops may delete stray objects under `imports/` manually if needed.
 
 **Production safety:** In Terraform, set Lambda environment only from managed variables; never copy `.env` from a laptop. For local work, use `.env.local` (gitignored) or shell exports.
 
