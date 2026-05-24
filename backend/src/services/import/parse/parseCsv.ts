@@ -1,6 +1,6 @@
 import { parse } from 'csv-parse/sync';
 
-import { createLogger } from '../../logger';
+import { createLogger } from '../../../logger';
 import type { ParserOutputRow } from './canonical';
 
 const log = createLogger({ component: 'import.parseCsv' });

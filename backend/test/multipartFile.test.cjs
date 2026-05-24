@@ -4,7 +4,7 @@ const {
   extractBackupMultipart,
   extractImportMultipart,
   MultipartFileTooLargeError,
-} = require('../dist/services/import/multipartFile');
+} = require('../dist/services/import/ingress/multipartFile');
 
 test('extractBackupMultipart rejects when file exceeds maxFileBytes', async () => {
   const boundary = '----housef4-test';

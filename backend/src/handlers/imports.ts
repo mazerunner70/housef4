@@ -7,7 +7,7 @@ import {
 import {
   extractImportMultipart,
   MultipartFileTooLargeError,
-} from '../services/import/multipartFile';
+} from '../services/import/ingress/multipartFile';
 import { createImportStageTracer } from '../services/import/importStageTracing';
 import type { InternalRequest } from '../types';
 

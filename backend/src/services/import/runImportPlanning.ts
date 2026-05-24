@@ -12,7 +12,7 @@ import type {
   TransferPairingAssignment,
 } from '@housef4/db';
 
-import type { ParsedImportRow } from './canonical';
+import type { ParsedImportRow } from './parse/canonical';
 import {
   buildNewImportInputs,
   computeRetiredClusterIds,

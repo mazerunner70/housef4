@@ -10,7 +10,8 @@ import {
 import {
   extractBackupMultipart,
   MultipartFileTooLargeError,
-} from '../services/import/multipartFile';
+  type ExtractedUpload,
+} from '../services/import/ingress/multipartFile';
 import { HttpError } from '../httpError';
 import { getLog } from '../requestLogContext';
 import type { InternalRequest } from '../types';
@@ -28,19 +29,13 @@ function isRestoreAbortStagingCleanupError(
   );
 }
 
-export async function postBackupRestorePayload(
-  userId: string,
-  req: InternalRequest,
-): Promise<Record<string, unknown>> {
-  const log = getLog();
-  const buf = req.bodyBuffer;
-  if (!buf?.length) {
-    throw new HttpError(400, 'Request body is empty');
-  }
-
-  let part;
+async function readBackupUploadPart(
+  headers: InternalRequest['headers'],
+  buf: Buffer,
+): Promise<ExtractedUpload> {
+  let part: ExtractedUpload | null;
   try {
-    part = await extractBackupMultipart(req.headers, buf);
+    part = await extractBackupMultipart(headers, buf);
   } catch (e) {
     if (e instanceof MultipartFileTooLargeError) {
       throw new HttpError(400, e.message, {
@@ -57,24 +52,33 @@ export async function postBackupRestorePayload(
       'Expected multipart/form-data with a non-empty part named "backup"',
     );
   }
+  return part;
+}
 
-  let parsed: unknown;
+function parseBackupJsonFromBuffer(buffer: Buffer): unknown {
   try {
-    parsed = JSON.parse(part.buffer.toString('utf8'));
+    return JSON.parse(buffer.toString('utf8'));
   } catch {
     throw new HttpError(400, 'Backup JSON is malformed');
   }
+}
 
-  let snapshot;
+function requireValidBackupSnapshot(userId: string, parsed: unknown) {
   try {
-    snapshot = validateBackupSnapshotForRestore(userId, parsed);
+    return validateBackupSnapshotForRestore(userId, parsed);
   } catch (e) {
     if (e instanceof BackupRestoreClientError) {
       throw new HttpError(e.statusCode, e.message, e.body);
     }
     throw e;
   }
+}
 
+async function restoreValidatedBackup(
+  userId: string,
+  snapshot: ReturnType<typeof validateBackupSnapshotForRestore>,
+  log: ReturnType<typeof getLog>,
+): Promise<Record<string, unknown>> {
   const repo = getFinanceRepository();
   try {
     const restored = await repo.restoreBackupSnapshot(userId, snapshot);
@@ -102,6 +106,22 @@ export async function postBackupRestorePayload(
     });
     throw new HttpError(500, 'Restore failed', { error: 'Restore failed' });
   }
+}
+
+export async function postBackupRestorePayload(
+  userId: string,
+  req: InternalRequest,
+): Promise<Record<string, unknown>> {
+  const log = getLog();
+  const buf = req.bodyBuffer;
+  if (!buf?.length) {
+    throw new HttpError(400, 'Request body is empty');
+  }
+
+  const part = await readBackupUploadPart(req.headers, buf);
+  const parsed = parseBackupJsonFromBuffer(part.buffer);
+  const snapshot = requireValidBackupSnapshot(userId, parsed);
+  return restoreValidatedBackup(userId, snapshot, log);
 }
 
 export async function postBackupRestoreAbortPayload(

@@ -29,7 +29,7 @@ import {
 } from './importOrchestrationSteps';
 import type { ImportStageTracer } from './importStageTracing';
 import { createImportStageTracer } from './importStageTracing';
-import type { ExtractedImportUpload } from './multipartFile';
+import type { ExtractedImportUpload } from './ingress/multipartFile';
 
 export type RunImportOrchestrationParams = Readonly<{
   userId: string;

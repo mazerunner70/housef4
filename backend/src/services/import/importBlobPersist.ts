@@ -9,7 +9,7 @@ import { emitImportBlobWriteFailedMetric } from '../../observability/importBlobM
 import { getLog } from '../../requestLogContext';
 import { loadImportBlobConfig } from './importBlobConfig';
 import type { ImportBlobStore } from './importBlobTypes';
-import type { ExtractedImportUpload } from './multipartFile';
+import type { ExtractedImportUpload } from './ingress/multipartFile';
 
 export type ImportBlobPutContext = Readonly<{
   userId: string;

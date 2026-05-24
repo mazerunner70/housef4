@@ -13,7 +13,7 @@ import type {
 } from '@housef4/db';
 import { TRANSFER_PAIRING_DAY_MS, computeAutoTransferPairingsSortedPools } from '@housef4/db';
 
-import type { ParsedImportRow } from '../import/canonical';
+import type { ParsedImportRow } from '../import/parse/canonical';
 
 /** Default W in **W × 86 400 000 ms** (`transfer_matching.md` §3). */
 export const INGEST_TRANSFER_PAIR_WINDOW_DAYS = 4;
