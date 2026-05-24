@@ -137,6 +137,8 @@ Imports may **remint transactional `cluster_id`** values corpus-wide (see **[`im
 
 Design rationale and async-import follow-ups: [`import_transaction_files.md`](./import_transaction_files.md) §11.1 item **3**.
 
+**Client implementation:** `frontend/src/lib/financeQueryCache.ts` — `neutralizeClusterKeyedCaches` resets (does not remove) cluster-sensitive query caches when the multipart request is sent; `invalidateFinanceCaches` refetches all matching queries, including inactive observers, after **`200`** or after failed attempts that had neutralized caches.
+
 ### Accounts listing
 
 **`GET /api/accounts`**

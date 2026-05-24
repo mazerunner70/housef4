@@ -7,6 +7,7 @@ import {
   postBackupRestore,
 } from '@/api/client'
 import { Button } from '@/components/ui/Button'
+import { invalidateFinanceCaches } from '@/lib/financeQueryCache'
 import {
   parseHousef4BackupManifest,
   type BackupManifestPreview,
@@ -80,27 +81,8 @@ export function RestoreWizard({
     headingRef.current?.focus()
   }, [step, done])
 
-  const invalidateFinanceCaches = () => {
-    void queryClient.invalidateQueries({
-      queryKey: ['metrics'],
-      refetchType: 'all',
-    })
-    void queryClient.invalidateQueries({
-      queryKey: ['transactions'],
-      refetchType: 'all',
-    })
-    void queryClient.invalidateQueries({
-      queryKey: ['review-queue'],
-      refetchType: 'all',
-    })
-    void queryClient.invalidateQueries({
-      queryKey: ['transaction-files'],
-      refetchType: 'all',
-    })
-    void queryClient.invalidateQueries({
-      queryKey: ['accounts'],
-      refetchType: 'all',
-    })
+  const invalidateFinanceCachesForRestore = () => {
+    invalidateFinanceCaches(queryClient)
   }
 
   const resetFlow = () => {
@@ -152,7 +134,7 @@ export function RestoreWizard({
     try {
       const result = await postBackupRestore(file)
       clearRestoreStuckSession()
-      invalidateFinanceCaches()
+      invalidateFinanceCachesForRestore()
       setDone(result)
     } catch (e) {
       if (e instanceof ApiHttpError) {
