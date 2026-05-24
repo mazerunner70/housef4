@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   attachImportBlobAndRecordFile,
+  attachImportBlobViaPatch,
 } = require('../dist/services/import/importBlobPersist');
 const {
   computeImportBlobContentSha256,
@@ -43,6 +44,85 @@ function baseTransactionFileInput(extracted, importFileId) {
     },
   };
 }
+
+test('attachImportBlobViaPatch — patches blob on promoted TRANSACTION_FILE row', async () => {
+  const extracted = zeroRowExtracted();
+  const importFileId = 'file-patch';
+  let patched;
+
+  const repo = {
+    patchTransactionFileBlob: async (_userId, fileId, blob) => {
+      patched = { fileId, blob };
+    },
+  };
+
+  const store = {
+    put: async ({ body, contentSha256 }) => ({
+      ref: {
+        kind: 'filesystem',
+        key: 'imports/u1/file-patch/empty.csv',
+        content_sha256: contentSha256,
+        stored_bytes: body.length,
+      },
+    }),
+    delete: async () => {},
+  };
+
+  await attachImportBlobViaPatch({
+    userId: 'u1',
+    repo,
+    store,
+    extracted,
+    contentSha256: computeImportBlobContentSha256(extracted.file.buffer),
+    importFileId,
+    accountId: 'acc-1',
+  });
+
+  assert.equal(patched.fileId, importFileId);
+  assert.equal(patched.blob.stored_bytes, extracted.file.buffer.length);
+});
+
+test('attachImportBlobViaPatch — patch failure deletes blob (no metadata-only retry needed)', async () => {
+  const extracted = zeroRowExtracted();
+  const importFileId = 'file-patch-fail';
+  const deleted = [];
+
+  const repo = {
+    patchTransactionFileBlob: async () => {
+      throw new Error('dynamo throttled');
+    },
+  };
+
+  const blobRef = {
+    kind: 'filesystem',
+    key: 'k',
+    content_sha256: computeImportBlobContentSha256(extracted.file.buffer),
+    stored_bytes: extracted.file.buffer.length,
+  };
+
+  const store = {
+    put: async () => ({ ref: blobRef }),
+    delete: async (ref) => {
+      deleted.push(ref.key);
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      attachImportBlobViaPatch({
+        userId: 'u1',
+        repo,
+        store,
+        extracted,
+        contentSha256: blobRef.content_sha256,
+        importFileId,
+        accountId: 'acc-1',
+      }),
+    /dynamo throttled/,
+  );
+
+  assert.deepEqual(deleted, [blobRef.key]);
+});
 
 test('attachImportBlobAndRecordFile — blob Put failure is non-fatal (metadata only)', async () => {
   const extracted = zeroRowExtracted();

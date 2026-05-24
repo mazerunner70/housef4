@@ -178,6 +178,8 @@ sequenceDiagram
 
 **Idempotency**: Re-posting the same file creates a **new** `importFileId` and **new** object key — correct for append semantics.
 
+**Staging path (§8.7):** after primary promote succeeds, an **`afterPromote`** hook runs **before** metrics refresh and **`IMPORT_LOCK`** release. That hook performs blob **`Put`** (when enabled) and **`patchTransactionFileBlob`** — a targeted `UpdateItem` on the promoted `TRANSACTION_FILE` row — rather than a second full `recordTransactionFile` after the lock is released.
+
 ---
 
 ## 8. Failure modes

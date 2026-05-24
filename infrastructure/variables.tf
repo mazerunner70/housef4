@@ -63,6 +63,12 @@ variable "frontend_bucket_force_destroy" {
   default     = false
 }
 
+variable "import_blob_bucket_force_destroy" {
+  description = "If true, Terraform may delete the raw import archive S3 bucket (aws_s3_bucket.import_blob_archive) even when non-empty. Prefer false outside ephemeral/dev stacks — import blobs are user upload archives, distinct from frontend static assets."
+  type        = bool
+  default     = false
+}
+
 variable "http_api_cors_allow_origins" {
   description = "Browser origins allowed to call the HTTP API cross-origin (e.g. Vite dev server). The SPA on the same CloudFront hostname as /api/* is same-origin and does not need to be listed. Add more origins if the SPA is hosted on a separate domain."
   type        = list(string)

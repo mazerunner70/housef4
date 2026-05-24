@@ -1,9 +1,12 @@
 import type { FinanceRepository } from '@housef4/db';
 import { ImportLockConflictError } from '@housef4/db';
 
-import { importLockConflictHttpError } from './importLockHttp';
-import { attachImportBlobAndRecordFile } from './importBlobPersist';
+import {
+  attachImportBlobAndRecordFile,
+  attachImportBlobViaPatch,
+} from './importBlobPersist';
 import { getImportBlobStore } from './importBlobStore';
+import { importLockConflictHttpError } from './importLockHttp';
 import type { ImportStageTracer } from './importStageTracing';
 import { persistImportPlan, toImportPersistPlan, type PersistPlan } from './persistPlan';
 import type { ExtractedImportUpload } from './multipartFile';
@@ -25,6 +28,17 @@ type PersistImportPhaseParams = Readonly<{
   accountId: string;
   tracer?: ImportStageTracer;
 }>;
+
+function importBlobPutContext(params: PersistImportPhaseParams) {
+  return {
+    userId: params.userId,
+    store: getImportBlobStore(),
+    extracted: params.extracted,
+    contentSha256: params.contentSha256,
+    importFileId: params.importFileId,
+    accountId: params.accountId,
+  };
+}
 
 async function mapImportLockConflict<T>(fn: () => Promise<T>): Promise<T> {
   try {
@@ -72,44 +86,34 @@ export async function persistImportViaStaging(
     tracer,
   } = params;
 
-  if (tracer) {
-    await tracer.run('10', () =>
-      repo.persistImportPlanViaStaging(userId, {
-        importFileId,
-        importStartedAt,
-        plan: toImportPersistPlan(plan),
-        transactionFile: transactionFileInput,
-        fileCurrency: importCurrency,
-        importLockAlreadyHeld: true,
-      }),
-    );
-  } else {
-    await repo.persistImportPlanViaStaging(userId, {
+  const afterPromote = async () => {
+    const patchBlob = () =>
+      attachImportBlobViaPatch({
+        repo,
+        ...importBlobPutContext(params),
+      });
+    if (tracer) {
+      await tracer.run('11', patchBlob);
+    } else {
+      await patchBlob();
+    }
+  };
+
+  const runStaging = () =>
+    repo.persistImportPlanViaStaging(userId, {
       importFileId,
       importStartedAt,
       plan: toImportPersistPlan(plan),
       transactionFile: transactionFileInput,
       fileCurrency: importCurrency,
       importLockAlreadyHeld: true,
-    });
-  }
-
-  const recordBlob = () =>
-    attachImportBlobAndRecordFile({
-      userId,
-      repo,
-      store: getImportBlobStore(),
-      extracted: params.extracted,
-      contentSha256: params.contentSha256,
-      importFileId,
-      accountId: params.accountId,
-      transactionFileInput,
+      afterPromote,
     });
 
   if (tracer) {
-    await tracer.run('11', recordBlob);
+    await tracer.run('10', runStaging);
   } else {
-    await recordBlob();
+    await runStaging();
   }
 }
 
@@ -147,13 +151,8 @@ export async function persistImportInPlace(
 
     await (tracer?.run('11', () =>
       attachImportBlobAndRecordFile({
-        userId,
         repo,
-        store: getImportBlobStore(),
-        extracted: params.extracted,
-        contentSha256: params.contentSha256,
-        importFileId,
-        accountId: params.accountId,
+        ...importBlobPutContext(params),
         transactionFileInput: {
           ...transactionFileInput,
           result: {
@@ -165,13 +164,8 @@ export async function persistImportInPlace(
       }),
     ) ??
       attachImportBlobAndRecordFile({
-        userId,
         repo,
-        store: getImportBlobStore(),
-        extracted: params.extracted,
-        contentSha256: params.contentSha256,
-        importFileId,
-        accountId: params.accountId,
+        ...importBlobPutContext(params),
         transactionFileInput: {
           ...transactionFileInput,
           result: {

@@ -356,6 +356,12 @@ export interface FinanceRepository {
     userId: string,
     input: TransactionFileInput,
   ): Promise<void>;
+  /** Set `TRANSACTION_FILE.blob` only (staging path — row already promoted). */
+  patchTransactionFileBlob(
+    userId: string,
+    importFileId: string,
+    blob: ImportBlobRef,
+  ): Promise<void>;
   /**
    * When a completed import stored `content_sha256`, returns metadata for duplicate-blob **409** responses.
    */
@@ -412,6 +418,7 @@ export interface FinanceRepository {
       transactionFile: TransactionFileInput;
       fileCurrency?: string;
       importLockAlreadyHeld?: boolean;
+      afterPromote?: () => Promise<void>;
     },
   ): Promise<void>;
   /**
@@ -1336,6 +1343,27 @@ export class DynamoFinanceRepository implements FinanceRepository {
     );
   }
 
+  async patchTransactionFileBlob(
+    userId: string,
+    importFileId: string,
+    blob: ImportBlobRef,
+  ): Promise<void> {
+    const pk = userPk(userId);
+    await this.doc.send(
+      new UpdateCommand({
+        TableName: this.tableName,
+        Key: { PK: pk, SK: fileSk(importFileId) },
+        UpdateExpression: 'SET #blob = :blob',
+        ExpressionAttributeNames: { '#blob': 'blob' },
+        ExpressionAttributeValues: {
+          ':blob': blob,
+          ':et': 'TRANSACTION_FILE',
+        },
+        ConditionExpression: 'entity_type = :et',
+      }),
+    );
+  }
+
   async findDuplicateBlobImport(
     userId: string,
     contentSha256Hex: string,
@@ -1713,6 +1741,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
       transactionFile: TransactionFileInput;
       fileCurrency?: string;
       importLockAlreadyHeld?: boolean;
+      afterPromote?: () => Promise<void>;
     },
   ): Promise<void> {
     await runImportStagingWorkflow({
@@ -1725,6 +1754,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
       fileCurrency: input.fileCurrency,
       refreshMetrics: () => this.refreshStoredDashboardMetrics(userId),
       importLockAlreadyHeld: input.importLockAlreadyHeld,
+      afterPromote: input.afterPromote,
     });
   }
 

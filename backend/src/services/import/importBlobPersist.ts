@@ -11,20 +11,29 @@ import { loadImportBlobConfig } from './importBlobConfig';
 import type { ImportBlobStore } from './importBlobTypes';
 import type { ExtractedImportUpload } from './multipartFile';
 
-export type AttachImportBlobAndRecordFileParams = Readonly<{
+export type ImportBlobPutContext = Readonly<{
   userId: string;
-  repo: FinanceRepository;
   store: ImportBlobStore | null;
   extracted: ExtractedImportUpload;
   contentSha256: string;
   importFileId: string;
   accountId: string;
-  transactionFileInput: TransactionFileInput;
 }>;
+
+export type AttachImportBlobAndRecordFileParams = ImportBlobPutContext &
+  Readonly<{
+    repo: FinanceRepository;
+    transactionFileInput: TransactionFileInput;
+  }>;
+
+export type AttachImportBlobViaPatchParams = ImportBlobPutContext &
+  Readonly<{
+    repo: FinanceRepository;
+  }>;
 
 async function tryPutImportBlob(
   store: ImportBlobStore,
-  params: AttachImportBlobAndRecordFileParams,
+  params: ImportBlobPutContext,
 ): Promise<ImportBlobRef | undefined> {
   const { extracted, userId, importFileId, accountId, contentSha256 } = params;
   const displayName = extracted.file.filename?.trim() || 'import';
@@ -45,16 +54,61 @@ async function tryPutImportBlob(
   return ref;
 }
 
-async function recordTransactionFileOnce(
-  repo: FinanceRepository,
-  userId: string,
-  input: TransactionFileInput,
-): Promise<void> {
-  await repo.recordTransactionFile(userId, input);
+/** Blob Put when storage is enabled; non-fatal on failure (§8 V1). */
+export async function putImportBlobIfEnabled(
+  params: ImportBlobPutContext,
+): Promise<ImportBlobRef | undefined> {
+  const { store, userId, importFileId } = params;
+  if (!store) return undefined;
+
+  const log = getLog();
+  try {
+    return await tryPutImportBlob(store, params);
+  } catch (e) {
+    const config = loadImportBlobConfig();
+    const backend = config.backend;
+    log.warn('import.blob_write_failed', {
+      importFileId,
+      userId,
+      backend,
+      errorName: e instanceof Error ? e.name : 'Error',
+      ...(e instanceof Error && e.message ? { message: e.message } : {}),
+    });
+    await emitImportBlobWriteFailedMetric({ importFileId, backend });
+    return undefined;
+  }
 }
 
 /**
- * After ingest/staging promote: optional blob Put (non-fatal on failure), then
+ * Staging path (§8.7): patch `TRANSACTION_FILE.blob` while `IMPORT_LOCK` is still held.
+ * Row already exists from promote; no full `recordTransactionFile`.
+ */
+export async function attachImportBlobViaPatch(
+  params: AttachImportBlobViaPatchParams,
+): Promise<void> {
+  const { userId, repo, store, importFileId } = params;
+  const log = getLog();
+  const blobRef = await putImportBlobIfEnabled(params);
+  if (!blobRef) return;
+
+  try {
+    await repo.patchTransactionFileBlob(userId, importFileId, blobRef);
+  } catch (e) {
+    if (store) {
+      await store.delete(blobRef).catch((deleteErr) => {
+        log.warn('import.blob_compensating_delete_failed', {
+          importFileId,
+          userId,
+          errorName: deleteErr instanceof Error ? deleteErr.name : 'Error',
+        });
+      });
+    }
+    throw e;
+  }
+}
+
+/**
+ * In-place path (§8.6): optional blob Put (non-fatal on failure), then
  * `recordTransactionFile`. On Dynamo failure after a successful blob Put, delete
  * the object and retry metadata-only once.
  */
@@ -63,34 +117,14 @@ export async function attachImportBlobAndRecordFile(
 ): Promise<void> {
   const { userId, repo, store, transactionFileInput } = params;
   const log = getLog();
-  let blobRef: ImportBlobRef | undefined;
-
-  if (store) {
-    try {
-      blobRef = await tryPutImportBlob(store, params);
-    } catch (e) {
-      const config = loadImportBlobConfig();
-      const backend = config.backend;
-      log.warn('import.blob_write_failed', {
-        importFileId: params.importFileId,
-        userId,
-        backend,
-        errorName: e instanceof Error ? e.name : 'Error',
-        ...(e instanceof Error && e.message ? { message: e.message } : {}),
-      });
-      await emitImportBlobWriteFailedMetric({
-        importFileId: params.importFileId,
-        backend,
-      });
-    }
-  }
+  const blobRef = await putImportBlobIfEnabled(params);
 
   const withBlob: TransactionFileInput = blobRef
     ? { ...transactionFileInput, blob: blobRef }
     : transactionFileInput;
 
   try {
-    await recordTransactionFileOnce(repo, userId, withBlob);
+    await repo.recordTransactionFile(userId, withBlob);
     return;
   } catch (firstErr) {
     if (!blobRef || !store) throw firstErr;
@@ -103,10 +137,6 @@ export async function attachImportBlobAndRecordFile(
       });
     });
 
-    try {
-      await recordTransactionFileOnce(repo, userId, transactionFileInput);
-    } catch (retryErr) {
-      throw retryErr;
-    }
+    await repo.recordTransactionFile(userId, transactionFileInput);
   }
 }

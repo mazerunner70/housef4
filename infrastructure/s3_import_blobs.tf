@@ -1,6 +1,6 @@
 resource "aws_s3_bucket" "import_blob_archive" {
   bucket        = "${var.project_id}-${var.environment}-import-blobs-${data.aws_caller_identity.current.account_id}"
-  force_destroy = var.frontend_bucket_force_destroy
+  force_destroy = var.import_blob_bucket_force_destroy
 
   lifecycle {
     prevent_destroy = false

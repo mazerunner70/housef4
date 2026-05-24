@@ -78,6 +78,11 @@ export interface RunImportStagingWorkflowInput {
   refreshMetrics: () => Promise<void>;
   /** When true, orchestration already acquired `IMPORT_LOCK` (§8.7.2 step 1). */
   importLockAlreadyHeld?: boolean;
+  /**
+   * Optional hook after primary promote succeeds and staging is cleared, but before
+   * metrics refresh and `IMPORT_LOCK` release (e.g. blob Put + patch `TRANSACTION_FILE.blob`).
+   */
+  afterPromote?: () => Promise<void>;
 }
 
 /**
@@ -122,6 +127,7 @@ export async function runImportStagingWorkflow(
     fileCurrency,
     refreshMetrics,
     importLockAlreadyHeld = false,
+    afterPromote,
   } = input;
 
   const stagingTable = requireImportStagingTableName();
@@ -186,6 +192,10 @@ export async function runImportStagingWorkflow(
       dataset: 'import_staging',
       userId,
     });
+
+    if (afterPromote) {
+      await afterPromote();
+    }
 
     await refreshMetrics();
     await releaseImportLock(doc, userId);
