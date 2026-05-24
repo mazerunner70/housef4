@@ -5,7 +5,7 @@ const {
   buildPreviousIdSet,
   priorClusterIdsForGroup,
   resolveClusterIdByPhysicalGroup,
-} = require('../dist/services/import/clusterIdentity');
+} = require('../dist/services/import/clustering/clusterIdentity');
 
 test('buildPreviousIdSet: collects existing cluster ids in group', () => {
   const kind = ['existing', 'new', 'existing'];

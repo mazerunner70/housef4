@@ -10,7 +10,7 @@ import {
   ruleMatchForText,
   type CategorySuggestion,
 } from './categoryClassifier';
-import type { ParsedImportRow } from './parse/canonical';
+import type { ParsedImportRow } from '../parse/canonical';
 import { dbscanCosine } from './dbscanCosine';
 import { cleanMerchantForClustering } from './merchantNormalize';
 import {
@@ -178,6 +178,18 @@ export type ClusterPipelineOpts = Readonly<{
   physicalGroupLabels?: readonly number[];
 }>;
 
+/**
+ * Cluster and categorize **clusterable** sources only (caller excludes paired transfer legs).
+ *
+ * Pipeline: clean merchant text → embed → DBSCAN physical groups (or `physicalGroupLabels`
+ * in tests) → mint a fresh `cluster_id` per group (§6.0) → rule/ML category per cluster →
+ * per-row assignment (§7): inherited plurality category from existing `CLASSIFIED` rows,
+ * else cluster rule match, else ML suggestion with `PENDING_REVIEW`.
+ *
+ * Returns one assignment per input source plus cluster-level suggestion and hint maps keyed
+ * by minted `cluster_id` (`previousCategoryId` is the unanimous prior category on existing
+ * members, if any).
+ */
 async function runClusterPipelineCore(
   sources: SourceRow[],
   embedder: MerchantEmbedder,
@@ -228,9 +240,11 @@ async function runClusterPipelineCore(
 
   const clusterSuggestions = new Map<string, CategorySuggestion>();
   const clusterHints: Record<string, { previousCategoryId: string | null }> = {};
-  for (const L of labelResolution.keys()) {
-    const meta = labelResolution.get(L)!;
-    const indices = byLabel.get(L)!;
+  for (const [L, indices] of byLabel) {
+    const meta = labelResolution.get(L);
+    if (!meta) {
+      throw new Error(`runClusterPipelineCore: missing label resolution for ${L}`);
+    }
     clusterSuggestions.set(
       meta.cluster_id,
       categorizeGroup(indices, cleanedTexts, embeddings, categoryVectors),
@@ -242,10 +256,20 @@ async function runClusterPipelineCore(
 
   const assignments: Assignment[] = sources.map((_, i) => {
     const L = labels[i];
-    const indices = byLabel.get(L)!;
-    const { cluster_id } = labelResolution.get(L)!;
+    const indices = byLabel.get(L);
+    if (!indices) {
+      throw new Error(`runClusterPipelineCore: missing label ${L}`);
+    }
+    const meta = labelResolution.get(L);
+    if (!meta) {
+      throw new Error(`runClusterPipelineCore: missing label resolution for ${L}`);
+    }
+    const { cluster_id } = meta;
     const inherited = inheritedCategoryForGroup(indices, sources);
-    const suggestion = clusterSuggestions.get(cluster_id)!;
+    const suggestion = clusterSuggestions.get(cluster_id);
+    if (!suggestion) {
+      throw new Error(`runClusterPipelineCore: missing suggestion for cluster ${cluster_id}`);
+    }
 
     if (inherited) {
       return {

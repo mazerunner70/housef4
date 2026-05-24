@@ -4,7 +4,7 @@ const {
   cleanMerchantName,
   removeDdMmmDates,
   cleanMerchantForClustering,
-} = require('../dist/services/import/merchantNormalize');
+} = require('../dist/services/import/clustering/merchantNormalize');
 
 test('cleanMerchantName: notebook head() examples (before remove_dd_mmm_dates)', () => {
   assert.equal(cleanMerchantName('PAYPAL PAYMENT'), 'PAYMENT');
