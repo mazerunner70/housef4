@@ -146,6 +146,7 @@ test('materializeImportPlanToItems — zero-row import adds TRANSACTION_FILE onl
   ];
   const plan = { toInsert: [], existingPatches: [], retiredClusterIds: [] };
   const importFileId = 'file-empty';
+  const contentSha256 = 'a'.repeat(64);
   const materialized = materializeImportPlanToItems({
     userId,
     importFileId,
@@ -154,12 +155,15 @@ test('materializeImportPlanToItems — zero-row import adds TRANSACTION_FILE onl
     transactionFile: {
       id: importFileId,
       account_id: 'acc-1',
+      content_sha256: contentSha256,
       source: { name: 'empty.csv', size_bytes: 0 },
       format: {},
       timing: { started_at: 1, completed_at: 2 },
       result: { rowCount: 0 },
     },
   });
+  const newFile = materialized.find((i) => i.id === importFileId);
+  assert.equal(newFile.content_sha256, contentSha256);
   validateMaterializedImportStaging(materialized, primary, plan);
   assert.equal(materialized.filter((i) => i.entity_type === 'TRANSACTION_FILE').length, 2);
   assert.ok(!materialized.some((i) => i.SK === PROFILE_SK));

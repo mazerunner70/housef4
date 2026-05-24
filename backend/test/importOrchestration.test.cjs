@@ -220,6 +220,7 @@ test('executeImportOrchestration — duplicate blob aborts before parse/persist 
       assert.equal(e.body.error, 'duplicate_blob');
       assert.equal(e.body.existingImportFileId, 'file-prior');
       assert.equal(e.body.priorImportFileName, 'prior.csv');
+      assert.equal(e.body.priorImportCompletedAt, 1_700_000_000_000);
       return true;
     },
   );
