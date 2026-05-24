@@ -6,6 +6,7 @@ import {
   postBackupRestoreAbortWithRetries,
 } from '@/api/client'
 import { Button } from '@/components/ui/Button'
+import { invalidateFinanceCaches } from '@/lib/financeQueryCache'
 
 type RestoreStuckBannerProps = {
   open: boolean
@@ -25,26 +26,7 @@ export function RestoreStuckBanner({
     setBusy(true)
     try {
       await postBackupRestoreAbortWithRetries()
-      void queryClient.invalidateQueries({
-        queryKey: ['metrics'],
-        refetchType: 'all',
-      })
-      void queryClient.invalidateQueries({
-        queryKey: ['transactions'],
-        refetchType: 'all',
-      })
-      void queryClient.invalidateQueries({
-        queryKey: ['review-queue'],
-        refetchType: 'all',
-      })
-      void queryClient.invalidateQueries({
-        queryKey: ['transaction-files'],
-        refetchType: 'all',
-      })
-      void queryClient.invalidateQueries({
-        queryKey: ['accounts'],
-        refetchType: 'all',
-      })
+      invalidateFinanceCaches(queryClient)
       onAbortSucceeded()
     } catch (e) {
       let message = 'Abort failed'

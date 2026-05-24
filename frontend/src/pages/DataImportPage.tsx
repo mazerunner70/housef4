@@ -9,6 +9,10 @@ import { UploadProgressIndicator } from '@/features/import/components/UploadProg
 import { postImport, type PostImportAccount } from '@/api/client'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useTransactionFiles } from '@/hooks/useTransactionFiles'
+import {
+  invalidateFinanceCaches,
+  neutralizeClusterKeyedCaches,
+} from '@/lib/financeQueryCache'
 import type { ImportParseResult } from '@/lib/types'
 import { useAppStore } from '@/store/appStore'
 
@@ -104,6 +108,7 @@ export function DataImportPage() {
     setError(null)
     setPhase('parsing')
     setFileLabel(file.name)
+    neutralizeClusterKeyedCaches(queryClient)
     try {
       const result = await postImport(
         file,
@@ -112,32 +117,13 @@ export function DataImportPage() {
       setSummary(result)
       setLastImportSummary(result)
       setHasUploadedData(true)
-      // `refetchType: 'all'` so inactive queries (e.g. dashboard metrics) refetch
-      // while on this route — the default only refetches queries with active observers.
-      void queryClient.invalidateQueries({
-        queryKey: ['metrics'],
-        refetchType: 'all',
-      })
-      void queryClient.invalidateQueries({
-        queryKey: ['transactions'],
-        refetchType: 'all',
-      })
-      void queryClient.invalidateQueries({
-        queryKey: ['review-queue'],
-        refetchType: 'all',
-      })
-      void queryClient.invalidateQueries({
-        queryKey: ['transaction-files'],
-        refetchType: 'all',
-      })
-      void queryClient.invalidateQueries({
-        queryKey: ['accounts'],
-        refetchType: 'all',
-      })
+      invalidateFinanceCaches(queryClient)
       setPhase('done')
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Import failed'
       setError(message)
+      // Ledger unchanged on failure — restore authoritative caches after neutralize.
+      invalidateFinanceCaches(queryClient)
       setPhase('idle')
     }
   }
@@ -271,11 +257,11 @@ export function DataImportPage() {
 
       {phase === 'parsing' && (
         <UploadProgressIndicator
-          message="Parsing transactions…"
+          message="Importing transactions…"
           detail={
             fileLabel
-              ? `Reading ${fileLabel} and normalizing merchant text.`
-              : undefined
+              ? `Uploading ${fileLabel}. Cluster assignments may change corpus-wide; review actions are paused until this finishes.`
+              : 'Cluster assignments may change corpus-wide; review actions are paused until this finishes.'
           }
         />
       )}
