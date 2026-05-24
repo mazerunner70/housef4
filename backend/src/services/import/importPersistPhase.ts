@@ -8,7 +8,7 @@ import {
 import { getImportBlobStore } from './blob/importBlobStore';
 import { importLockConflictHttpError } from './importLockHttp';
 import type { ImportStageTracer } from './importStageTracing';
-import { persistImportPlan, toImportPersistPlan, type PersistPlan } from './persistPlan';
+import { persistImportPlan, toImportPersistPlan, type PersistPlan } from './planning/persistPlan';
 import type { ExtractedImportUpload } from './ingress/multipartFile';
 
 type TransactionFileInput = Parameters<

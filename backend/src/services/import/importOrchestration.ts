@@ -9,7 +9,7 @@
 import type { FinanceRepository } from '@housef4/db';
 
 import { getLog } from '../../requestLogContext';
-import { mintImportFileId } from './allocateBatchIds';
+import { mintImportFileId } from './planning/allocateBatchIds';
 import {
   acquireImportLockForOrchestration,
   releaseImportLockBestEffort,

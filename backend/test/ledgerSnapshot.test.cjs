@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   buildLedgerSnapshot,
-} = require('../dist/services/import/ledgerSnapshot');
+} = require('../dist/services/import/planning/ledgerSnapshot');
 
 test('buildLedgerSnapshot — single read pass builds transactions + file→account map', async () => {
   const callLog = [];
