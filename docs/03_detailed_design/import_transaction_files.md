@@ -158,11 +158,19 @@ The following are coupling or legacy patterns; they do **not** invalidate the **
 
 ### 4.5 Adoption phases (refactor roadmap)
 
+**Completed (baseline for FP migration):**
+
 1. Extract `**PersistPlan`** + `**persistImportPlan`** from the handler.
 2. Extract `**LedgerSnapshot`** builder (read-once).
 3. Unify **ID allocation** after parse (txn ids + `import_file_id` co-located).
 4. Replace `**enrichImportRows`** with `**runImportPlanning`** (stages 7–9) or keep as thin wrapper.
-5. Optional pipeline DSL only after types stabilise.
+
+**Next — pure planning / FP migration** (phased, behaviour-neutral PRs): see [`import_fp_migration.md`](./import_fp_migration.md).
+
+5. **Phase 0–1:** adopt **`lodash-es`** (curated re-exports in `utils/lodashImport.ts`); immutable parse / canonical amount transforms (stages **3–4**).
+6. **Phase 2:** `PlanningRow` model — replace parallel-array index alignment with **`partition`** / **`zipWith`** (§4.4).
+7. **Phase 3–4:** decompose cluster pass (stage **8**) with **`groupBy`**, **`mapValues`**, **`flow`**; `buildPersistPlan` (stage **9**) with **`isEqual`**, **`reject`**, **`countBy`**.
+8. **Phase 5–6:** pairing polish; optional tracer helper — **defer orchestration pipeline DSL** until types stabilise.
 
 ### 4.6 Design questions and answers
 
