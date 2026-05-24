@@ -445,8 +445,8 @@ Compensation uses the checkpoint to undo **only** what ran. Example: failure dur
 
 ```mermaid
 flowchart TD
-  P[Planning reads NOW from primary] --> L[Acquire IMPORT_LOCK on primary]
-  L --> M[Materialize full post-import partition to staging NEXT]
+  L[Acquire IMPORT_LOCK on primary] --> P[Planning reads NOW from primary]
+  P --> M[Materialize full post-import partition to staging NEXT]
   M --> V[Validate staging partition for this user]
   V -->|fail| A[Clear this user staging partition release lock 5xx]
   V -->|ok| B[Optional blob Put]
@@ -458,8 +458,8 @@ flowchart TD
 
 | Step | Action | Primary (now) | Staging (next) |
 | ---- | ------ | ------------- | -------------- |
-| 0 | **`runImportPlanning`** (stages **2–9**) | Read only | — |
-| 1 | **`acquireImportLock`** conditional **`PutItem`** | **`IMPORT_LOCK`** row | — |
+| 0 | **`acquireImportLock`** (orchestration — before writes and corpus reads) | **`IMPORT_LOCK`** row | — |
+| 1 | **`runImportPlanning`** (stages **2–9**, incl. optional `createAccount`) | Read only (+ account create when new) | — |
 | 2 | **`clearImportStagingPartition(userId)`** | — | Delete all `PK = USER#<uid>` (idempotent) |
 | 3 | **`materializeImportPlanToStaging`** | — | **`BatchWriteItem` Put** full post-import item set (transactions with **`GSI1*`/`GSI2*`**, all **`CLUSTER#…`**, new **`FILE#…`**, accounts, `PROFILE`, optional `METRICS`) — same keys they will use on primary |
 | 4 | **`validateStagingImportPartition`** | — | Counts, referential integrity, sample **`GSI*`** presence |
@@ -584,7 +584,7 @@ Clients format `**priorImportCompletedAt`** in local time for display and cross-
 
 1. **Concurrent imports for one user**
   **Decision:** **Block** overlapping imports for the same user (single-flight / serialise at API or repository). Later improvement: UI may queue **multiple files** and submit **sequentially**.
-   **Mechanism (implemented):** Conditional **`PutItem`** on primary **`SYSTEM#IMPORT_LOCK`** (`acquireImportLock` / `releaseImportLock` in `db/`); **`409 Conflict`** with **`import_in_progress`** or **`restore_in_progress`** — see [`api_contract.md`](./api_contract.md) and **§8.5a** / **§8.7.3**. Staging path acquires the lock in **`runImportStagingWorkflow`** before staging writes; in-place §8.6 path acquires before **`persistImportPlan`**.
+   **Mechanism (implemented):** Conditional **`PutItem`** on primary **`SYSTEM#IMPORT_LOCK`** (`acquireImportLock` / `releaseImportLock` in `db/`); **`409 Conflict`** with **`import_in_progress`** or **`restore_in_progress`** — see [`api_contract.md`](./api_contract.md) and **§8.5a** / **§8.7.3**. Orchestration acquires the lock **before** primary-table writes (e.g. `createAccount`) and **before** stage-6 corpus reads; staging promote skips a second acquire via **`importLockAlreadyHeld`**.
 2. **Per-stage metrics and tracing**
   **Decision:** Emit **clear success/failure and duration per orchestration stage** (correlate with `import_file_id` where available).
    `**Still needed`:** Metric names, dimensions, CloudWatch vs structured logs—and align with §4.8 “per-stage observability.”

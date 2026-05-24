@@ -13,6 +13,11 @@ function mintTransactionId(): string {
   return `txn_${randomUUID().replaceAll('-', '')}`;
 }
 
+/** §4.2 stage **5** — `import_file_id` minted before lock acquisition in orchestration. */
+export function mintImportFileId(): string {
+  return randomUUID();
+}
+
 /**
  * Allocates `import_file_id` (TRANSACTION_FILE / GSI2 provenance) and one
  * `transaction_id` per parsed row. Index alignment is guaranteed by construction.
@@ -25,7 +30,7 @@ export function allocateBatchArtefactIds(rowCount: number): BatchArtefactIds {
   }
 
   return {
-    importFileId: randomUUID(),
+    importFileId: mintImportFileId(),
     transactionIds: Array.from({ length: rowCount }, mintTransactionId),
   };
 }

@@ -29,7 +29,27 @@ async function mapImportLockConflict<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** §8.7 — staging promote path (lock acquired inside repository workflow). */
+/** Acquire `IMPORT_LOCK` before primary writes and corpus reads (orchestration §8.5a). */
+export async function acquireImportLockForOrchestration(
+  repo: FinanceRepository,
+  userId: string,
+  input: { import_file_id: string; import_started_at: number },
+): Promise<void> {
+  await mapImportLockConflict(() => repo.acquireImportLock(userId, input));
+}
+
+export async function releaseImportLockBestEffort(
+  repo: FinanceRepository,
+  userId: string,
+): Promise<void> {
+  try {
+    await repo.releaseImportLock(userId);
+  } catch {
+    /* best effort — lock may remain until ops / optional abort */
+  }
+}
+
+/** §8.7 — staging promote path (`IMPORT_LOCK` already held by orchestration). */
 export async function persistImportViaStaging(
   params: PersistImportPhaseParams,
 ): Promise<void> {
@@ -43,18 +63,17 @@ export async function persistImportViaStaging(
     transactionFileInput,
   } = params;
 
-  await mapImportLockConflict(() =>
-    repo.persistImportPlanViaStaging(userId, {
-      importFileId,
-      importStartedAt,
-      plan: toImportPersistPlan(plan),
-      transactionFile: transactionFileInput,
-      fileCurrency: importCurrency,
-    }),
-  );
+  await repo.persistImportPlanViaStaging(userId, {
+    importFileId,
+    importStartedAt,
+    plan: toImportPersistPlan(plan),
+    transactionFile: transactionFileInput,
+    fileCurrency: importCurrency,
+    importLockAlreadyHeld: true,
+  });
 }
 
-/** §8.6 — in-place persist under `IMPORT_LOCK` (§8.5a). */
+/** §8.6 — in-place persist (`IMPORT_LOCK` already held by orchestration). */
 export async function persistImportInPlace(
   params: PersistImportPhaseParams,
 ): Promise<void> {
@@ -63,17 +82,9 @@ export async function persistImportInPlace(
     repo,
     plan,
     importFileId,
-    importStartedAt,
     importCurrency,
     transactionFileInput,
   } = params;
-
-  await mapImportLockConflict(() =>
-    repo.acquireImportLock(userId, {
-      import_file_id: importFileId,
-      import_started_at: importStartedAt,
-    }),
-  );
 
   try {
     const result = await persistImportPlan({
@@ -95,11 +106,7 @@ export async function persistImportInPlace(
 
     await repo.refreshStoredDashboardMetrics(userId);
   } catch (e) {
-    try {
-      await repo.releaseImportLock(userId);
-    } catch {
-      /* best effort — lock may remain until ops / optional abort */
-    }
+    await releaseImportLockBestEffort(repo, userId);
     throw e;
   }
   await repo.releaseImportLock(userId);

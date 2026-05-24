@@ -63,8 +63,11 @@ function createStubRepo(overrides = {}) {
       return overrides.transactions ?? [];
     },
 
-    listTransactionFiles: async () => {
+    listTransactionFiles: async (userId) => {
       log('listTransactionFiles');
+      if (overrides.listTransactionFiles) {
+        return overrides.listTransactionFiles(userId);
+      }
       return overrides.transactionFiles ?? [];
     },
 
@@ -178,13 +181,14 @@ test('executeImportOrchestration — zero-row CSV commits persist stages in §4.
   });
 
   assertPersistStagesInOrder(repo.callLog);
-  assert.equal(repo.callLog[0], 'getAccount');
+  assert.equal(repo.callLog[0], 'findDuplicateBlobImport');
+  assert.equal(repo.callLog[1], 'getAccount');
   assert.ok(
-    repo.callLog.indexOf('findDuplicateBlobImport') < repo.callLog.indexOf('listTransactionFiles'),
+    repo.callLog.indexOf('acquireImportLock') <
+      repo.callLog.indexOf('listTransactionFiles'),
   );
-  assert.ok(!repo.callLog.includes('listTransactions'));
   assert.ok(
-    repo.callLog.indexOf('listTransactionFiles') <
+    repo.callLog.indexOf('acquireImportLock') <
       repo.callLog.indexOf('patchExistingTransactionsAfterImport'),
   );
 
@@ -210,7 +214,9 @@ test('executeImportOrchestration — createAccount path when new_account_name is
     extracted,
   });
 
-  assert.equal(repo.callLog[0], 'createAccount');
+  assert.equal(repo.callLog[0], 'findDuplicateBlobImport');
+  assert.equal(repo.callLog[1], 'acquireImportLock');
+  assert.equal(repo.callLog[2], 'createAccount');
   assert.equal(result.importFileId, repo.lastTransactionFile.id);
   assert.equal(repo.lastTransactionFile.account_id, 'acc-new');
 });
@@ -243,7 +249,7 @@ test('executeImportOrchestration — duplicate blob aborts before parse/persist 
     },
   );
 
-  assert.deepEqual(repo.callLog, ['getAccount', 'findDuplicateBlobImport']);
+  assert.deepEqual(repo.callLog, ['findDuplicateBlobImport']);
   assert.equal(repo.lastTransactionFile, undefined);
 });
 
@@ -263,7 +269,7 @@ test('executeImportOrchestration — unknown account_id returns 400 before dupli
     (e) => e instanceof HttpError && e.statusCode === 400,
   );
 
-  assert.deepEqual(repo.callLog, ['getAccount']);
+  assert.deepEqual(repo.callLog, ['findDuplicateBlobImport', 'getAccount']);
 });
 
 test('executeImportOrchestration — missing account selector returns 400', async () => {
@@ -351,11 +357,38 @@ test('executeImportOrchestration — import_in_progress returns 409 before persi
   assert.ok(!repo.callLog.includes('releaseImportLock'));
 });
 
-test('executeImportOrchestration — restore_in_progress returns 409 (staging path)', async () => {
+test('executeImportOrchestration — planning failure releases IMPORT_LOCK before persist', async () => {
+  const extracted = zeroRowExtracted();
+  const repo = createStubRepo({
+    listTransactionFiles: async () => {
+      throw new Error('planning read failed');
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      executeImportOrchestration({
+        userId: 'user-plan-fail',
+        repo,
+        extracted,
+      }),
+    (e) => e instanceof Error && e.message === 'planning read failed',
+  );
+
+  assert.ok(repo.callLog.includes('acquireImportLock'));
+  assert.ok(repo.callLog.includes('releaseImportLock'));
+  assert.ok(!repo.callLog.includes('patchExistingTransactionsAfterImport'));
+  assert.ok(
+    repo.callLog.indexOf('releaseImportLock') >
+      repo.callLog.indexOf('acquireImportLock'),
+  );
+});
+
+test('executeImportOrchestration — restore_in_progress returns 409 before persist (staging path)', async () => {
   const extracted = zeroRowExtracted();
   const repo = createStubRepo({
     importStagingEnabled: true,
-    persistImportPlanViaStaging: async () => {
+    acquireImportLock: async () => {
       throw new ImportLockConflictError('user-restore', 'restore_in_progress');
     },
   });

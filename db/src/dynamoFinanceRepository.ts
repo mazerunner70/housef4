@@ -407,6 +407,7 @@ export interface FinanceRepository {
       plan: ImportPersistPlan;
       transactionFile: TransactionFileInput;
       fileCurrency?: string;
+      importLockAlreadyHeld?: boolean;
     },
   ): Promise<void>;
   /**
@@ -1665,6 +1666,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
       plan: ImportPersistPlan;
       transactionFile: TransactionFileInput;
       fileCurrency?: string;
+      importLockAlreadyHeld?: boolean;
     },
   ): Promise<void> {
     await runImportStagingWorkflow({
@@ -1676,6 +1678,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
       transactionFile: input.transactionFile,
       fileCurrency: input.fileCurrency,
       refreshMetrics: () => this.refreshStoredDashboardMetrics(userId),
+      importLockAlreadyHeld: input.importLockAlreadyHeld,
     });
   }
 

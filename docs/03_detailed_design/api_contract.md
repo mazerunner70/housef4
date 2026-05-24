@@ -92,7 +92,7 @@ When the server cannot **fully commit** an import to the **primary** table, **`P
 
 **Preferred implementation** ([`import_transaction_files.md`](./import_transaction_files.md) **§8.7**): materialize the post-import ledger on a **per-user import-staging partition** (**next**), then **promote** to primary (**now**). Failure **before promote** clears **only that user's** staging partition; primary is untouched. **Fallback** (**§8.6**): in-place primary writes with compensating rollback.
 
-**Concurrent import (`409 Conflict`):** While **`IMPORT_LOCK`** (`SYSTEM#IMPORT_LOCK` on primary — [`database/data_model.md`](./database/data_model.md) §8.5a) is held for this user, a second **`POST /api/imports`** returns **`409`**. Same while **`RESTORE_LOCK`** is held (restore in progress). The lock is acquired **before any primary-table writes** (§8.7 staging promote or §8.6 in-place saga) so overlapping imports cannot interleave partial corpora.
+**Concurrent import (`409 Conflict`):** While **`IMPORT_LOCK`** (`SYSTEM#IMPORT_LOCK` on primary — [`database/data_model.md`](./database/data_model.md) §8.5a) is held for this user, a second **`POST /api/imports`** returns **`409`**. Same while **`RESTORE_LOCK`** is held (restore in progress). The lock is acquired **early in orchestration** — after duplicate-blob and account **read** validation and local parse, but **before** `createAccount`, corpus snapshot reads, planning, and any primary-table writes — so overlapping imports cannot interleave side effects or stale snapshot planning.
 
 ```json
 {

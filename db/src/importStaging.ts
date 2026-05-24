@@ -76,6 +76,8 @@ export interface RunImportStagingWorkflowInput {
   transactionFile: TransactionFileInput;
   fileCurrency?: string;
   refreshMetrics: () => Promise<void>;
+  /** When true, orchestration already acquired `IMPORT_LOCK` (§8.7.2 step 1). */
+  importLockAlreadyHeld?: boolean;
 }
 
 /**
@@ -119,6 +121,7 @@ export async function runImportStagingWorkflow(
     transactionFile,
     fileCurrency,
     refreshMetrics,
+    importLockAlreadyHeld = false,
   } = input;
 
   const stagingTable = requireImportStagingTableName();
@@ -141,10 +144,12 @@ export async function runImportStagingWorkflow(
   });
   validateMaterializedImportStaging(materialized, primaryPartitionItems, plan);
 
-  await acquireImportLock(doc, userId, {
-    import_file_id: importFileId,
-    import_started_at: importStartedAt,
-  });
+  if (!importLockAlreadyHeld) {
+    await acquireImportLock(doc, userId, {
+      import_file_id: importFileId,
+      import_started_at: importStartedAt,
+    });
+  }
 
   let primaryDeleteStarted = false;
   try {
