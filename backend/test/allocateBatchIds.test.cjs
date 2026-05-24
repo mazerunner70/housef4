@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   allocateBatchArtefactIds,
-} = require('../dist/services/import/allocateBatchIds');
+} = require('../dist/services/import/planning/allocateBatchIds');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TXN_ID_RE = /^txn_[0-9a-f]{32}$/i;

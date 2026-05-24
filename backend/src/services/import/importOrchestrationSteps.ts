@@ -13,10 +13,10 @@ import {
   suggestNegateFromInterest,
   suggestNegateFromPriorImport,
 } from './parse/amountNegation';
-import { allocateBatchArtefactIds } from './allocateBatchIds';
+import { allocateBatchArtefactIds } from './planning/allocateBatchIds';
 import { applyImportAmountNegation, type ParsedImportRow } from './parse/canonical';
 import { computeImportBlobContentSha256 } from './blob/blobFingerprint';
-import { buildLedgerSnapshot } from './ledgerSnapshot';
+import { buildLedgerSnapshot } from './planning/ledgerSnapshot';
 import type { ExtractedImportUpload } from './ingress/multipartFile';
 import { parseImportBuffer } from './parse/parseImportBuffer';
 import {
@@ -24,7 +24,7 @@ import {
   persistImportViaStaging,
 } from './importPersistPhase';
 import { runImportPlanning } from './runImportPlanning';
-import type { PersistPlan } from './persistPlan';
+import type { PersistPlan } from './planning/persistPlan';
 import type { ImportStageTracer } from './importStageTracing';
 
 export type AccountSelector = Readonly<{

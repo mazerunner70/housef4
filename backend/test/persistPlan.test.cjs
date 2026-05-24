@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const {
   persistImportPlan,
   toImportPersistPlan,
-} = require('../dist/services/import/persistPlan');
+} = require('../dist/services/import/planning/persistPlan');
 
 const STAGE_10_ORDER = [
   'patchExistingTransactionsAfterImport',

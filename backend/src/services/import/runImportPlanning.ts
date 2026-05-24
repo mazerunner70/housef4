@@ -19,8 +19,8 @@ import {
   runClusterAndCategoryPipeline,
   type Assignment,
 } from './clusterPipeline';
-import type { LedgerSnapshot } from './ledgerSnapshot';
-import type { PersistPlan } from './persistPlan';
+import type { LedgerSnapshot } from './planning/ledgerSnapshot';
+import type { PersistPlan } from './planning/persistPlan';
 import type { ImportStageTracer } from './importStageTracing';
 import { computeIngestTransferPairings } from '../pairing';
 import { createMerchantEmbedder } from './merchantsEmbedder';
