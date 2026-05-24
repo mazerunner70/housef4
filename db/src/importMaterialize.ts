@@ -147,6 +147,9 @@ function transactionFileToDynamoItem(
   if (h) {
     item.content_sha256 = h;
   }
+  if (input.blob) {
+    item.blob = input.blob;
+  }
   return item;
 }
 

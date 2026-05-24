@@ -9,6 +9,12 @@ const { ImportLockConflictError } = require('@housef4/db');
 const {
   computeImportBlobContentSha256,
 } = require('../dist/services/import/blobFingerprint');
+const {
+  resetImportBlobStoreForTests,
+} = require('../dist/services/import/importBlobStore');
+const { mkdtemp, rm } = require('node:fs/promises');
+const { join } = require('node:path');
+const { tmpdir } = require('node:os');
 
 /** Header-only CSV — parses to zero data rows (skips embedder in planning). */
 function zeroRowExtracted(overrides = {}) {
@@ -36,6 +42,7 @@ function createStubRepo(overrides = {}) {
   const repo = {
     callLog,
     lastTransactionFile: undefined,
+    afterPromoteInvoked: false,
 
     getAccount: async (userId, accountId) => {
       log('getAccount');
@@ -104,6 +111,11 @@ function createStubRepo(overrides = {}) {
       repo.lastTransactionFile = input;
     },
 
+    patchTransactionFileBlob: async (_userId, fileId, blob) => {
+      log('patchTransactionFileBlob');
+      repo.lastBlobPatch = { fileId, blob };
+    },
+
     refreshStoredDashboardMetrics: async () => {
       log('refreshStoredDashboardMetrics');
     },
@@ -117,6 +129,14 @@ function createStubRepo(overrides = {}) {
         return overrides.persistImportPlanViaStaging(_userId, input);
       }
       repo.lastStagingPersist = input;
+      assert.ok(
+        typeof input.afterPromote === 'function',
+        'staging persist must receive afterPromote hook for blob patch under lock',
+      );
+      if (input.afterPromote) {
+        await input.afterPromote();
+        repo.afterPromoteInvoked = true;
+      }
     },
 
     acquireImportLock: async (_userId, input) => {
@@ -292,7 +312,7 @@ test('executeImportOrchestration — missing account selector returns 400', asyn
   assert.deepEqual(repo.callLog, []);
 });
 
-test('executeImportOrchestration — staging path uses persistImportPlanViaStaging (no in-place writes)', async () => {
+test('executeImportOrchestration — staging path promotes file row inside workflow (no recordTransactionFile)', async () => {
   const extracted = zeroRowExtracted();
   const repo = createStubRepo({ importStagingEnabled: true });
   const userId = 'user-orchestration-staging';
@@ -300,12 +320,43 @@ test('executeImportOrchestration — staging path uses persistImportPlanViaStagi
   await executeImportOrchestration({ userId, repo, extracted });
 
   assert.ok(repo.callLog.includes('persistImportPlanViaStaging'));
+  assert.ok(repo.afterPromoteInvoked, 'afterPromote runs inside staging before lock release');
   assert.ok(!repo.callLog.includes('patchExistingTransactionsAfterImport'));
   assert.ok(!repo.callLog.includes('ingestImportBatch'));
   assert.ok(!repo.callLog.includes('recordTransactionFile'));
+  assert.ok(!repo.callLog.includes('patchTransactionFileBlob'));
   assert.ok(!repo.callLog.includes('refreshStoredDashboardMetrics'));
   assert.equal(repo.lastStagingPersist.importFileId, repo.lastStagingPersist.transactionFile.id);
-  assert.equal(repo.lastStagingPersist.transactionFile.content_sha256, computeImportBlobContentSha256(extracted.file.buffer));
+  assert.equal(
+    repo.lastStagingPersist.transactionFile.content_sha256,
+    computeImportBlobContentSha256(extracted.file.buffer),
+  );
+});
+
+test('executeImportOrchestration — staging path patches blob via afterPromote when storage enabled', async (t) => {
+  const blobRoot = await mkdtemp(join(tmpdir(), 'housef4-staging-blob-'));
+  t.after(async () => {
+    delete process.env.IMPORT_BLOB_BACKEND;
+    delete process.env.IMPORT_BLOB_LOCAL_ROOT;
+    resetImportBlobStoreForTests();
+    await rm(blobRoot, { recursive: true, force: true });
+  });
+
+  process.env.IMPORT_BLOB_BACKEND = 'filesystem';
+  process.env.IMPORT_BLOB_LOCAL_ROOT = blobRoot;
+  resetImportBlobStoreForTests();
+
+  const extracted = zeroRowExtracted();
+  const repo = createStubRepo({ importStagingEnabled: true });
+  const userId = 'user-orchestration-staging-blob';
+
+  await executeImportOrchestration({ userId, repo, extracted });
+
+  assert.ok(repo.afterPromoteInvoked);
+  assert.ok(repo.callLog.includes('patchTransactionFileBlob'));
+  assert.ok(!repo.callLog.includes('recordTransactionFile'));
+  assert.equal(repo.lastBlobPatch.fileId, repo.lastStagingPersist.importFileId);
+  assert.equal(repo.lastBlobPatch.blob.stored_bytes, extracted.file.buffer.length);
 });
 
 test('executeImportOrchestration — in-place path acquires and releases IMPORT_LOCK', async () => {

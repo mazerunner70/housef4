@@ -1,9 +1,15 @@
 import type { FinanceRepository } from '@housef4/db';
 import { ImportLockConflictError } from '@housef4/db';
 
+import {
+  attachImportBlobAndRecordFile,
+  attachImportBlobViaPatch,
+} from './importBlobPersist';
+import { getImportBlobStore } from './importBlobStore';
 import { importLockConflictHttpError } from './importLockHttp';
 import type { ImportStageTracer } from './importStageTracing';
 import { persistImportPlan, toImportPersistPlan, type PersistPlan } from './persistPlan';
+import type { ExtractedImportUpload } from './multipartFile';
 
 type TransactionFileInput = Parameters<
   FinanceRepository['recordTransactionFile']
@@ -17,8 +23,22 @@ type PersistImportPhaseParams = Readonly<{
   importStartedAt: number;
   importCurrency?: string;
   transactionFileInput: TransactionFileInput;
+  extracted: ExtractedImportUpload;
+  contentSha256: string;
+  accountId: string;
   tracer?: ImportStageTracer;
 }>;
+
+function importBlobPutContext(params: PersistImportPhaseParams) {
+  return {
+    userId: params.userId,
+    store: getImportBlobStore(),
+    extracted: params.extracted,
+    contentSha256: params.contentSha256,
+    importFileId: params.importFileId,
+    accountId: params.accountId,
+  };
+}
 
 async function mapImportLockConflict<T>(fn: () => Promise<T>): Promise<T> {
   try {
@@ -66,28 +86,35 @@ export async function persistImportViaStaging(
     tracer,
   } = params;
 
-  if (tracer) {
-    await tracer.run('10', () =>
-      repo.persistImportPlanViaStaging(userId, {
-        importFileId,
-        importStartedAt,
-        plan: toImportPersistPlan(plan),
-        transactionFile: transactionFileInput,
-        fileCurrency: importCurrency,
-        importLockAlreadyHeld: true,
-      }),
-    );
-    return;
-  }
+  const afterPromote = async () => {
+    const patchBlob = () =>
+      attachImportBlobViaPatch({
+        repo,
+        ...importBlobPutContext(params),
+      });
+    if (tracer) {
+      await tracer.run('11', patchBlob);
+    } else {
+      await patchBlob();
+    }
+  };
 
-  await repo.persistImportPlanViaStaging(userId, {
-    importFileId,
-    importStartedAt,
-    plan: toImportPersistPlan(plan),
-    transactionFile: transactionFileInput,
-    fileCurrency: importCurrency,
-    importLockAlreadyHeld: true,
-  });
+  const runStaging = () =>
+    repo.persistImportPlanViaStaging(userId, {
+      importFileId,
+      importStartedAt,
+      plan: toImportPersistPlan(plan),
+      transactionFile: transactionFileInput,
+      fileCurrency: importCurrency,
+      importLockAlreadyHeld: true,
+      afterPromote,
+    });
+
+  if (tracer) {
+    await tracer.run('10', runStaging);
+  } else {
+    await runStaging();
+  }
 }
 
 /** §8.6 — in-place persist (`IMPORT_LOCK` already held by orchestration). */
@@ -123,21 +150,29 @@ export async function persistImportInPlace(
       }));
 
     await (tracer?.run('11', () =>
-      repo.recordTransactionFile(userId, {
-        ...transactionFileInput,
-        result: {
-          ...result,
-          existingTransactionsUpdated: plan.existingPatches.length,
-          newClustersTouched: plan.summary.newClustersTouched,
+      attachImportBlobAndRecordFile({
+        repo,
+        ...importBlobPutContext(params),
+        transactionFileInput: {
+          ...transactionFileInput,
+          result: {
+            ...result,
+            existingTransactionsUpdated: plan.existingPatches.length,
+            newClustersTouched: plan.summary.newClustersTouched,
+          },
         },
       }),
     ) ??
-      repo.recordTransactionFile(userId, {
-        ...transactionFileInput,
-        result: {
-          ...result,
-          existingTransactionsUpdated: plan.existingPatches.length,
-          newClustersTouched: plan.summary.newClustersTouched,
+      attachImportBlobAndRecordFile({
+        repo,
+        ...importBlobPutContext(params),
+        transactionFileInput: {
+          ...transactionFileInput,
+          result: {
+            ...result,
+            existingTransactionsUpdated: plan.existingPatches.length,
+            newClustersTouched: plan.summary.newClustersTouched,
+          },
         },
       }));
 

@@ -97,6 +97,16 @@ resource "aws_iam_role_policy" "api_lambda_dynamodb" {
           aws_dynamodb_table.import_staging.arn,
           "${aws_dynamodb_table.import_staging.arn}/index/*",
         ]
+      },
+      {
+        Sid    = "ImportBlobArchive"
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:DeleteObject",
+        ]
+        Resource = "${aws_s3_bucket.import_blob_archive.arn}/imports/*"
       }
     ]
   })
@@ -119,6 +129,8 @@ resource "aws_lambda_function" "api" {
       DYNAMODB_TABLE_NAME                 = aws_dynamodb_table.app_table.name
       DYNAMODB_RESTORE_STAGING_TABLE_NAME = aws_dynamodb_table.restore_staging.name
       DYNAMODB_IMPORT_STAGING_TABLE_NAME  = aws_dynamodb_table.import_staging.name
+      IMPORT_BLOB_BACKEND                 = "s3"
+      IMPORT_BLOB_S3_BUCKET               = aws_s3_bucket.import_blob_archive.id
     }
   }
 

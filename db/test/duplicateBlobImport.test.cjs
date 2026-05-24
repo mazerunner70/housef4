@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
-const { PutCommand, QueryCommand } = require('@aws-sdk/lib-dynamodb');
+const { PutCommand, QueryCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
 const { DynamoFinanceRepository } = require('../dist/dynamoFinanceRepository');
 const { FILE_PREFIX, userPk } = require('../dist/keys');
 
@@ -182,6 +182,38 @@ test('recordTransactionFile — persists content_sha256 on the Dynamo item', asy
   assert.equal(putItem.entity_type, 'TRANSACTION_FILE');
 });
 
+test('patchTransactionFileBlob — sets blob map on existing TRANSACTION_FILE', async (t) => {
+  withEnv(t, { DYNAMODB_TABLE_NAME: 'tbl' });
+  /** @type {Record<string, unknown> | undefined} */
+  let updateInput;
+
+  /** @type {import('@aws-sdk/lib-dynamodb').DynamoDBDocumentClient} */
+  const docClient = {
+    send(cmd) {
+      assert.ok(cmd instanceof UpdateCommand);
+      updateInput = cmd.input;
+      return Promise.resolve({});
+    },
+  };
+
+  const blob = {
+    kind: 's3',
+    key: 'imports/u1/f1/Statement.csv',
+    bucket: 'housef4-dev-import-blobs',
+    content_sha256: sha256Hex(Buffer.from('patch')),
+    stored_bytes: 99,
+  };
+
+  const repo = new DynamoFinanceRepository(docClient, 'tbl');
+  await repo.patchTransactionFileBlob('u1', 'f1', blob);
+
+  assert.equal(updateInput.TableName, 'tbl');
+  assert.equal(updateInput.Key.PK, userPk('u1'));
+  assert.equal(updateInput.Key.SK, `${FILE_PREFIX}f1`);
+  assert.deepEqual(updateInput.ExpressionAttributeValues[':blob'], blob);
+  assert.equal(updateInput.ConditionExpression, 'entity_type = :et');
+});
+
 test('listTransactionFiles — surfaces content_sha256 when stored', async (t) => {
   withEnv(t, { DYNAMODB_TABLE_NAME: 'tbl' });
   const hash = sha256Hex(Buffer.from('listed'));
@@ -207,4 +239,31 @@ test('listTransactionFiles — surfaces content_sha256 when stored', async (t) =
   const legacy = files.find((f) => f.id === 'f2');
   assert.equal(withHash.content_sha256, hash);
   assert.equal(legacy.content_sha256, undefined);
+});
+
+test('listTransactionFiles — surfaces blob map when stored', async (t) => {
+  withEnv(t, { DYNAMODB_TABLE_NAME: 'tbl' });
+  const blob = {
+    kind: 's3',
+    key: 'imports/u1/f1/Statement.csv',
+    bucket: 'housef4-dev-import-blobs',
+    content_sha256: sha256Hex(Buffer.from('listed')),
+    stored_bytes: 42,
+  };
+
+  /** @type {import('@aws-sdk/lib-dynamodb').DynamoDBDocumentClient} */
+  const docClient = {
+    send(cmd) {
+      assert.ok(cmd instanceof QueryCommand);
+      return Promise.resolve({
+        Items: [transactionFileItem('u1', 'f1', { blob })],
+      });
+    },
+  };
+
+  const repo = new DynamoFinanceRepository(docClient, 'tbl');
+  const files = await repo.listTransactionFiles('u1');
+
+  assert.equal(files.length, 1);
+  assert.deepEqual(files[0].blob, blob);
 });

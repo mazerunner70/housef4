@@ -8,7 +8,7 @@ related:
   - ./api_contract.md
   - ./backend_dev_and_prod_environments.md
   - ../02_architecture/03_infrastructure_map.md
-status: Design proposal — not implemented
+status: Implemented (HOU-45)
 ---
 
 # Import raw file retention (local filesystem vs S3)
@@ -177,6 +177,8 @@ sequenceDiagram
 **Alternative** (write blob **before** parse): improves “bytes always retained even if parse crashes,” but duplicates storage when clients retry the same file with fixes — acceptable if product wants forensic completeness. Default recommendation: **write after successful ingest** so garbage uploads do not fill storage; document product trade-off explicitly.
 
 **Idempotency**: Re-posting the same file creates a **new** `importFileId` and **new** object key — correct for append semantics.
+
+**Staging path (§8.7):** after primary promote succeeds, an **`afterPromote`** hook runs **before** metrics refresh and **`IMPORT_LOCK`** release. That hook performs blob **`Put`** (when enabled) and **`patchTransactionFileBlob`** — a targeted `UpdateItem` on the promoted `TRANSACTION_FILE` row — rather than a second full `recordTransactionFile` after the lock is released.
 
 ---
 
