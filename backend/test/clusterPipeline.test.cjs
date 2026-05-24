@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { splitNoiseLabels, unanimousPriorCategoryForGroup } = require('../dist/services/import/clusterPipeline');
+const { splitNoiseLabels, unanimousPriorCategoryForGroup } = require('../dist/services/import/clustering/clusterPipeline');
 
 test('splitNoiseLabels: each -1 becomes its own singleton group label', () => {
   assert.deepEqual(splitNoiseLabels([-1, -1, 0]), [-1000000, -1000001, 0]);

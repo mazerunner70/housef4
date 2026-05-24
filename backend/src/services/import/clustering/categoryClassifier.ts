@@ -1,7 +1,7 @@
 import categoryEmbeddingsJson from './categoryEmbeddings.json';
 
-import { HttpError } from '../../httpError';
-import { getLog } from '../../requestLogContext';
+import { HttpError } from '../../../httpError';
+import { getLog } from '../../../requestLogContext';
 import { cosineDistance } from './dbscanCosine';
 import { hashEmbedding } from './merchantsEmbedder';
 import {
@@ -31,7 +31,7 @@ type CategoryEmbeddingsFile = {
   vectors: number[][];
 };
 
-const json = categoryEmbeddingsJson as CategoryEmbeddingsFile;
+const json = categoryEmbeddingsJson;
 
 const MISMATCH =
   'Category embeddings are out of sync with the server taxonomy. Regenerate backend/src/services/import/categoryEmbeddings.json from ml-training/scripts/export_category_embeddings.py.';
@@ -71,7 +71,7 @@ function assertCategoryEmbeddingsMatchTaxonomy(): void {
 }
 
 function categoryDescriptionsInLabelOrder(): string[] {
-  return json.labels.map((label) => CATEGORY_MAP_V2[label]!);
+  return json.labels.map((label) => CATEGORY_MAP_V2[label]);
 }
 
 /** MiniLM-aligned vectors from committed JSON (same model as ml-training export). */
@@ -107,13 +107,13 @@ export function mlMatchForEmbedding(
   let bestI = 0;
   let bestSim = -1;
   for (let i = 0; i < categoryVectors.length; i++) {
-    const sim = 1 - cosineDistance(embedding, categoryVectors[i]!);
+    const sim = 1 - cosineDistance(embedding, categoryVectors[i]);
     if (sim > bestSim) {
       bestSim = sim;
       bestI = i;
     }
   }
-  const label = json.labels[bestI] ?? CATEGORY_LABELS_V2[bestI]!;
+  const label = json.labels[bestI] ?? CATEGORY_LABELS_V2[bestI];
   return {
     category: label,
     confidence: Math.round(bestSim * 100) / 100,

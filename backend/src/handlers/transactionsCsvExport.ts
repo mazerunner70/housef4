@@ -1,7 +1,7 @@
 import { getFinanceRepository } from '@housef4/db';
 
 import { getLog } from '../requestLogContext';
-import { cleanMerchantForClustering } from '../services/import/merchantNormalize';
+import { cleanMerchantForClustering } from '../services/import/clustering';
 import type { InternalRequest } from '../types';
 
 export async function getTransactionsCsvExport(

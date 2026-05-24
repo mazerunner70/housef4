@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const {
   dbscanCosine,
   cosineDistance,
-} = require('../dist/services/import/dbscanCosine');
+} = require('../dist/services/import/clustering/dbscanCosine');
 
 function norm3(x, y, z) {
   const n = Math.hypot(x, y, z) || 1;

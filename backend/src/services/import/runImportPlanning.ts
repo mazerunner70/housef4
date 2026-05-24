@@ -15,16 +15,16 @@ import type {
 import type { ParsedImportRow } from './parse/canonical';
 import {
   buildNewImportInputs,
+  cleanMerchantForClustering,
   computeRetiredClusterIds,
+  createMerchantEmbedder,
   runClusterAndCategoryPipeline,
   type Assignment,
-} from './clusterPipeline';
+} from './clustering';
 import type { LedgerSnapshot } from './planning/ledgerSnapshot';
 import type { PersistPlan } from './planning/persistPlan';
 import type { ImportStageTracer } from './importStageTracing';
 import { computeIngestTransferPairings } from '../pairing';
-import { createMerchantEmbedder } from './merchantsEmbedder';
-import { cleanMerchantForClustering } from './merchantNormalize';
 
 export type ImportPlanningContext = Readonly<{
   /** Financial account this file is imported into (`ACCOUNT#…`). */

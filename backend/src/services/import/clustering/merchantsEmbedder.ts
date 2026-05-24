@@ -9,10 +9,10 @@ export type MerchantEmbedder = {
 
 function l2Normalize(v: Float32Array): Float32Array {
   let s = 0;
-  for (let i = 0; i < v.length; i++) s += v[i]! * v[i]!;
+  for (const x of v) s += x * x;
   const n = Math.sqrt(s) || 1;
   const out = new Float32Array(v.length);
-  for (let i = 0; i < v.length; i++) out[i] = v[i]! / n;
+  for (let i = 0; i < v.length; i++) out[i] = v[i] / n;
   return out;
 }
 
@@ -25,7 +25,7 @@ export function hashEmbedding(text: string, dim = 384): Float32Array {
     if (i === 0 && off > 0) {
       h = createHash('sha256').update(h).update(String(off)).digest();
     }
-    v[off] = (h[i]! / 255) * 2 - 1;
+    v[off] = (h[i] / 255) * 2 - 1;
   }
   return l2Normalize(v);
 }
@@ -82,17 +82,21 @@ export async function createMerchantEmbedder(): Promise<MerchantEmbedder> {
 /** Mean of normalized vectors, then L2-normalize (cluster centroid for cosine). */
 export function meanNormalized(embeddings: Float32Array[]): Float32Array {
   if (embeddings.length === 0) return new Float32Array(384);
-  const dim = embeddings[0]!.length;
+  const first = embeddings[0];
+  if (first === undefined) {
+    throw new Error('meanNormalized: missing first embedding');
+  }
+  const dim = first.length;
   const acc = new Float32Array(dim);
   for (const e of embeddings) {
-    for (let i = 0; i < dim; i++) acc[i] += e[i]!;
+    for (let i = 0; i < dim; i++) acc[i] += e[i];
   }
   for (let i = 0; i < dim; i++) acc[i] /= embeddings.length;
   let s = 0;
-  for (let i = 0; i < dim; i++) s += acc[i]! * acc[i]!;
+  for (const x of acc) s += x * x;
   const n = Math.sqrt(s) || 1;
   const out = new Float32Array(dim);
-  for (let i = 0; i < dim; i++) out[i] = acc[i]! / n;
+  for (let i = 0; i < dim; i++) out[i] = acc[i] / n;
   return out;
 }
 
@@ -102,8 +106,8 @@ export function bestCategoryByCentroid(
 ): { index: number; confidence: number } {
   let bestI = 0;
   let bestSim = -1;
-  for (let i = 0; i < categoryVectors.length; i++) {
-    const sim = 1 - cosineDistance(centroid, categoryVectors[i]!);
+  for (const [i, vec] of categoryVectors.entries()) {
+    const sim = 1 - cosineDistance(centroid, vec);
     if (sim > bestSim) {
       bestSim = sim;
       bestI = i;

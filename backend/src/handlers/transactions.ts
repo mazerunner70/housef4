@@ -1,7 +1,7 @@
 import { getFinanceRepository } from '@housef4/db';
 
 import { getLog } from '../requestLogContext';
-import { cleanMerchantForClustering } from '../services/import/merchantNormalize';
+import { cleanMerchantForClustering } from '../services/import/clustering';
 
 export async function getTransactionsPayload(
   userId: string,
@@ -13,9 +13,9 @@ export async function getTransactionsPayload(
   const clusterId = opts?.clusterId?.trim() || undefined;
   const repo = getFinanceRepository();
   let rows =
-    fileId !== undefined
-      ? await repo.listTransactionsByFileId(userId, fileId)
-      : await repo.listTransactions(userId);
+    fileId === undefined
+      ? await repo.listTransactions(userId)
+      : await repo.listTransactionsByFileId(userId, fileId);
   if (clusterId !== undefined) {
     rows = rows.filter((t) => t.cluster_id === clusterId);
   }
