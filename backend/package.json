@@ -18,13 +18,13 @@
     "aws-embedded-metrics": "^4.2.1",
     "busboy": "^1.6.0",
     "csv-parse": "^6.2.1",
-    "lodash-es": "^4.17.21",
+    "lodash": "^4.17.21",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.136",
     "@types/busboy": "^1.5.4",
-    "@types/lodash-es": "^4.17.12",
+    "@types/lodash": "^4.17.12",
     "@types/node": "^20.11.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.4.0"

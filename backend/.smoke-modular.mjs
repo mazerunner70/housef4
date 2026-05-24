@@ -1,0 +1,1 @@
+import groupBy from 'lodash/groupBy.js'; console.log(groupBy([{a:1}], 'a'));

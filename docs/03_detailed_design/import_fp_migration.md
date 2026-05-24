@@ -3,7 +3,7 @@
 **Status:** Planned (not yet implemented)  
 **Parent design:** [`import_transaction_files.md`](./import_transaction_files.md) §4.1 (pure planning preference), §4.4 (bounded purity), §4.5 (adoption phases)  
 **Scope:** `backend/src/services/import/` (~3.5k lines) and `backend/src/services/pairing/ingest.ts` (stage **7**)  
-**Utility library:** [`lodash-es`](https://lodash.com/docs) (tree-shakeable ESM; **named imports only**)
+**Utility library:** [`lodash`](https://lodash.com/docs) (per-method imports via curated re-export module; **no default import**)
 
 ---
 
@@ -18,7 +18,7 @@ This document is the **actionable roadmap** for that refactor. It extends §4.5 
 | Goal | Meaning |
 | ---- | ------- |
 | **Pure planning core** | Stages **3–4** (parse/canonical) and **6–9** (snapshot → plan) are deterministic given explicit inputs |
-| **Standard data patterns** | Prefer **lodash-es** collection utilities and **`flow`** composition over hand-rolled loops and index cursors |
+| **Standard data patterns** | Prefer **lodash** collection utilities and **`flow`** composition over hand-rolled loops and index cursors |
 | **Minimal business surface** | Public pure modules export **named domain transforms** (`withCanonicalAmounts`, `assignClusterLabels`); lodash stays at call sites or in thin orchestration helpers |
 | **Thin effect shell** | I/O, locks, tracing, persistence stay in orchestration modules unchanged in *shape* |
 | **Incremental delivery** | Each phase is one behaviour-neutral PR; existing integration tests stay green |
@@ -97,18 +97,20 @@ flowchart TB
 | **No in-place mutation** in planning/parse | §4.4 Q4; use `map` / `flow` returning new arrays and objects |
 | **One function = one transform** | Name describes the data change, not the §4.2 stage number |
 | **Index alignment via typed rows** | §4.4 — replace parallel arrays with `PlanningRow`; align with **`zipWith`** |
-| **lodash-es via curated re-exports** | Single module `utils/lodashImport.ts` lists every lodash API used by import — easy to grep and review |
-| **Named imports only** | `import { groupBy, flow } from 'lodash-es'` — never `import _ from 'lodash-es'` |
+| **lodash via curated re-exports** | Single module `utils/lodashImport.ts` lists every lodash API used by import — easy to grep and review |
+| **Named imports only** | `import { groupBy, flow } from '../utils/lodashImport'` — never `import _ from 'lodash'` or barrel `from 'lodash'` |
 | **`flow` for linear pure chains** | Replaces nested calls and manual pipeline locals where steps are unary |
 | **Embedder / repo at shell boundary** | §4.7 Q3 — pure core receives `MerchantEmbedder`, never constructs it |
 
 ### 3.3 Lodash adoption
 
-**Package:** add **`lodash-es`** to `backend/package.json` (ESM-native; tree-shakeable with esbuild Lambda bundle).
+**Package:** add **`lodash`** to `backend/package.json`.
+
+**Why not `lodash-es`?** Backend `tsc` emits **CommonJS** (`dist/**`). Static re-exports from `lodash-es` (ESM-only) can throw **`ERR_REQUIRE_ESM`** when tests `require()` compiled output. The curated module instead re-exports from per-method **`lodash/*`** entrypoints — CJS-safe at runtime and tree-shakeable when esbuild bundles Lambda.
 
 **Curated re-export:** `backend/src/services/import/utils/lodashImport.ts`
 
-- Re-exports every lodash function the import tree uses (see catalogue below).
+- Re-exports every lodash function the import tree uses (see catalogue below) via `export { default as groupBy } from 'lodash/groupBy'` (and similar).
 - Documents the **allowed** lodash surface for this package in one file.
 - May add **one or two** thin wrappers when lodash defaults are wrong for import semantics (e.g. strict length zip — see below).
 
@@ -118,16 +120,18 @@ flowchart TB
 import { groupBy, zipWith, flow, compact, partition } from '../utils/lodashImport';
 ```
 
+**Do not** import from `'lodash'` or `'lodash-es'` directly in import domain code — only from `lodashImport.ts`.
+
 **Why lodash (not local helpers or Ramda):**
 
-| Factor | lodash-es |
-| ------ | --------- |
+| Factor | lodash (curated) |
+| ------ | ---------------- |
 | **Recognition** | Team reads `groupBy`, `partition`, `flow` without learning project-specific helpers |
 | **Composition** | `flow` / `flowRight` express parse and plan pipelines as named steps |
 | **Equality / diff** | `isEqual` replaces hand-rolled embedding and patch comparisons |
 | **Set logic** | `difference`, `uniq`, `countBy` replace manual `Set` loops |
 | **Debuggability** | Unlike Ramda, lodash functions are not auto-curried — stack traces stay readable |
-| **Tree-shaking** | Named imports from `lodash-es`; esbuild already bundles Lambda |
+| **Tree-shaking** | Per-method `lodash/*` imports in `lodashImport.ts`; esbuild bundles Lambda without pulling the full library |
 
 **Explicitly avoided:** **Ramda**, **fp-ts**, **Effect** (see §1.2).
 
@@ -235,20 +239,20 @@ Use **`isEqual`** inside `rowUnchanged` for embedding comparison.
 
 Each phase = **one PR**, behaviour-neutral, CI green. Order matters from phase **2** onward.
 
-### Phase 0 — Foundation: lodash-es
+### Phase 0 — Foundation: lodash
 
 **Deliverables**
 
 | Item | Path | Notes |
 | ---- | ---- | ----- |
-| Dependency | `backend/package.json` | `"lodash-es": "^4.17.21"` (or current stable) |
-| Curated re-exports | `backend/src/services/import/utils/lodashImport.ts` | Re-export catalogue from §3.3; add `zipStrict` if needed |
+| Dependency | `backend/package.json` | `"lodash": "^4.17.21"` (or current stable) |
+| Curated re-exports | `backend/src/services/import/utils/lodashImport.ts` | Per-method `lodash/*` re-exports from §3.3; add `zipStrict` if needed |
 | Tracer helper (optional) | `backend/src/services/import/utils/traceStage.ts` | Shell-only; dedupes `tracer?.run ?? fn` |
 | Smoke test | `backend/test/lodashImport.test.cjs` | Verify `groupBy`, `zipWith`, `flow`, `compact` behave as import expects (esp. strict zip) |
 
-**Done when:** `lodash-es` installed; `lodashImport.ts` re-exports documented set; backend build and tests green; no domain refactors yet.
+**Done when:** `lodash` installed; `lodashImport.ts` re-exports documented set; backend build and tests green; no domain refactors yet.
 
-**Bundle note:** confirm esbuild Lambda script tree-shakes named imports (expected with `lodash-es`).
+**Bundle note:** confirm esbuild Lambda script tree-shakes per-method imports (avoid barrel `from 'lodash'`).
 
 ---
 
@@ -390,7 +394,7 @@ gantt
   title Import FP migration (incremental PRs)
   dateFormat YYYY-MM-DD
   section Foundation
-  Phase 0 lodash-es          :p0, 2026-05-25, 2d
+  Phase 0 lodash               :p0, 2026-05-25, 2d
   section Low risk
   Phase 1 parse purity       :p1, after p0, 3d
   Phase 5 pairing polish     :p5, after p1, 1d
@@ -454,7 +458,7 @@ lodash removes more loop boilerplate than local helpers would; offset by **`loda
 
 ## 9. Success criteria
 
-- [ ] `lodash-es` in `backend/package.json`; named imports only
+- [ ] `lodash` in `backend/package.json`; imports only via `utils/lodashImport.ts`
 - [ ] `utils/lodashImport.ts` documents full lodash surface used by import
 - [ ] No in-place mutation of `ParsedImportRow[]` in planning path
 - [ ] Stage **8** uses **`groupBy`** / **`zipWith`** — no index cursor
@@ -470,7 +474,7 @@ lodash removes more loop boilerplate than local helpers would; offset by **`loda
 
 **Phase 0 + Phase 1a** in one reviewable change:
 
-1. Add **`lodash-es`** to `backend/package.json`
+1. Add **`lodash`** to `backend/package.json`
 2. Add **`utils/lodashImport.ts`** + smoke tests
 3. Add `withCanonicalAmounts` (**`map`**); stop mutating in `applyImportAmountNegation`
 4. Use **`some`** in `suggestNegateFromInterest` (optional same PR)

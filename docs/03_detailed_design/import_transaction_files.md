@@ -167,7 +167,7 @@ The following are coupling or legacy patterns; they do **not** invalidate the **
 
 **Next — pure planning / FP migration** (phased, behaviour-neutral PRs): see [`import_fp_migration.md`](./import_fp_migration.md).
 
-5. **Phase 0–1:** adopt **`lodash-es`** (curated re-exports in `utils/lodashImport.ts`); immutable parse / canonical amount transforms (stages **3–4**).
+5. **Phase 0–1:** adopt **`lodash`** (curated per-method re-exports in `utils/lodashImport.ts`); immutable parse / canonical amount transforms (stages **3–4**).
 6. **Phase 2:** `PlanningRow` model — replace parallel-array index alignment with **`partition`** / **`zipWith`** (§4.4).
 7. **Phase 3–4:** decompose cluster pass (stage **8**) with **`groupBy`**, **`mapValues`**, **`flow`**; `buildPersistPlan` (stage **9**) with **`isEqual`**, **`reject`**, **`countBy`**.
 8. **Phase 5–6:** pairing polish; optional tracer helper — **defer orchestration pipeline DSL** until types stabilise.

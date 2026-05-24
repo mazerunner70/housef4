@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Incremental, behaviour-neutral refactor of `backend/src/services/import/` to a **pure planning core** using **lodash-es** collection patterns. Reduces cognitive load in parse, clustering, and persist-plan assembly without rewriting orchestration, persist, or DBSCAN.
+Incremental, behaviour-neutral refactor of `backend/src/services/import/` to a **pure planning core** using **lodash** collection patterns (via `utils/lodashImport.ts`). Reduces cognitive load in parse, clustering, and persist-plan assembly without rewriting orchestration, persist, or DBSCAN.
 
 Authoritative design: [`import_fp_migration.md`](../../03_detailed_design/import_fp_migration.md) (extends [`import_transaction_files.md`](../../03_detailed_design/import_transaction_files.md) §4.1 / §4.5).
 
@@ -29,7 +29,7 @@ flowchart LR
 
 | Issue | Phase | Title | Priority | Blocks |
 | ----- | ----- | ----- | -------- | ------ |
-| [HOU-54](https://linear.app/house-f4/issue/HOU-54) | 0 | Add lodash-es and lodashImport re-export module | High | — |
+| [HOU-54](https://linear.app/house-f4/issue/HOU-54) | 0 | Add lodash and lodashImport re-export module | High | — |
 | [HOU-55](https://linear.app/house-f4/issue/HOU-55) | 1 | Immutable parse and canonical amount transforms | High | HOU-54 |
 | [HOU-56](https://linear.app/house-f4/issue/HOU-56) | 2 | Introduce PlanningRow model for index alignment | High | HOU-55 |
 | [HOU-57](https://linear.app/house-f4/issue/HOU-57) | 3 | Decompose cluster pass with lodash transforms | High | HOU-56 |
