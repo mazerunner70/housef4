@@ -553,15 +553,30 @@ type PutBatch = Record<
 function unprocessedPutsToBatch(
   table: string,
   unprocessed:
-    | { PutRequest?: { Item?: Record<string, unknown> } }[]
+    | { PutRequest?: { Item?: Record<string, unknown> }; DeleteRequest?: unknown }[]
     | undefined,
 ): PutBatch {
+  if (!unprocessed?.length) {
+    return { [table]: [] };
+  }
+
   const puts: PutBatch[string] = [];
-  for (const req of unprocessed ?? []) {
+  for (let i = 0; i < unprocessed.length; i++) {
+    const req = unprocessed[i];
     const item = req.PutRequest?.Item;
-    if (item != null) {
-      puts.push({ PutRequest: { Item: item } });
+    if (item == null) {
+      const message =
+        `DynamoDB BatchWrite unprocessed entry ${i + 1}/${unprocessed.length} on table ${table} ` +
+        'has no PutRequest.Item — only Put retries are supported in batchWriteAll';
+      dbLog('error', 'dynamodb.batch_write.unprocessed_shape', {
+        table,
+        index: i,
+        hasPutRequest: req.PutRequest != null,
+        hasDeleteRequest: req.DeleteRequest != null,
+      });
+      throw new Error(message);
     }
+    puts.push({ PutRequest: { Item: item } });
   }
   return { [table]: puts };
 }
