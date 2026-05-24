@@ -12,13 +12,13 @@ import {
   resolveAmountNegation,
   suggestNegateFromInterest,
   suggestNegateFromPriorImport,
-} from './amountNegation';
+} from './parse/amountNegation';
 import { allocateBatchArtefactIds } from './allocateBatchIds';
-import { applyImportAmountNegation, type ParsedImportRow } from './canonical';
+import { applyImportAmountNegation, type ParsedImportRow } from './parse/canonical';
 import { computeImportBlobContentSha256 } from './blobFingerprint';
 import { buildLedgerSnapshot } from './ledgerSnapshot';
-import type { ExtractedImportUpload } from './multipartFile';
-import { parseImportBuffer } from './parseImportBuffer';
+import type { ExtractedImportUpload } from './ingress/multipartFile';
+import { parseImportBuffer } from './parse/parseImportBuffer';
 import {
   persistImportInPlace,
   persistImportViaStaging,

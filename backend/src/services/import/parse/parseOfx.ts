@@ -1,4 +1,4 @@
-import { createLogger } from '../../logger';
+import { createLogger } from '../../../logger';
 import type { ParserOutputRow } from './canonical';
 
 const log = createLogger({ component: 'import.parseOfx' });

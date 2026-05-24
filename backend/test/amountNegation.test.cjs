@@ -3,12 +3,12 @@ const assert = require('node:assert/strict');
 const {
   parsedRowsFromParserOutput,
   applyImportAmountNegation,
-} = require('../dist/services/import/canonical');
+} = require('../dist/services/import/parse/canonical');
 const {
   suggestNegateFromInterest,
   parseNegateAmountsField,
   resolveAmountNegation,
-} = require('../dist/services/import/amountNegation');
+} = require('../dist/services/import/parse/amountNegation');
 
 test('suggestNegateFromInterest when interest expense is positive', () => {
   const rows = parsedRowsFromParserOutput([

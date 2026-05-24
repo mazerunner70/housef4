@@ -9,7 +9,7 @@ import { getImportBlobStore } from './importBlobStore';
 import { importLockConflictHttpError } from './importLockHttp';
 import type { ImportStageTracer } from './importStageTracing';
 import { persistImportPlan, toImportPersistPlan, type PersistPlan } from './persistPlan';
-import type { ExtractedImportUpload } from './multipartFile';
+import type { ExtractedImportUpload } from './ingress/multipartFile';
 
 type TransactionFileInput = Parameters<
   FinanceRepository['recordTransactionFile']

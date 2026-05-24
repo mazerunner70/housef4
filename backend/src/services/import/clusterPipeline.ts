@@ -10,7 +10,7 @@ import {
   ruleMatchForText,
   type CategorySuggestion,
 } from './categoryClassifier';
-import type { ParsedImportRow } from './canonical';
+import type { ParsedImportRow } from './parse/canonical';
 import { dbscanCosine } from './dbscanCosine';
 import { cleanMerchantForClustering } from './merchantNormalize';
 import {
