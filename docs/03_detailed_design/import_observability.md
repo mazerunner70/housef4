@@ -8,7 +8,7 @@ Structured logs for **`POST /api/imports`** per-stage timing and outcomes. Imple
 
 **CloudWatch Metrics (Lambda / non-local only)** via **[EMF](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch_Embedded_Metric_Format.html)** using [`aws-embedded-metrics`](https://github.com/awslabs/aws-embedded-metrics-node) in `backend/src/observability/importMetrics.ts`. EMF writes a special JSON line to **stdout** (no AWS SDK or network at runtime); Lambda log ingestion creates metrics automatically. **`emitImportCloudWatchMetrics` is a no-op when `APP_ENV=local`** (see `backend/src/config.ts`).
 
-Implementation: `backend/src/services/import/importStageTracing.ts` (logs + calls metrics on `emitSummary`).
+Implementation: `backend/src/services/import/importStageTracing.ts` (import **root** — alongside `importOrchestration.ts`; logs + calls metrics on `emitSummary`). Wired from `importOrchestration.ts` and `runImportPlanning.ts` (stages **7–9**).
 
 ## Log events
 

@@ -41,7 +41,20 @@ Non-goals for the first slice: virus scanning pipelines, multipart upload to S3 
 
 ## 3. Storage abstraction
 
-Introduce a small **`ImportBlobStore`** (name indicative; place under `backend/src/services/import/` or shared `packages/` if reused) with one responsibility: **put** bytes for an import, **optional delete** on compensating failure.
+Introduce a small **`ImportBlobStore`** with one responsibility: **put** bytes for an import, **optional delete** on compensating failure.
+
+**Implementation (`backend/src/services/import/blob/`):**
+
+| Module | Role |
+| ------ | ---- |
+| `importBlobStore.ts` | Factory (`getImportBlobStore`) — selects filesystem vs S3 vs off |
+| `filesystemImportBlobStore.ts` | Local dev / `IMPORT_BLOB_BACKEND=filesystem` |
+| `s3ImportBlobStore.ts` | Staging / production S3 backend |
+| `importBlobPersist.ts` | Orchestration hook: post-promote `Put` + `patchTransactionFileBlob` |
+| `blobFingerprint.ts` | SHA-256 over raw multipart bytes (stage **2b** dedupe) |
+| `importBlobKey.ts` | Deterministic object key under `imports/<user_id>/…` |
+| `importBlobConfig.ts` | Env-driven backend selection |
+| `importBlobTypes.ts` | `ImportBlobStore`, `ImportBlobRef`, shared types |
 
 ```ts
 // Conceptual interface — exact types live with implementation PR.
