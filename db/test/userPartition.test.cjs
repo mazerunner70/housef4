@@ -327,6 +327,33 @@ test('acquireImportLock rejects when restore lock is present', async (t) => {
   );
 });
 
+test('acquireImportLock maps ConditionalCheckFailedException to ImportLockConflictError', async (t) => {
+  withEnv(t, { DYNAMODB_TABLE_NAME: 'ignored' });
+  const docClient = {
+    send(cmd) {
+      if (cmd instanceof GetCommand) {
+        return Promise.resolve({});
+      }
+      throw new ConditionalCheckFailedException({
+        message: 'conditional failure',
+        $metadata: {},
+      });
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      acquireImportLock(docClient, 'user4', {
+        import_file_id: 'f2',
+        import_started_at: 3,
+      }),
+    (err) =>
+      err instanceof ImportLockConflictError &&
+      err.reason === 'import_in_progress' &&
+      err.userId === 'user4',
+  );
+});
+
 test('releaseRestoreLock sends DeleteCommand with primary table from env', async (t) => {
   withEnv(t, { DYNAMODB_TABLE_NAME: 'prim' });
   let got;

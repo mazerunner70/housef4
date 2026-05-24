@@ -92,7 +92,28 @@ When the server cannot **fully commit** an import to the **primary** table, **`P
 
 **Preferred implementation** ([`import_transaction_files.md`](./import_transaction_files.md) **§8.7**): materialize the post-import ledger on a **per-user import-staging partition** (**next**), then **promote** to primary (**now**). Failure **before promote** clears **only that user's** staging partition; primary is untouched. **Fallback** (**§8.6**): in-place primary writes with compensating rollback.
 
-**Concurrent import (`409 Conflict`):** While **`IMPORT_LOCK`** (`SYSTEM#IMPORT_LOCK` on primary — [`database/data_model.md`](./database/data_model.md) §8.5a) is held for this user, a second **`POST /api/imports`** returns **`409`**. Same while **`RESTORE_LOCK`** is held (restore in progress).
+**Concurrent import (`409 Conflict`):** While **`IMPORT_LOCK`** (`SYSTEM#IMPORT_LOCK` on primary — [`database/data_model.md`](./database/data_model.md) §8.5a) is held for this user, a second **`POST /api/imports`** returns **`409`**. Same while **`RESTORE_LOCK`** is held (restore in progress). The lock is acquired **early in orchestration** — after duplicate-blob and account **read** validation and local parse, but **before** `createAccount`, corpus snapshot reads, planning, and any primary-table writes — so overlapping imports cannot interleave side effects or stale snapshot planning.
+
+```json
+{
+  "error": "import_in_progress",
+  "message": "Another import is in progress for this account. Wait for it to finish, then retry."
+}
+```
+
+```json
+{
+  "error": "restore_in_progress",
+  "message": "A backup restore is in progress. Wait for it to finish, then retry the import."
+}
+```
+
+| Field | Type | Notes |
+|--------|------|--------|
+| `error` | string | **`import_in_progress`** or **`restore_in_progress`**. |
+| `message` | string | Server-defined; suitable to show in UI. |
+
+**Client retry:** On **`409`** with **`import_in_progress`**, **do not** treat the ledger as changed. **Poll** with backoff (e.g. retry **`POST /api/imports`** after a few seconds) until the in-flight import completes (**`200`**) or fails (**`5xx`**). The UI may **queue** multiple files locally and submit **one at a time**. **`restore_in_progress`**: wait for restore to finish (**`200`** on **`POST /api/backup/restore`**) or use restore abort per [§6](#6-backup-and-restore), then retry the import.
 
 **Optional abort:** **`POST /api/imports/abort`** (when implemented) clears **`IMPORT_LOCK`** **first**, then deletes **this user's** import-staging partition only — mirror restore abort ([§6 **`POST /api/backup/restore/abort`**](#6-backup-and-restore)). Partial failure after lock cleared but staging not drained: retry abort (**idempotent**).
 

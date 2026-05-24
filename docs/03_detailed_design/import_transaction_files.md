@@ -445,8 +445,8 @@ Compensation uses the checkpoint to undo **only** what ran. Example: failure dur
 
 ```mermaid
 flowchart TD
-  P[Planning reads NOW from primary] --> L[Acquire IMPORT_LOCK on primary]
-  L --> M[Materialize full post-import partition to staging NEXT]
+  L[Acquire IMPORT_LOCK on primary] --> P[Planning reads NOW from primary]
+  P --> M[Materialize full post-import partition to staging NEXT]
   M --> V[Validate staging partition for this user]
   V -->|fail| A[Clear this user staging partition release lock 5xx]
   V -->|ok| B[Optional blob Put]
@@ -458,8 +458,8 @@ flowchart TD
 
 | Step | Action | Primary (now) | Staging (next) |
 | ---- | ------ | ------------- | -------------- |
-| 0 | **`runImportPlanning`** (stages **2–9**) | Read only | — |
-| 1 | **`acquireImportLock`** conditional **`PutItem`** | **`IMPORT_LOCK`** row | — |
+| 0 | **`acquireImportLock`** (orchestration — before writes and corpus reads) | **`IMPORT_LOCK`** row | — |
+| 1 | **`runImportPlanning`** (stages **2–9**, incl. optional `createAccount`) | Read only (+ account create when new) | — |
 | 2 | **`clearImportStagingPartition(userId)`** | — | Delete all `PK = USER#<uid>` (idempotent) |
 | 3 | **`materializeImportPlanToStaging`** | — | **`BatchWriteItem` Put** full post-import item set (transactions with **`GSI1*`/`GSI2*`**, all **`CLUSTER#…`**, new **`FILE#…`**, accounts, `PROFILE`, optional `METRICS`) — same keys they will use on primary |
 | 4 | **`validateStagingImportPartition`** | — | Counts, referential integrity, sample **`GSI*`** presence |
@@ -584,7 +584,7 @@ Clients format `**priorImportCompletedAt`** in local time for display and cross-
 
 1. **Concurrent imports for one user**
   **Decision:** **Block** overlapping imports for the same user (single-flight / serialise at API or repository). Later improvement: UI may queue **multiple files** and submit **sequentially**.
-   `**Still needed`:** Implementation mechanism (DB lock flag, FIFO per user, `409`/retry policy as per `[api_contract.md](./api_contract.md)`).
+   **Mechanism (implemented):** Conditional **`PutItem`** on primary **`SYSTEM#IMPORT_LOCK`** (`acquireImportLock` / `releaseImportLock` in `db/`); **`409 Conflict`** with **`import_in_progress`** or **`restore_in_progress`** — see [`api_contract.md`](./api_contract.md) and **§8.5a** / **§8.7.3**. Orchestration acquires the lock **before** primary-table writes (e.g. `createAccount`) and **before** stage-6 corpus reads; staging promote skips a second acquire via **`importLockAlreadyHeld`**.
 2. **Per-stage metrics and tracing**
   **Decision:** Emit **clear success/failure and duration per orchestration stage** (correlate with `import_file_id` where available).
    `**Still needed`:** Metric names, dimensions, CloudWatch vs structured logs—and align with §4.8 “per-stage observability.”
@@ -593,7 +593,7 @@ Clients format `**priorImportCompletedAt`** in local time for display and cross-
    `**Still needed`:** None for MVP.
 4. **Import during backup restore / table lock**
   **Decision:** **Block** imports while **`RESTORE_LOCK`** is held and block restore while **`IMPORT_LOCK`** is held; surface **`409 Conflict`**. Document env and behaviour with `[database/data_model.md](./database/data_model.md)` §8.5a / §8.2a and `[api_contract.md](./api_contract.md)`.
-   `**Still needed`:** Wire to actual lock flags in handlers.
+   **Mechanism (implemented):** `acquireImportLock` checks **`RESTORE_LOCK`** first; `acquireRestoreLock` checks **`IMPORT_LOCK`** first — mutual exclusion wired in `db/src/userPartition.ts`.
 5. **Raw file blob storage vs persist-plan failure**
   **Decision:** **Persist uploaded files** (see `[import_file_blob_storage.md](./import_file_blob_storage.md)`) so a **full re-import** or recovery is possible in future releases. Write blob **after** staging validates (**§8.7**) or in-place stage **10** success; on failure, **delete** blob when aborting staging or during **§8.6** compensation. Do **not** retain orphaned blobs for failed imports in MVP.
 6. **Import persistence: staging vs in-place saga**
