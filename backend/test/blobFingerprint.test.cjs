@@ -4,7 +4,7 @@ const { createHash } = require('node:crypto');
 
 const {
   computeImportBlobContentSha256,
-} = require('../dist/services/import/blobFingerprint');
+} = require('../dist/services/import/blob/blobFingerprint');
 
 test('computeImportBlobContentSha256 — lowercase hex SHA-256 over raw bytes', () => {
   const buf = Buffer.from('date,amount\n2024-01-01,-5.00\n', 'utf8');

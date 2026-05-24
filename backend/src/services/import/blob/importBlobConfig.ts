@@ -1,4 +1,4 @@
-import { loadConfig } from '../../config';
+import { loadConfig } from '../../../config';
 
 export type ImportBlobBackend = 'off' | 'filesystem' | 's3';
 

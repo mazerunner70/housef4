@@ -15,7 +15,7 @@ import {
 } from './parse/amountNegation';
 import { allocateBatchArtefactIds } from './allocateBatchIds';
 import { applyImportAmountNegation, type ParsedImportRow } from './parse/canonical';
-import { computeImportBlobContentSha256 } from './blobFingerprint';
+import { computeImportBlobContentSha256 } from './blob/blobFingerprint';
 import { buildLedgerSnapshot } from './ledgerSnapshot';
 import type { ExtractedImportUpload } from './ingress/multipartFile';
 import { parseImportBuffer } from './parse/parseImportBuffer';
