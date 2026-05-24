@@ -584,7 +584,7 @@ Clients format `**priorImportCompletedAt`** in local time for display and cross-
 
 1. **Concurrent imports for one user**
   **Decision:** **Block** overlapping imports for the same user (single-flight / serialise at API or repository). Later improvement: UI may queue **multiple files** and submit **sequentially**.
-   `**Still needed`:** Implementation mechanism (DB lock flag, FIFO per user, `409`/retry policy as per `[api_contract.md](./api_contract.md)`).
+   **Mechanism (implemented):** Conditional **`PutItem`** on primary **`SYSTEM#IMPORT_LOCK`** (`acquireImportLock` / `releaseImportLock` in `db/`); **`409 Conflict`** with **`import_in_progress`** or **`restore_in_progress`** — see [`api_contract.md`](./api_contract.md) and **§8.5a** / **§8.7.3**. Staging path acquires the lock in **`runImportStagingWorkflow`** before staging writes; in-place §8.6 path acquires before **`persistImportPlan`**.
 2. **Per-stage metrics and tracing**
   **Decision:** Emit **clear success/failure and duration per orchestration stage** (correlate with `import_file_id` where available).
    `**Still needed`:** Metric names, dimensions, CloudWatch vs structured logs—and align with §4.8 “per-stage observability.”
@@ -593,7 +593,7 @@ Clients format `**priorImportCompletedAt`** in local time for display and cross-
    `**Still needed`:** None for MVP.
 4. **Import during backup restore / table lock**
   **Decision:** **Block** imports while **`RESTORE_LOCK`** is held and block restore while **`IMPORT_LOCK`** is held; surface **`409 Conflict`**. Document env and behaviour with `[database/data_model.md](./database/data_model.md)` §8.5a / §8.2a and `[api_contract.md](./api_contract.md)`.
-   `**Still needed`:** Wire to actual lock flags in handlers.
+   **Mechanism (implemented):** `acquireImportLock` checks **`RESTORE_LOCK`** first; `acquireRestoreLock` checks **`IMPORT_LOCK`** first — mutual exclusion wired in `db/src/userPartition.ts`.
 5. **Raw file blob storage vs persist-plan failure**
   **Decision:** **Persist uploaded files** (see `[import_file_blob_storage.md](./import_file_blob_storage.md)`) so a **full re-import** or recovery is possible in future releases. Write blob **after** staging validates (**§8.7**) or in-place stage **10** success; on failure, **delete** blob when aborting staging or during **§8.6** compensation. Do **not** retain orphaned blobs for failed imports in MVP.
 6. **Import persistence: staging vs in-place saga**

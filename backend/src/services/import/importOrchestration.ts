@@ -8,7 +8,6 @@
  */
 
 import type { FinanceRepository } from '@housef4/db';
-import { ImportLockConflictError } from '@housef4/db';
 
 import { HttpError } from '../../httpError';
 import { getLog } from '../../requestLogContext';
@@ -21,11 +20,14 @@ import {
 import { allocateBatchArtefactIds } from './allocateBatchIds';
 import { applyImportAmountNegation } from './canonical';
 import { computeImportBlobContentSha256 } from './blobFingerprint';
+import {
+  persistImportInPlace,
+  persistImportViaStaging,
+} from './importPersistPhase';
 import { runImportPlanning } from './runImportPlanning';
 import { buildLedgerSnapshot } from './ledgerSnapshot';
 import type { ExtractedImportUpload } from './multipartFile';
 import { parseImportBuffer } from './parseImportBuffer';
-import { persistImportPlan, toImportPersistPlan } from './persistPlan';
 
 export type RunImportOrchestrationParams = Readonly<{
   userId: string;
@@ -154,49 +156,20 @@ export async function executeImportOrchestration(
     result: ingestPreview,
   };
 
+  const persistParams = {
+    userId,
+    repo,
+    plan,
+    importFileId,
+    importStartedAt,
+    importCurrency,
+    transactionFileInput,
+  };
+
   if (repo.isImportStagingEnabled()) {
-    try {
-      await repo.persistImportPlanViaStaging(userId, {
-        importFileId,
-        importStartedAt,
-        plan: toImportPersistPlan(plan),
-        transactionFile: transactionFileInput,
-        fileCurrency: importCurrency,
-      });
-    } catch (e) {
-      if (e instanceof ImportLockConflictError) {
-        const message =
-          e.reason === 'restore_in_progress'
-            ? 'Restore in progress; import blocked'
-            : 'Import already in progress';
-        throw new HttpError(409, message, {
-          error: e.reason === 'restore_in_progress' ? 'restore_in_progress' : 'import_in_progress',
-        });
-      }
-      throw e;
-    }
+    await persistImportViaStaging(persistParams);
   } else {
-    // --- Stage 10: Apply persist plan (in-place §8.6). ---
-    const result = await persistImportPlan({
-      userId,
-      repo,
-      plan,
-      importFileId,
-      fileCurrency: importCurrency,
-    });
-
-    // --- Stage 11: Record `TRANSACTION_FILE` metadata (timing, format, fingerprint). ---
-    await repo.recordTransactionFile(userId, {
-      ...transactionFileInput,
-      result: {
-        ...result,
-        existingTransactionsUpdated: plan.existingPatches.length,
-        newClustersTouched: plan.summary.newClustersTouched,
-      },
-    });
-
-    // --- Stage 12: Derive aggregates (`METRICS`). ---
-    await repo.refreshStoredDashboardMetrics(userId);
+    await persistImportInPlace(persistParams);
   }
 
   log.info('import.complete', {

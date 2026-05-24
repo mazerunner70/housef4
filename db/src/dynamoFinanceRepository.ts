@@ -22,11 +22,18 @@ import {
   txnSk,
   userPk,
 } from './keys';
-import { getDocumentClient, requireTableName } from './dynamoClient';
+import {
+  getDocumentClient,
+  getImportStagingTableName,
+  requireTableName,
+} from './dynamoClient';
 import { runRestoreAbortWorkflow, runRestoreBackupWorkflow } from './backupRestore';
 import { runImportStagingWorkflow, runImportAbortWorkflow } from './importStaging';
-import { getImportStagingTableName } from './dynamoClient';
-import { collectUserPartitionItems } from './userPartition';
+import {
+  acquireImportLock,
+  collectUserPartitionItems,
+  releaseImportLock,
+} from './userPartition';
 import { formatTransactionsAsCsv } from './transactionCsvExport';
 import {
   computeDashboardMetrics,
@@ -219,6 +226,44 @@ function sortBackupTransactionFilesInPlace(
   );
 }
 
+function appendTransactionFileToBackupExport(
+  item: Record<string, unknown>,
+  userId: string,
+  acc: BackupExportAccum,
+): void {
+  if (wireString(item.id, '') === '') return;
+  const fallbackName = wireString(item.name, 'import');
+  const source = parseSourceFromItem(item, fallbackName);
+  const result = parseTransactionFileResult(
+    item.result,
+    item.ingest,
+    item.row_count,
+  );
+  const accountId = wireString(item.account_id, '');
+  const contentSha256 = wireString(item.content_sha256, '');
+  const rec: TransactionFileRecord = {
+    user_id: wireString(item.user_id, userId),
+    id: wireString(item.id, ''),
+    account_id: accountId.length > 0 ? accountId : '',
+    source,
+    format: parseFormatFromItem(item),
+    timing: parseTimingFromItem(item),
+    result,
+    ...(contentSha256 ? { content_sha256: contentSha256 } : {}),
+  };
+  acc.transaction_files.push({
+    entity_type: 'TRANSACTION_FILE',
+    user_id: rec.user_id,
+    id: rec.id,
+    account_id: rec.account_id,
+    source: rec.source,
+    format: rec.format,
+    timing: rec.timing,
+    result: rec.result,
+    ...(rec.content_sha256 ? { content_sha256: rec.content_sha256 } : {}),
+  });
+}
+
 function appendPartitionItemToBackupExport(
   item: Record<string, unknown>,
   userId: string,
@@ -253,40 +298,9 @@ function appendPartitionItemToBackupExport(
       }
       break;
     }
-    case 'TRANSACTION_FILE': {
-      if (wireString(item.id, '') === '') break;
-      const fallbackName = wireString(item.name, 'import');
-      const source = parseSourceFromItem(item, fallbackName);
-      const result = parseTransactionFileResult(
-        item.result,
-        item.ingest,
-        item.row_count,
-      );
-      const accountId = wireString(item.account_id, '');
-      const contentSha256 = wireString(item.content_sha256, '');
-      const rec: TransactionFileRecord = {
-        user_id: wireString(item.user_id, userId),
-        id: wireString(item.id, ''),
-        account_id: accountId.length > 0 ? accountId : '',
-        source,
-        format: parseFormatFromItem(item),
-        timing: parseTimingFromItem(item),
-        result,
-        ...(contentSha256 ? { content_sha256: contentSha256 } : {}),
-      };
-      acc.transaction_files.push({
-        entity_type: 'TRANSACTION_FILE',
-        user_id: rec.user_id,
-        id: rec.id,
-        account_id: rec.account_id,
-        source: rec.source,
-        format: rec.format,
-        timing: rec.timing,
-        result: rec.result,
-        ...(rec.content_sha256 ? { content_sha256: rec.content_sha256 } : {}),
-      });
+    case 'TRANSACTION_FILE':
+      appendTransactionFileToBackupExport(item, userId, acc);
       break;
-    }
     case 'PROFILE':
       acc.profile = stripDynamoIndexKeys(item);
       break;
@@ -401,6 +415,16 @@ export interface FinanceRepository {
   abortImportCleanup(userId: string): Promise<{ import_lock_cleared: boolean }>;
   /** Whether import staging table env is configured (§8.7 vs §8.6 in-place fallback). */
   isImportStagingEnabled(): boolean;
+  /**
+   * §8.5a / §8.6 — conditional `PutItem` for `IMPORT_LOCK` on primary before in-place writes.
+   * Throws {@link ImportLockConflictError} when another import or restore is in progress.
+   */
+  acquireImportLock(
+    userId: string,
+    input: { import_file_id: string; import_started_at: number },
+  ): Promise<void>;
+  /** Idempotent release of `IMPORT_LOCK` on primary after in-place import completes or aborts. */
+  releaseImportLock(userId: string): Promise<void>;
 }
 
 interface ClusterAggregateMetadata {
@@ -411,14 +435,14 @@ interface ClusterAggregateMetadata {
 function parseClusterAggregateMetadata(
   item: Record<string, unknown> | undefined,
 ): ClusterAggregateMetadata | null {
-  if (!item || item.entity_type !== 'CLUSTER') return null;
-  const cur = item.currency;
+  if (item?.entity_type !== 'CLUSTER') return null;
+  const currency = wireString(item.currency, '');
   return {
     assigned_category:
       item.assigned_category === undefined
         ? null
         : (item.assigned_category as string | null),
-    ...(cur != null && cur !== '' ? { currency: String(cur) } : {}),
+    ...(currency === '' ? {} : { currency }),
   };
 }
 
@@ -525,6 +549,22 @@ type PutBatch = Record<
   { PutRequest: { Item: Record<string, unknown> } }[]
 >;
 
+function unprocessedPutsToBatch(
+  table: string,
+  unprocessed:
+    | { PutRequest?: { Item?: Record<string, unknown> } }[]
+    | undefined,
+): PutBatch {
+  const puts: PutBatch[string] = [];
+  for (const req of unprocessed ?? []) {
+    const item = req.PutRequest?.Item;
+    if (item != null) {
+      puts.push({ PutRequest: { Item: item } });
+    }
+  }
+  return { [table]: puts };
+}
+
 async function batchWriteAll(
   client: ReturnType<typeof getDocumentClient>,
   table: string,
@@ -543,7 +583,7 @@ async function batchWriteAll(
       );
       const unprocessed = res.UnprocessedItems?.[table];
       if (!unprocessed?.length) break;
-      requestItems = { [table]: unprocessed } as PutBatch;
+      requestItems = unprocessedPutsToBatch(table, unprocessed);
       if (attempt === maxAttempts - 1) {
         throw new Error(
           `DynamoDB BatchWrite: ${unprocessed.length} item(s) still unprocessed after ${maxAttempts} attempts (table ${table})`,
@@ -704,6 +744,32 @@ function importTransactionToDynamoItem(
     if (r.pairing_confidence !== undefined) item.pairing_confidence = r.pairing_confidence;
   }
   return item;
+}
+
+function pendingClusterFromItem(
+  item: Record<string, unknown>,
+): PendingClusterRecord | null {
+  if (item.entity_type !== 'CLUSTER') return null;
+  const rec: PendingClusterRecord = {
+    cluster_id: wireString(item.cluster_id),
+    sample_merchants: (item.sample_merchants as string[]) ?? [],
+    total_transactions: Number(item.total_transactions ?? 0),
+    total_amount: Number(item.total_amount ?? 0),
+    suggested_category:
+      item.suggested_category === undefined
+        ? null
+        : (item.suggested_category as string | null),
+  };
+  if (item.previous_category_id !== undefined) {
+    const prior = item.previous_category_id;
+    rec.previous_category_id =
+      prior === null ? null : wireString(prior, '') || null;
+  }
+  const currency = wireString(item.currency, '');
+  if (currency !== '') {
+    rec.currency = currency;
+  }
+  return rec;
 }
 
 export class DynamoFinanceRepository implements FinanceRepository {
@@ -970,27 +1036,8 @@ export class DynamoFinanceRepository implements FinanceRepository {
         }),
       );
       for (const item of res.Items ?? []) {
-        if (item.entity_type !== 'CLUSTER') continue;
-        const rec: PendingClusterRecord = {
-          cluster_id: String(item.cluster_id),
-          sample_merchants: (item.sample_merchants as string[]) ?? [],
-          total_transactions: Number(item.total_transactions ?? 0),
-          total_amount: Number(item.total_amount ?? 0),
-          suggested_category:
-            item.suggested_category === undefined
-              ? null
-              : (item.suggested_category as string | null),
-        };
-        if (item.previous_category_id !== undefined) {
-          rec.previous_category_id =
-            item.previous_category_id === null
-              ? null
-              : String(item.previous_category_id);
-        }
-        if (item.currency != null && item.currency !== '') {
-          rec.currency = String(item.currency);
-        }
-        out.push(rec);
+        const rec = pendingClusterFromItem(item);
+        if (rec) out.push(rec);
       }
       startKey = res.LastEvaluatedKey as Record<string, unknown> | undefined;
     } while (startKey);
@@ -1636,5 +1683,16 @@ export class DynamoFinanceRepository implements FinanceRepository {
     userId: string,
   ): Promise<{ import_lock_cleared: boolean }> {
     return runImportAbortWorkflow({ doc: this.doc, userId });
+  }
+
+  async acquireImportLock(
+    userId: string,
+    input: { import_file_id: string; import_started_at: number },
+  ): Promise<void> {
+    await acquireImportLock(this.doc, userId, input);
+  }
+
+  async releaseImportLock(userId: string): Promise<void> {
+    await releaseImportLock(this.doc, userId);
   }
 }

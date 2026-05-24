@@ -5,6 +5,7 @@ const {
   executeImportOrchestration,
 } = require('../dist/services/import/importOrchestration');
 const { HttpError } = require('../dist/httpError');
+const { ImportLockConflictError } = require('@housef4/db');
 const {
   computeImportBlobContentSha256,
 } = require('../dist/services/import/blobFingerprint');
@@ -109,7 +110,22 @@ function createStubRepo(overrides = {}) {
 
     persistImportPlanViaStaging: async (_userId, input) => {
       log('persistImportPlanViaStaging');
+      if (overrides.persistImportPlanViaStaging) {
+        return overrides.persistImportPlanViaStaging(_userId, input);
+      }
       repo.lastStagingPersist = input;
+    },
+
+    acquireImportLock: async (_userId, input) => {
+      log('acquireImportLock');
+      repo.lastAcquireImportLock = input;
+      if (overrides.acquireImportLock) {
+        return overrides.acquireImportLock(_userId, input);
+      }
+    },
+
+    releaseImportLock: async () => {
+      log('releaseImportLock');
     },
   };
 
@@ -117,12 +133,14 @@ function createStubRepo(overrides = {}) {
 }
 
 const PERSIST_STAGE_ORDER = [
+  'acquireImportLock',
   'patchExistingTransactionsAfterImport',
   'ingestImportBatch',
   'rebuildClusterAggregatesAfterImport',
   'retireClusterAggregates',
   'recordTransactionFile',
   'refreshStoredDashboardMetrics',
+  'releaseImportLock',
 ];
 
 function assertPersistStagesInOrder(callLog) {
@@ -282,4 +300,78 @@ test('executeImportOrchestration — staging path uses persistImportPlanViaStagi
   assert.ok(!repo.callLog.includes('refreshStoredDashboardMetrics'));
   assert.equal(repo.lastStagingPersist.importFileId, repo.lastStagingPersist.transactionFile.id);
   assert.equal(repo.lastStagingPersist.transactionFile.content_sha256, computeImportBlobContentSha256(extracted.file.buffer));
+});
+
+test('executeImportOrchestration — in-place path acquires and releases IMPORT_LOCK', async () => {
+  const extracted = zeroRowExtracted();
+  const repo = createStubRepo();
+  const userId = 'user-orchestration-inplace-lock';
+
+  await executeImportOrchestration({ userId, repo, extracted });
+
+  assert.ok(repo.callLog.includes('acquireImportLock'));
+  assert.ok(repo.callLog.includes('releaseImportLock'));
+  assert.ok(
+    repo.callLog.indexOf('acquireImportLock') <
+      repo.callLog.indexOf('patchExistingTransactionsAfterImport'),
+  );
+  assert.ok(
+    repo.callLog.indexOf('refreshStoredDashboardMetrics') <
+      repo.callLog.indexOf('releaseImportLock'),
+  );
+  assert.equal(repo.lastAcquireImportLock.import_file_id, repo.lastTransactionFile.id);
+});
+
+test('executeImportOrchestration — import_in_progress returns 409 before persist (in-place)', async () => {
+  const extracted = zeroRowExtracted();
+  const repo = createStubRepo({
+    acquireImportLock: async () => {
+      throw new ImportLockConflictError('user-lock', 'import_in_progress');
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      executeImportOrchestration({
+        userId: 'user-lock',
+        repo,
+        extracted,
+      }),
+    (e) => {
+      assert.ok(e instanceof HttpError);
+      assert.equal(e.statusCode, 409);
+      assert.equal(e.body.error, 'import_in_progress');
+      assert.match(e.body.message, /in progress/i);
+      return true;
+    },
+  );
+
+  assert.ok(repo.callLog.includes('acquireImportLock'));
+  assert.ok(!repo.callLog.includes('patchExistingTransactionsAfterImport'));
+  assert.ok(!repo.callLog.includes('releaseImportLock'));
+});
+
+test('executeImportOrchestration — restore_in_progress returns 409 (staging path)', async () => {
+  const extracted = zeroRowExtracted();
+  const repo = createStubRepo({
+    importStagingEnabled: true,
+    persistImportPlanViaStaging: async () => {
+      throw new ImportLockConflictError('user-restore', 'restore_in_progress');
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      executeImportOrchestration({
+        userId: 'user-restore',
+        repo,
+        extracted,
+      }),
+    (e) => {
+      assert.ok(e instanceof HttpError);
+      assert.equal(e.statusCode, 409);
+      assert.equal(e.body.error, 'restore_in_progress');
+      return true;
+    },
+  );
 });
