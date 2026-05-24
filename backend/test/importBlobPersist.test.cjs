@@ -4,10 +4,10 @@ const assert = require('node:assert/strict');
 const {
   attachImportBlobAndRecordFile,
   attachImportBlobViaPatch,
-} = require('../dist/services/import/importBlobPersist');
+} = require('../dist/services/import/blob/importBlobPersist');
 const {
   computeImportBlobContentSha256,
-} = require('../dist/services/import/blobFingerprint');
+} = require('../dist/services/import/blob/blobFingerprint');
 
 function zeroRowExtracted() {
   return {

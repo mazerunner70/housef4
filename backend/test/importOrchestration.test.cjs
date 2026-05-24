@@ -8,10 +8,10 @@ const { HttpError } = require('../dist/httpError');
 const { ImportLockConflictError } = require('@housef4/db');
 const {
   computeImportBlobContentSha256,
-} = require('../dist/services/import/blobFingerprint');
+} = require('../dist/services/import/blob/blobFingerprint');
 const {
   resetImportBlobStoreForTests,
-} = require('../dist/services/import/importBlobStore');
+} = require('../dist/services/import/blob/importBlobStore');
 const { mkdtemp, rm } = require('node:fs/promises');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');

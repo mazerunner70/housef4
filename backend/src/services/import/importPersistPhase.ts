@@ -4,8 +4,8 @@ import { ImportLockConflictError } from '@housef4/db';
 import {
   attachImportBlobAndRecordFile,
   attachImportBlobViaPatch,
-} from './importBlobPersist';
-import { getImportBlobStore } from './importBlobStore';
+} from './blob/importBlobPersist';
+import { getImportBlobStore } from './blob/importBlobStore';
 import { importLockConflictHttpError } from './importLockHttp';
 import type { ImportStageTracer } from './importStageTracing';
 import { persistImportPlan, toImportPersistPlan, type PersistPlan } from './persistPlan';

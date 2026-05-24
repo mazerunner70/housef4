@@ -6,10 +6,10 @@ const { tmpdir } = require('node:os');
 
 const {
   FilesystemImportBlobStore,
-} = require('../dist/services/import/filesystemImportBlobStore');
+} = require('../dist/services/import/blob/filesystemImportBlobStore');
 const {
   computeImportBlobContentSha256,
-} = require('../dist/services/import/blobFingerprint');
+} = require('../dist/services/import/blob/blobFingerprint');
 
 let root;
 
