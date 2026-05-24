@@ -11,7 +11,21 @@ This document is the **detailed design** for the server-side import pipeline: **
 
 **Raw upload bytes:** Today only metadata is stored on each `TRANSACTION_FILE`; persisting the original file to disk (local dev) or S3 (prod) is specified in `[import_file_blob_storage.md](./import_file_blob_storage.md)`.
 
-**Implementation pointers:** `backend/src/handlers/imports.ts` (HTTP ingress + delegate), `backend/src/services/import/importOrchestration.ts` (ordered §4.2 stages 2–12), `backend/src/services/import/runImportPlanning.ts` (stages **7–9**), `backend/src/services/pairing/` (ingest-scoped pairing).
+**Implementation pointers:**
+
+| Layer | Path | §4.2 role |
+| ----- | ---- | --------- |
+| HTTP handler | `backend/src/handlers/imports.ts` | Stage **1** ingress (`extractImportMultipart`) + delegate |
+| Orchestration (root) | `backend/src/services/import/importOrchestration.ts`, `importOrchestrationSteps.ts` | Ordered stages **2–12** |
+| Planning (root) | `backend/src/services/import/runImportPlanning.ts` | Stages **7–9** |
+| Persistence (root) | `backend/src/services/import/importPersistPhase.ts` | Stage **10** (staging promote or in-place) |
+| Observability (root) | `backend/src/services/import/importStageTracing.ts` | Per-stage tracing ([`import_observability.md`](./import_observability.md)) |
+| Ingress | `backend/src/services/import/ingress/multipartFile.ts` | Stage **1** extract |
+| Parse | `backend/src/services/import/parse/` (`parseImportBuffer`, `amountNegation`, `canonical`, …) | Stages **3–4** |
+| Planning helpers | `backend/src/services/import/planning/` (`allocateBatchIds`, `ledgerSnapshot`, `persistPlan`) | Stages **5–6**, **9** |
+| Clustering | `backend/src/services/import/clustering/` (`clusterPipeline`, `clusterIdentity`, …) | Stage **8** |
+| Blob storage | `backend/src/services/import/blob/` (`blobFingerprint`, `importBlobPersist`, …) | Stage **2b** fingerprint; post-promote blob `Put` |
+| Transfer pairing | `backend/src/services/pairing/` | Stage **7** |
 
 **Status:** Orchestration modularity is a **target shape**; behaviour may still be bundled in fewer modules. Cluster rules below specify **intended** behaviour, including product decisions not yet fully implemented.
 
