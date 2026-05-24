@@ -27,6 +27,8 @@ import {
   validateAccountSelector,
   validateExistingAccountBeforeLock,
 } from './importOrchestrationSteps';
+import type { ImportStageTracer } from './importStageTracing';
+import { createImportStageTracer } from './importStageTracing';
 import type { ExtractedImportUpload } from './multipartFile';
 
 export type RunImportOrchestrationParams = Readonly<{
@@ -34,6 +36,8 @@ export type RunImportOrchestrationParams = Readonly<{
   repo: FinanceRepository;
   /** Output of §4.2 stage 1 (`extractImportMultipart`). */
   extracted: ExtractedImportUpload;
+  /** When omitted (e.g. unit tests), stage **1** is not traced. */
+  tracer?: ImportStageTracer;
 }>;
 
 /**
@@ -46,86 +50,105 @@ export async function executeImportOrchestration(
   params: RunImportOrchestrationParams,
 ): Promise<Record<string, unknown>> {
   const { userId, repo, extracted } = params;
+  const tracer = params.tracer ?? createImportStageTracer({ userId });
   const log = getLog();
   const selector = parseAccountSelector(extracted);
 
-  validateAccountSelector(selector);
-  const contentSha256 = await assertNoDuplicateBlobImport(
-    repo,
-    userId,
-    extracted.file.buffer,
-  );
-  await validateExistingAccountBeforeLock(repo, userId, selector);
-
-  const parsed = parseImportUpload(extracted);
-  const importFileId = mintImportFileId();
-  const importStartedAt = Date.now();
-
-  await acquireImportLockForOrchestration(repo, userId, {
-    import_file_id: importFileId,
-    import_started_at: importStartedAt,
-  });
-
-  let persistStarted = false;
   try {
-    const accountId = await resolveAccountAfterLock(repo, userId, selector);
-    const amountNegation = await applyAmountNegationPolicy(
-      repo,
-      userId,
-      accountId,
-      extracted,
-      parsed.rows,
+    validateAccountSelector(selector);
+    const contentSha256 = await tracer.run('2b', () =>
+      assertNoDuplicateBlobImport(repo, userId, extracted.file.buffer),
     );
-    const plan = await runImportPlanningStages(
-      userId,
-      repo,
-      accountId,
-      parsed,
+    await tracer.run('2', () =>
+      validateExistingAccountBeforeLock(repo, userId, selector),
     );
+    const parsed = await tracer.run('3', async () => parseImportUpload(extracted));
+    tracer.setContext({ rowCount: parsed.rows.length });
 
-    const transactionFileInput = buildTransactionFileInput({
+    const importFileId = mintImportFileId();
+    const importStartedAt = Date.now();
+    tracer.setContext({
       importFileId,
-      accountId,
-      contentSha256,
-      extracted,
-      parsed,
-      amountNegated: amountNegation.applied,
-      importStartedAt,
-      importCompletedAt: Date.now(),
-      plan,
-    });
-
-    persistStarted = true;
-    await persistImportResult({
-      repo,
-      userId,
-      plan,
-      importFileId,
-      importStartedAt,
-      importCurrency: parsed.currency,
-      transactionFileInput,
-    });
-
-    log.info('import.complete', {
-      rowCount: plan.summary.importRowCount,
-      format: parsed.format,
-      fileBytes: extracted.file.buffer.length,
-      existingTransactionsUpdated: plan.existingPatches.length,
-      newClustersTouched: plan.summary.newClustersTouched,
-      retiredClusterCount: plan.retiredClusterIds.length,
       staging: repo.isImportStagingEnabled(),
     });
 
-    return buildImportOrchestrationResponse({
-      plan,
-      importFileId,
-      parsed,
-      amountNegation,
+    await acquireImportLockForOrchestration(repo, userId, {
+      import_file_id: importFileId,
+      import_started_at: importStartedAt,
     });
-  } catch (e) {
-    if (!persistStarted) {
-      await releaseImportLockBestEffort(repo, userId);
+
+    let persistStarted = false;
+    try {
+      const accountId = await tracer.run('2', () =>
+        resolveAccountAfterLock(repo, userId, selector),
+      );
+      const amountNegation = await tracer.run('4', () =>
+        applyAmountNegationPolicy(
+          repo,
+          userId,
+          accountId,
+          extracted,
+          parsed.rows,
+        ),
+      );
+      const plan = await runImportPlanningStages(
+        userId,
+        repo,
+        accountId,
+        parsed,
+        tracer,
+      );
+
+      const transactionFileInput = buildTransactionFileInput({
+        importFileId,
+        accountId,
+        contentSha256,
+        extracted,
+        parsed,
+        amountNegated: amountNegation.applied,
+        importStartedAt,
+        importCompletedAt: Date.now(),
+        plan,
+      });
+
+      persistStarted = true;
+      await persistImportResult({
+        repo,
+        userId,
+        plan,
+        importFileId,
+        importStartedAt,
+        importCurrency: parsed.currency,
+        transactionFileInput,
+        tracer,
+      });
+
+      log.info('import.complete', {
+        importFileId,
+        rowCount: plan.summary.importRowCount,
+        format: parsed.format,
+        fileBytes: extracted.file.buffer.length,
+        existingTransactionsUpdated: plan.existingPatches.length,
+        newClustersTouched: plan.summary.newClustersTouched,
+        retiredClusterCount: plan.retiredClusterIds.length,
+        staging: repo.isImportStagingEnabled(),
+      });
+
+      tracer.emitSummary('ok');
+      return buildImportOrchestrationResponse({
+        plan,
+        importFileId,
+        parsed,
+        amountNegation,
+      });
+    } catch (e) {
+      if (!persistStarted) {
+        await releaseImportLockBestEffort(repo, userId);
+      }
+      throw e;
     }
+  } catch (e) {
+    tracer.emitSummary('error');
     throw e;
   }
 }

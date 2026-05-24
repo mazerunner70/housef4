@@ -8,12 +8,13 @@
     "build:lambda": "node scripts/build-lambda.mjs",
     "dev": "tsc -w",
     "start:local": "node dist/adapters/localServer.js",
-    "test": "pnpm run build && HOUSEF4_IMPORT_EMBEDDINGS=hash node --test test/dispatch.test.cjs test/blobFingerprint.test.cjs test/multipartFile.test.cjs test/merchantNormalize.test.cjs test/dbscanCosine.test.cjs test/clusterIdentity.test.cjs test/clusterPipeline.test.cjs test/amountNegation.test.cjs test/pairing/ingest.test.cjs test/ledgerSnapshot.test.cjs test/allocateBatchIds.test.cjs test/persistPlan.test.cjs test/runImportPlanning.test.cjs test/importOrchestration.test.cjs",
+    "test": "pnpm run build && HOUSEF4_IMPORT_EMBEDDINGS=hash node --test test/dispatch.test.cjs test/blobFingerprint.test.cjs test/multipartFile.test.cjs test/merchantNormalize.test.cjs test/dbscanCosine.test.cjs test/clusterIdentity.test.cjs test/clusterPipeline.test.cjs test/amountNegation.test.cjs test/pairing/ingest.test.cjs test/ledgerSnapshot.test.cjs test/allocateBatchIds.test.cjs test/persistPlan.test.cjs test/runImportPlanning.test.cjs test/importOrchestration.test.cjs test/importStageTracing.test.cjs test/importMetrics.test.cjs",
     "test:integration-cognito": "pnpm run build && HOUSEF4_IMPORT_EMBEDDINGS=hash node --test test/integration-cognito-smoke.cjs"
   },
   "dependencies": {
     "@housef4/db": "workspace:*",
     "@xenova/transformers": "2.17.2",
+    "aws-embedded-metrics": "^4.2.1",
     "busboy": "^1.6.0",
     "csv-parse": "^6.2.1",
     "zod": "^4.3.6"
