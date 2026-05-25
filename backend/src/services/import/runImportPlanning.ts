@@ -22,6 +22,7 @@ import {
   type Assignment,
 } from './clustering';
 import type { LedgerSnapshot } from './planning/ledgerSnapshot';
+import { buildPlanningRows } from './planning/planningRows';
 import type { PersistPlan } from './planning/persistPlan';
 import type { ImportStageTracer } from './importStageTracing';
 import { computeIngestTransferPairings } from '../pairing';
@@ -239,18 +240,23 @@ export async function runImportPlanning(
     if (t.pairing_id) pairedTxnIds.add(t.id);
   }
 
+  const planningRows = buildPlanningRows(
+    existing,
+    parsed,
+    newTransactionIds,
+    pairedTxnIds,
+  );
+
   // --- Stage 8: Cluster and categorise (embeddings + DBSCAN + category rules). ---
   const embedder = await createMerchantEmbedder();
   const pipeline = await (tracer?.run('8', () =>
-    runClusterAndCategoryPipeline(existing, parsed, embedder, {
-      newTransactionIds,
-      pairedTxnIds,
+    runClusterAndCategoryPipeline(embedder, {
+      planningRows,
       physicalGroupLabels: ctx.physicalGroupLabels,
     }),
   ) ??
-    runClusterAndCategoryPipeline(existing, parsed, embedder, {
-      newTransactionIds,
-      pairedTxnIds,
+    runClusterAndCategoryPipeline(embedder, {
+      planningRows,
       physicalGroupLabels: ctx.physicalGroupLabels,
     }));
 

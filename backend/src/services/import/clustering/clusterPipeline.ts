@@ -1,161 +1,39 @@
-import type {
-  ImportTransactionInput,
-  TransactionRecord,
-  TransferPairingAssignment,
-} from '@housef4/db';
+import type { TransactionRecord } from '@housef4/db';
 
 import {
-  loadCategoryVectors,
-  mlMatchForEmbedding,
-  ruleMatchForText,
-  type CategorySuggestion,
-} from './categoryClassifier';
-import type { ParsedImportRow } from '../parse/canonical';
-import { dbscanCosine } from './dbscanCosine';
-import { cleanMerchantForClustering } from './merchantNormalize';
+  clusterableRows,
+  type PlanningRow,
+} from '../planning/planningRows';
 import {
-  hashEmbedding,
-  meanNormalized,
-  type MerchantEmbedder,
-} from './merchantsEmbedder';
-import { resolveClusterIdByPhysicalGroup } from './clusterIdentity';
+  compact,
+  difference,
+  filter,
+  map,
+  uniq,
+  zipWith,
+} from '../utils/lodashImport';
+import {
+  internalTransferAssignment,
+  type Assignment,
+} from './assignment';
+import type { CategorySuggestion } from './categoryClassifier';
+import { runClusterPass, type SourceRow } from './clusterPass';
+import type { MerchantEmbedder } from './merchantsEmbedder';
 
-export const DBSCAN_EPS = 0.3;
-export const DBSCAN_MIN_SAMPLES = 3;
+export {
+  DBSCAN_EPS,
+  DBSCAN_MIN_SAMPLES,
+  splitNoiseLabels,
+} from './labelGroups';
 
-type SourceRow =
-  | { kind: 'existing'; record: TransactionRecord }
-  | { kind: 'new'; row: ParsedImportRow; id: string };
+export {
+  INTERNAL_TRANSFER_CLUSTER_ID,
+  internalTransferAssignment,
+  unanimousPriorCategoryForGroup,
+  type Assignment,
+} from './assignment';
 
-export type Assignment = {
-  cluster_id: string;
-  category: string;
-  status: 'CLASSIFIED' | 'PENDING_REVIEW';
-  suggested_category: string | null;
-  category_confidence: number;
-  match_type: CategorySuggestion['match_type'] | 'INHERITED';
-  known_merchant: boolean;
-  embedding: Float32Array;
-};
-
-const INTERNAL_TRANSFER_EMBEDDING = hashEmbedding('internal_transfer');
-
-/** Shared cluster bucket for internal transfers excluded from merchant clustering. */
-export const INTERNAL_TRANSFER_CLUSTER_ID = 'internal_transfer';
-
-/** Stable assignment for paired transfer legs (`transfer_matching.md` §7). */
-export function internalTransferAssignment(): Assignment {
-  return {
-    cluster_id: INTERNAL_TRANSFER_CLUSTER_ID,
-    category: 'Uncategorized',
-    status: 'CLASSIFIED',
-    suggested_category: null,
-    category_confidence: 1,
-    match_type: 'RULE',
-    known_merchant: true,
-    embedding: INTERNAL_TRANSFER_EMBEDDING,
-  };
-}
-
-/** DBSCAN uses -1 for all noise points; split into singleton groups for stable ids and per-row categorization. */
-export function splitNoiseLabels(labels: number[]): number[] {
-  let noiseSeq = -1000000;
-  return labels.map((L) => (L === -1 ? noiseSeq-- : L));
-}
-
-function resolvePhysicalGroupLabels(
-  sources: SourceRow[],
-  embeddings: Float32Array[],
-  physicalGroupLabels?: readonly number[],
-): number[] {
-  if (physicalGroupLabels === undefined) {
-    const rawLabels =
-      sources.length <= 1
-        ? new Array(sources.length).fill(-1)
-        : dbscanCosine(embeddings, DBSCAN_EPS, DBSCAN_MIN_SAMPLES);
-    return splitNoiseLabels(rawLabels);
-  }
-  if (physicalGroupLabels.length !== sources.length) {
-    throw new Error(
-      'runClusterPipelineCore: physicalGroupLabels length must match clusterable sources',
-    );
-  }
-  // Same noise-splitting as the DBSCAN path so tests can pass raw `-1` labels.
-  return splitNoiseLabels([...physicalGroupLabels]);
-}
-
-/**
- * §7 — unanimous prior transactional `category` among **existing** members only.
- * Returns `null` when no existing members, categories disagree, or any category is empty.
- */
-export function unanimousPriorCategoryForGroup(
-  indices: number[],
-  sources: SourceRow[],
-): string | null {
-  let consensus: string | null = null;
-  let sawExisting = false;
-  for (const i of indices) {
-    const s = sources[i];
-    if (s.kind !== 'existing') continue;
-    sawExisting = true;
-    const c = s.record.category.trim();
-    if (!c) return null;
-    if (consensus === null) {
-      consensus = c;
-    } else if (consensus !== c) {
-      return null;
-    }
-  }
-  return sawExisting ? consensus : null;
-}
-
-/**
- * Pick the **plurality** category among existing `CLASSIFIED` rows in the physical group
- * (§7). If a user (or data drift) left conflicting categories on the same group, the
- * majority wins; ties break lexicographically for stability.
- */
-function inheritedCategoryForGroup(
-  indices: number[],
-  sources: SourceRow[],
-): string | null {
-  const counts = new Map<string, number>();
-  for (const i of indices) {
-    const s = sources[i];
-    if (s.kind === 'existing' && s.record.status === 'CLASSIFIED') {
-      const c = s.record.category;
-      counts.set(c, (counts.get(c) ?? 0) + 1);
-    }
-  }
-  if (counts.size === 0) return null;
-  const sorted = [...counts.entries()].sort(
-    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
-  );
-  return sorted[0][0];
-}
-
-function categorizeGroup(
-  indices: number[],
-  cleanedTexts: string[],
-  embeddings: Float32Array[],
-  categoryVectors: Float32Array[],
-): CategorySuggestion {
-  if (indices.length === 1) {
-    const i = indices[0];
-    const text = cleanedTexts[i];
-    const rule = ruleMatchForText(text);
-    if (rule) return rule;
-    return mlMatchForEmbedding(embeddings[i], categoryVectors);
-  }
-
-  for (const i of indices) {
-    const rule = ruleMatchForText(cleanedTexts[i]);
-    if (rule) return rule;
-  }
-
-  const groupEmb = indices.map((i) => embeddings[i]);
-  const centroid = meanNormalized(groupEmb);
-  return mlMatchForEmbedding(centroid, categoryVectors);
-}
+export { buildNewImportInputs } from './assignment';
 
 export type ClusterPipelineResult = {
   sources: SourceRow[];
@@ -168,8 +46,8 @@ export type ClusterPipelineResult = {
 };
 
 export type ClusterPipelineOpts = Readonly<{
-  newTransactionIds: readonly string[];
-  pairedTxnIds?: ReadonlySet<string>;
+  /** §4.2 stages **5–7** — full row list with clusterable flags. */
+  planningRows: readonly PlanningRow[];
   /**
    * Test-only: skip DBSCAN and use these labels for clusterable sources
    * (existing clusterable rows first, then new clusterable rows in parse order).
@@ -178,258 +56,61 @@ export type ClusterPipelineOpts = Readonly<{
   physicalGroupLabels?: readonly number[];
 }>;
 
+function planningRowToSourceRow(row: PlanningRow): SourceRow {
+  if (row.kind === 'existing') {
+    return { kind: 'existing', record: row.record };
+  }
+  return { kind: 'new', row: row.row, id: row.id };
+}
+
+function existingSortedFromPlanningRows(
+  rows: readonly PlanningRow[],
+): TransactionRecord[] {
+  return map(
+    filter(rows, (r): r is Extract<PlanningRow, { kind: 'existing' }> =>
+      r.kind === 'existing',
+    ),
+    (r) => r.record,
+  );
+}
+
+/** Align clusterable assignments back onto the full planning row list via `zipWith`. */
+function assignmentsForPlanningRows(
+  planningRows: readonly PlanningRow[],
+  clusterableAssignments: Assignment[],
+): Assignment[] {
+  const clusterable = clusterableRows(planningRows);
+  if (clusterable.length !== clusterableAssignments.length) {
+    throw new Error(
+      'assignmentsForPlanningRows: clusterable assignment count mismatch',
+    );
+  }
+
+  const assignById = new Map(
+    zipWith(clusterable, clusterableAssignments, (row, assign) => [row.id, assign] as const),
+  );
+
+  const internalAssign = internalTransferAssignment();
+  return map(planningRows, (row) =>
+    row.clusterable ? assignById.get(row.id)! : internalAssign,
+  );
+}
+
 /**
  * Cluster and categorize **clusterable** sources only (caller excludes paired transfer legs).
- *
- * Pipeline: clean merchant text → embed → DBSCAN physical groups (or `physicalGroupLabels`
- * in tests) → mint a fresh `cluster_id` per group (§6.0) → rule/ML category per cluster →
- * per-row assignment (§7): inherited plurality category from existing `CLASSIFIED` rows,
- * else cluster rule match, else ML suggestion with `PENDING_REVIEW`.
  *
  * Returns one assignment per input source plus cluster-level suggestion and hint maps keyed
  * by minted `cluster_id` (`previousCategoryId` is the unanimous prior category on existing
  * members, if any).
  */
-async function runClusterPipelineCore(
-  sources: SourceRow[],
-  embedder: MerchantEmbedder,
-  physicalGroupLabels?: readonly number[],
-): Promise<{
-  assignments: Assignment[];
-  clusterSuggestions: Map<string, CategorySuggestion>;
-  clusterHints: Record<string, { previousCategoryId: string | null }>;
-}> {
-  const categoryVectors = loadCategoryVectors(embedder.usesModel);
-
-  const cleanedTexts = sources.map((s) =>
-    s.kind === 'existing'
-      ? s.record.cleaned_merchant ?? cleanMerchantForClustering(s.record.raw_merchant)
-      : cleanMerchantForClustering(s.row.raw_merchant),
-  );
-
-  const embeddings: Float32Array[] = await Promise.all(
-    cleanedTexts.map((t) => embedder.embed(t)),
-  );
-
-  let labels: number[];
-  labels = resolvePhysicalGroupLabels(sources, embeddings, physicalGroupLabels);
-
-  const byLabel = new Map<number, number[]>();
-  for (let i = 0; i < labels.length; i++) {
-    const L = labels[i];
-    let g = byLabel.get(L);
-    if (!g) {
-      g = [];
-      byLabel.set(L, g);
-    }
-    g.push(i);
-  }
-
-  const kindAtIndex: ('existing' | 'new')[] = sources.map((s) =>
-    s.kind === 'existing' ? 'existing' : 'new',
-  );
-  const previousClusterIdAtIndex: (string | undefined)[] = sources.map(
-    (s) => (s.kind === 'existing' ? s.record.cluster_id : undefined),
-  );
-
-  const labelResolution = resolveClusterIdByPhysicalGroup(
-    byLabel,
-    kindAtIndex,
-    previousClusterIdAtIndex,
-  );
-
-  const clusterSuggestions = new Map<string, CategorySuggestion>();
-  const clusterHints: Record<string, { previousCategoryId: string | null }> = {};
-  for (const [L, indices] of byLabel) {
-    const meta = labelResolution.get(L);
-    if (!meta) {
-      throw new Error(`runClusterPipelineCore: missing label resolution for ${L}`);
-    }
-    clusterSuggestions.set(
-      meta.cluster_id,
-      categorizeGroup(indices, cleanedTexts, embeddings, categoryVectors),
-    );
-    clusterHints[meta.cluster_id] = {
-      previousCategoryId: unanimousPriorCategoryForGroup(indices, sources),
-    };
-  }
-
-  const assignments: Assignment[] = sources.map((_, i) => {
-    const L = labels[i];
-    const indices = byLabel.get(L);
-    if (!indices) {
-      throw new Error(`runClusterPipelineCore: missing label ${L}`);
-    }
-    const meta = labelResolution.get(L);
-    if (!meta) {
-      throw new Error(`runClusterPipelineCore: missing label resolution for ${L}`);
-    }
-    const { cluster_id } = meta;
-    const inherited = inheritedCategoryForGroup(indices, sources);
-    const suggestion = clusterSuggestions.get(cluster_id);
-    if (!suggestion) {
-      throw new Error(`runClusterPipelineCore: missing suggestion for cluster ${cluster_id}`);
-    }
-
-    if (inherited) {
-      return {
-        cluster_id,
-        category: inherited,
-        status: 'CLASSIFIED',
-        suggested_category: null,
-        category_confidence: 1,
-        match_type: 'INHERITED',
-        known_merchant: true,
-        embedding: embeddings[i],
-      };
-    }
-
-    if (suggestion.match_type === 'RULE') {
-      return {
-        cluster_id,
-        category: suggestion.category,
-        status: 'CLASSIFIED',
-        suggested_category: suggestion.category,
-        category_confidence: suggestion.confidence,
-        match_type: 'RULE',
-        known_merchant: true,
-        embedding: embeddings[i],
-      };
-    }
-
-    const pendingSuggestion = suggestion.category;
-    return {
-      cluster_id,
-      category: 'Uncategorized',
-      status: 'PENDING_REVIEW',
-      suggested_category: pendingSuggestion,
-      category_confidence: suggestion.confidence,
-      match_type: 'ML',
-      known_merchant: false,
-      embedding: embeddings[i],
-    };
-  });
-
-  return { assignments, clusterSuggestions, clusterHints };
-}
-
-function partitionParsedForClustering(
-  parsed: ParsedImportRow[],
-  newTransactionIds: readonly string[],
-  pairedTxnIds: ReadonlySet<string>,
-): { parsedClusterable: ParsedImportRow[]; newIdsClusterable: string[] } {
-  const parsedClusterable: ParsedImportRow[] = [];
-  const newIdsClusterable: string[] = [];
-  for (let i = 0; i < parsed.length; i++) {
-    const nid = newTransactionIds[i];
-    const row = parsed[i];
-    if (nid === undefined || row === undefined) continue;
-    if (pairedTxnIds.has(nid)) continue;
-    parsedClusterable.push(row);
-    newIdsClusterable.push(nid);
-  }
-  return { parsedClusterable, newIdsClusterable };
-}
-
-function sourcesClusterableFromPartition(
-  existingSortedClusterable: TransactionRecord[],
-  parsedClusterable: ParsedImportRow[],
-  newIdsClusterable: string[],
-): SourceRow[] {
-  const tail: SourceRow[] = parsedClusterable.map((row, i) => {
-    const id = newIdsClusterable[i];
-    if (id === undefined) {
-      throw new Error('sourcesClusterableFromPartition: missing id for clusterable row');
-    }
-    return { kind: 'new' as const, row, id };
-  });
-  return [
-    ...existingSortedClusterable.map((record) => ({ kind: 'existing' as const, record })),
-    ...tail,
-  ];
-}
-
-function mergeClusterAssignmentsForPairingSkips(
-  existingSorted: TransactionRecord[],
-  parsed: ParsedImportRow[],
-  newTransactionIds: readonly string[],
-  pairedTxnIds: ReadonlySet<string>,
-  innerAssignments: Assignment[],
-): Assignment[] {
-  const internalAssign = internalTransferAssignment();
-  const out: Assignment[] = [];
-  let idx = 0;
-  const takeInner = (): Assignment => {
-    const next = innerAssignments[idx];
-    if (next === undefined) {
-      throw new Error(
-        'mergeClusterAssignmentsForPairingSkips: inner assignment index overflow',
-      );
-    }
-    idx += 1;
-    return next;
-  };
-  for (const rec of existingSorted) {
-    out.push(pairedTxnIds.has(rec.id) ? internalAssign : takeInner());
-  }
-  for (let i = 0; i < parsed.length; i++) {
-    const id = newTransactionIds[i];
-    if (id === undefined) {
-      throw new Error('mergeClusterAssignmentsForPairingSkips: missing new id');
-    }
-    out.push(pairedTxnIds.has(id) ? internalAssign : takeInner());
-  }
-  if (idx !== innerAssignments.length) {
-    throw new Error(
-      'mergeClusterAssignmentsForPairingSkips: inner assignment count mismatch',
-    );
-  }
-  return out;
-}
-
 export async function runClusterAndCategoryPipeline(
-  existing: TransactionRecord[],
-  parsed: ParsedImportRow[],
   embedder: MerchantEmbedder,
   opts: ClusterPipelineOpts,
 ): Promise<ClusterPipelineResult> {
-  if (opts.newTransactionIds.length !== parsed.length) {
-    throw new Error(
-      'runClusterAndCategoryPipeline: newTransactionIds length must match parsed rows',
-    );
-  }
-
-  const pairedTxnIds = opts.pairedTxnIds ?? new Set<string>();
-
-  const existingSorted = [...existing].sort(
-    (a, b) => a.date - b.date || a.id.localeCompare(b.id),
-  );
-
-  const sourcesFull: SourceRow[] = [
-    ...existingSorted.map((record) => ({ kind: 'existing' as const, record })),
-    ...parsed.map((row, i) => {
-      const id = opts.newTransactionIds[i];
-      if (id === undefined) {
-        throw new Error('runClusterAndCategoryPipeline: missing new transaction id');
-      }
-      return { kind: 'new' as const, row, id };
-    }),
-  ];
-
-  const existingSortedClusterable = existingSorted.filter(
-    (r) => !pairedTxnIds.has(r.id),
-  );
-  const { parsedClusterable, newIdsClusterable } = partitionParsedForClustering(
-    parsed,
-    opts.newTransactionIds,
-    pairedTxnIds,
-  );
-
-  const sourcesClusterable = sourcesClusterableFromPartition(
-    existingSortedClusterable,
-    parsedClusterable,
-    newIdsClusterable,
-  );
+  const planningRows = opts.planningRows;
+  const existingSorted = existingSortedFromPlanningRows(planningRows);
+  const sourcesFull = map(planningRows, planningRowToSourceRow);
+  const sourcesClusterable = map(clusterableRows(planningRows), planningRowToSourceRow);
 
   let clusterSuggestions: Map<string, CategorySuggestion>;
   let assignmentsFull: Assignment[];
@@ -440,20 +121,14 @@ export async function runClusterAndCategoryPipeline(
     const internalAssign = internalTransferAssignment();
     assignmentsFull = sourcesFull.map(() => internalAssign);
   } else {
-    const inner = await runClusterPipelineCore(
+    const inner = await runClusterPass(
       sourcesClusterable,
       embedder,
       opts.physicalGroupLabels,
     );
     clusterSuggestions = inner.clusterSuggestions;
     clusterHints = inner.clusterHints;
-    assignmentsFull = mergeClusterAssignmentsForPairingSkips(
-      existingSorted,
-      parsed,
-      opts.newTransactionIds,
-      pairedTxnIds,
-      inner.assignments,
-    );
+    assignmentsFull = assignmentsForPlanningRows(planningRows, inner.assignments);
   }
 
   return {
@@ -470,52 +145,7 @@ export function computeRetiredClusterIds(
   existing: TransactionRecord[],
   assignments: Assignment[],
 ): string[] {
-  const before = new Set<string>();
-  for (const t of existing) {
-    if (t.cluster_id) before.add(t.cluster_id);
-  }
-  const after = new Set(assignments.map((a) => a.cluster_id));
-  return [...before].filter((c) => !after.has(c));
-}
-
-export function buildNewImportInputs(
-  userId: string,
-  sources: SourceRow[],
-  assignments: Assignment[],
-  parsedLength: number,
-  pairingByLegId?: Readonly<Record<string, TransferPairingAssignment>>,
-): ImportTransactionInput[] {
-  const nExisting = sources.length - parsedLength;
-  const out: ImportTransactionInput[] = [];
-  for (let i = nExisting; i < sources.length; i++) {
-    const s = sources[i];
-    if (s.kind !== 'new') continue;
-    const a = assignments[i];
-    const row = s.row;
-    const pairing = pairingByLegId?.[s.id];
-    out.push({
-      user_id: userId,
-      id: s.id,
-      date: row.date,
-      raw_merchant: row.raw_merchant,
-      cleaned_merchant: cleanMerchantForClustering(row.raw_merchant),
-      file_amount: row.file_amount,
-      amount: row.canonical_amount,
-      cluster_id: a.cluster_id,
-      category: a.category,
-      status: a.status,
-      is_recurring: false,
-      known_merchant: a.known_merchant,
-      suggested_category: a.suggested_category,
-      category_confidence: a.category_confidence,
-      match_type: a.match_type,
-      merchant_embedding: Array.from(a.embedding),
-      ...(pairing && {
-        pairing_id: pairing.pairing_id,
-        pairing_source: pairing.pairing_source,
-        pairing_confidence: pairing.pairing_confidence,
-      }),
-    });
-  }
-  return out;
+  const before = uniq(compact(map(existing, 'cluster_id')));
+  const after = uniq(map(assignments, 'cluster_id'));
+  return difference(before, after);
 }
