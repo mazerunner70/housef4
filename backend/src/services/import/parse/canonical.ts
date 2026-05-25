@@ -33,7 +33,7 @@ export function withCanonicalAmount(
   }));
 }
 
-/** When import negation is on, set `canonical_amount` to `-file_amount`; otherwise return row unchanged. */
+/** create negated list,  setting `canonical_amount` to `-file_amount`. */
 export function withNegatedCanonicalAmount(
   rows: ParsedImportRow[]
 ): ParsedImportRow[] {

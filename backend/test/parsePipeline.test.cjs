@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { parseBankCsv } = require('../dist/services/import/parse/parseCsv');
 const { parseImportBuffer } = require('../dist/services/import/parse/parseImportBuffer');
-const { parsedRowsFromParserOutput } = require('../dist/services/import/parse/canonical');
+const { withCanonicalAmount } = require('../dist/services/import/parse/canonical');
 
 test('parseBankCsv maps valid rows and drops invalid rows', () => {
   const csv = [
@@ -60,8 +60,8 @@ test('parseImportBuffer returns unknown when no parser matches', () => {
   assert.deepEqual(result.rows, []);
 });
 
-test('parsedRowsFromParserOutput preserves file and canonical amounts', () => {
-  const rows = parsedRowsFromParserOutput([
+test('withCanonicalAmount preserves file and canonical amounts', () => {
+  const rows = withCanonicalAmount([
     { date: 1, amount: -5, raw_merchant: 'Coffee' },
   ]);
   assert.deepEqual(rows[0], {

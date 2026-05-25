@@ -1,8 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  parsedRowsFromParserOutput,
   withCanonicalAmount,
+  withNegatedCanonicalAmount,
 } = require('../dist/services/import/parse/canonical');
 const {
   suggestNegateFromInterest,
@@ -11,7 +11,7 @@ const {
 } = require('../dist/services/import/parse/amountNegation');
 
 test('suggestNegateFromInterest when interest expense is positive', () => {
-  const rows = parsedRowsFromParserOutput([
+  const rows = withCanonicalAmount([
     {
       date: 1,
       amount: 2.5,
@@ -22,7 +22,7 @@ test('suggestNegateFromInterest when interest expense is positive', () => {
 });
 
 test('suggestNegateFromInterest skips interest earned', () => {
-  const rows = parsedRowsFromParserOutput([
+  const rows = withCanonicalAmount([
     { date: 1, amount: 0.12, raw_merchant: 'INTEREST EARNED' },
   ]);
   assert.equal(suggestNegateFromInterest(rows), false);
@@ -55,27 +55,28 @@ test('parseNegateAmountsField', () => {
   assert.equal(parseNegateAmountsField('FALSE'), false);
 });
 
-test('withCanonicalAmount flips canonical_amount only', () => {
-  const [row] = parsedRowsFromParserOutput([
+test('withNegatedCanonicalAmount flips canonical_amount only', () => {
+  const [row] = withCanonicalAmount([
     { date: 1, amount: 10, raw_merchant: 'X' },
   ]);
-  const negated = withCanonicalAmount(row, true);
+  const [negated] = withNegatedCanonicalAmount([row]);
   assert.equal(negated.file_amount, 10);
   assert.equal(negated.canonical_amount, -10);
 });
 
-test('withCanonicalAmount leaves input row unchanged', () => {
-  const [row] = parsedRowsFromParserOutput([
+test('withNegatedCanonicalAmount leaves input row unchanged', () => {
+  const [row] = withCanonicalAmount([
     { date: 1, amount: 10, raw_merchant: 'X' },
   ]);
   const snapshot = { ...row };
-  withCanonicalAmount(row, true);
+  withNegatedCanonicalAmount([row]);
   assert.deepEqual(row, snapshot);
 });
 
-test('withCanonicalAmount returns same reference when negate is false', () => {
-  const [row] = parsedRowsFromParserOutput([
+test('withNegatedCanonicalAmount returns new row objects', () => {
+  const rows = withCanonicalAmount([
     { date: 1, amount: 10, raw_merchant: 'X' },
   ]);
-  assert.equal(withCanonicalAmount(row, false), row);
+  const [negated] = withNegatedCanonicalAmount(rows);
+  assert.notEqual(negated, rows[0]);
 });
