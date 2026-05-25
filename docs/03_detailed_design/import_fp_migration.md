@@ -1,6 +1,6 @@
 # Import pipeline — functional programming migration plan
 
-**Status:** Planned (not yet implemented)  
+**Status:** Implemented (HOU-54–HOU-60)  
 **Parent design:** [`import_transaction_files.md`](./import_transaction_files.md) §4.1 (pure planning preference), §4.4 (bounded purity), §4.5 (adoption phases)  
 **Scope:** `backend/src/services/import/` (~3.5k lines) and `backend/src/services/pairing/ingest.ts` (stage **7**)  
 **Utility library:** [`lodash`](https://lodash.com/docs) (per-method imports via curated re-export module; **no default import**)
@@ -41,8 +41,8 @@ The import tree is already **partly functional** after the [folder reorganisatio
 | ----- | ---- | ------------ |
 | Parse | `parse/` | Mostly pure; one in-place mutator (`applyImportAmountNegation`); manual CSV loop |
 | Planning | `runImportPlanning.ts`, `planning/` | Read-once `LedgerSnapshot`; `PersistPlan` artefact — good boundary |
-| Clustering | `clustering/clusterPipeline.ts` (521 lines) | **Main complexity hotspot** — parallel arrays, manual `Map` groupBy, index cursor merge |
-| Orchestration | `importOrchestration.ts`, `importOrchestrationSteps.ts` | Sequential, traced, effectful — keep as-is |
+| Clustering | `clustering/` (`clusterPass`, `clusterPipeline`, `labelGroups`, `assignment`, …) | **Decomposed** — `groupBy` / `zipWith`; no index cursor |
+| Orchestration | `importOrchestration.ts`, `importOrchestrationSteps.ts` | Sequential, traced, effectful — **`traceStage`** helper |
 | Persist / blob | `importPersistPhase.ts`, `blob/` | I/O — out of scope |
 
 **Root cause of cognitive load:** index alignment across `parsed[i]` ↔ `newTransactionIds[i]` ↔ `assignments[i]` ↔ `sources[i]`, plus partition/re-merge for paired transfer legs (stage **7** exclusion).
@@ -247,7 +247,7 @@ Each phase = **one PR**, behaviour-neutral, CI green. Order matters from phase *
 | ---- | ---- | ----- |
 | Dependency | `backend/package.json` | `"lodash": "^4.17.21"` (or current stable) |
 | Curated re-exports | `backend/src/services/import/utils/lodashImport.ts` | Per-method `lodash/*` re-exports from §3.3; add `zipStrict` if needed |
-| Tracer helper (optional) | `backend/src/services/import/utils/traceStage.ts` | Shell-only; dedupes `tracer?.run ?? fn` |
+| Tracer helper | `backend/src/services/import/utils/traceStage.ts` | Shell-only; dedupes `tracer?.run ?? fn` |
 | Smoke test | `backend/test/lodashImport.test.cjs` | Verify `groupBy`, `zipWith`, `flow`, `compact` behave as import expects (esp. strict zip) |
 
 **Done when:** `lodash` installed; `lodashImport.ts` re-exports documented set; backend build and tests green; no domain refactors yet.
@@ -458,15 +458,15 @@ lodash removes more loop boilerplate than local helpers would; offset by **`loda
 
 ## 9. Success criteria
 
-- [ ] `lodash` in `backend/package.json`; imports only via `utils/lodashImport.ts`
-- [ ] `utils/lodashImport.ts` documents full lodash surface used by import
-- [ ] No in-place mutation of `ParsedImportRow[]` in planning path
-- [ ] Stage **8** uses **`groupBy`** / **`zipWith`** — no index cursor
-- [ ] Stage **9** uses **`flow`**, **`isEqual`**, **`reject`** for patches and summary
-- [ ] `PlanningRow` replaces parallel-array alignment
-- [ ] Pure core has zero imports from repository / HTTP / logger
-- [ ] All existing import integration tests pass
-- [ ] §4.5 in [`import_transaction_files.md`](./import_transaction_files.md) references this doc
+- [x] `lodash` in `backend/package.json`; imports only via `utils/lodashImport.ts`
+- [x] `utils/lodashImport.ts` documents full lodash surface used by import
+- [x] No in-place mutation of `ParsedImportRow[]` in planning path
+- [x] Stage **8** uses **`groupBy`** / **`zipWith`** — no index cursor
+- [x] Stage **9** uses **`flow`**, **`isEqual`**, **`reject`** for patches and summary
+- [x] `PlanningRow` replaces parallel-array alignment
+- [x] Pure core has zero imports from repository / HTTP / logger
+- [x] All existing import integration tests pass
+- [x] §4.5 in [`import_transaction_files.md`](./import_transaction_files.md) references this doc
 
 ---
 

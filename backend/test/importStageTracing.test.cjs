@@ -75,6 +75,22 @@ test('createImportStageTracer — failed stage sets failedStage and warns', asyn
   assert.equal(warn.errorName, 'Error');
 });
 
+test('traceStage — invokes fn directly when tracer is absent', async () => {
+  const { traceStage } = require('../dist/services/import/utils/traceStage');
+  const value = await traceStage(undefined, '9', () => 99);
+  assert.equal(value, 99);
+});
+
+test('traceStage — delegates to tracer.run when present', async () => {
+  const { traceStage } = require('../dist/services/import/utils/traceStage');
+  const { log, lines } = captureLogger();
+  const tracer = createImportStageTracer({ userId: 'u-trace' }, log);
+
+  const value = await traceStage(tracer, '8', async () => 'pipeline');
+  assert.equal(value, 'pipeline');
+  assert.ok(lines.some((l) => l.msg === 'import.stage' && l.stage === '8'));
+});
+
 test('IMPORT_STAGE_IDS — covers §4.2 numbered stages including 2b', () => {
   for (const id of ['1', '2', '2b', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12']) {
     assert.ok(IMPORT_STAGE_IDS.includes(id), `missing stage ${id}`);

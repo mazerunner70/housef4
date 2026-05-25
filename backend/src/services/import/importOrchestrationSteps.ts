@@ -15,7 +15,6 @@ import {
 } from './parse/amountNegation';
 import { allocateBatchArtefactIds } from './planning/allocateBatchIds';
 import { withNegatedCanonicalAmount, type ParsedImportRow } from './parse/canonical';
-import { map } from './utils/lodashImport';
 import { computeImportBlobContentSha256 } from './blob/blobFingerprint';
 import { buildLedgerSnapshot } from './planning/ledgerSnapshot';
 import type { ExtractedImportUpload } from './ingress/multipartFile';
@@ -27,6 +26,7 @@ import {
 import { runImportPlanning } from './runImportPlanning';
 import type { PersistPlan } from './planning/persistPlan';
 import type { ImportStageTracer } from './importStageTracing';
+import { traceStage } from './utils/traceStage';
 
 export type AccountSelector = Readonly<{
   newName: string;
@@ -172,9 +172,9 @@ export async function runImportPlanningStages(
   tracer?: ImportStageTracer,
 ): Promise<PersistPlan> {
   const { rows } = parsed;
-  const { transactionIds } = await (tracer?.run('5', () =>
+  const { transactionIds } = await traceStage(tracer, '5', () =>
     Promise.resolve(allocateBatchArtefactIds(rows.length)),
-  ) ?? Promise.resolve(allocateBatchArtefactIds(rows.length)));
+  );
 
   if (rows.length === 0) {
     tracer?.markSkipped('6', 'zero_rows');
@@ -188,9 +188,9 @@ export async function runImportPlanningStages(
     });
   }
 
-  const ledgerSnapshot = tracer
-    ? await tracer.run('6', () => buildLedgerSnapshot(userId, repo))
-    : await buildLedgerSnapshot(userId, repo);
+  const ledgerSnapshot = await traceStage(tracer, '6', () =>
+    buildLedgerSnapshot(userId, repo),
+  );
 
   return runImportPlanning(userId, rows, {
     importAccountId: accountId,

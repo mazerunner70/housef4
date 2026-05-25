@@ -14,6 +14,7 @@ import type {
 import { TRANSFER_PAIRING_DAY_MS, computeAutoTransferPairingsSortedPools } from '@housef4/db';
 
 import type { ParsedImportRow } from '../import/parse/canonical';
+import { flow, map, reject, zipStrict } from '../import/utils/lodashImport';
 
 /** Default W in **W × 86 400 000 ms** (`transfer_matching.md` §3). */
 export const INGEST_TRANSFER_PAIR_WINDOW_DAYS = 4;
@@ -40,24 +41,16 @@ function ingestProposalLegsFromParsed(params: {
   importAccountId: string;
   importCurrency?: string;
 }): TransferPairingLeg[] {
-  if (params.parsed.length !== params.newTransactionIds.length) {
-    throw new Error(
-      'ingestProposalLegsFromParsed: parsed rows and newTransactionIds length mismatch',
-    );
-  }
-  return params.parsed.map((row, i) => {
-    const nid = params.newTransactionIds[i];
-    if (nid === undefined) {
-      throw new Error('ingestProposalLegsFromParsed: missing id at index ' + String(i));
-    }
-    return {
+  return map(
+    zipStrict(params.parsed, params.newTransactionIds),
+    ([row, nid]) => ({
       id: nid,
       account_id: params.importAccountId,
       date: row.date,
       amount: row.canonical_amount,
       ...(params.importCurrency ? { currency: params.importCurrency } : {}),
-    };
-  });
+    }),
+  );
 }
 
 /** Existing legs within **W × 86 400 000 ms** of any import date (counterpart pool), excluding rows already paired (§4.1 one-to-one; `transfer_matching.md`). */
@@ -67,22 +60,26 @@ function ingestCounterpartLegsNearImport(params: {
   windowDays: number;
   fileIdToAccountId: ReadonlyMap<string, string>;
 }): TransferPairingLeg[] {
-  const legs: TransferPairingLeg[] = [];
-  for (const tx of params.existingTransactions) {
-    if (tx.pairing_id) continue;
-    if (!existingTxnTouchesImportDateWindow(tx.date, params.importDatesMs, params.windowDays)) {
-      continue;
-    }
-    const acc = params.fileIdToAccountId.get(tx.transaction_file_id);
-    if (!acc) continue;
-    legs.push({
-      id: tx.id,
-      account_id: acc,
-      date: tx.date,
-      amount: tx.amount,
-    });
-  }
-  return legs;
+  const { existingTransactions, importDatesMs, windowDays, fileIdToAccountId } =
+    params;
+
+  return flow(
+    (txs: readonly TransactionRecord[]) => [...txs],
+    (txs) => reject(txs, (tx) => !!tx.pairing_id),
+    (txs) =>
+      reject(
+        txs,
+        (tx) => !existingTxnTouchesImportDateWindow(tx.date, importDatesMs, windowDays),
+      ),
+    (txs) => reject(txs, (tx) => !fileIdToAccountId.has(tx.transaction_file_id)),
+    (txs) =>
+      map(txs, (tx) => ({
+        id: tx.id,
+        account_id: fileIdToAccountId.get(tx.transaction_file_id)!,
+        date: tx.date,
+        amount: tx.amount,
+      })),
+  )(existingTransactions);
 }
 
 /**
