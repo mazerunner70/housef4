@@ -4,6 +4,10 @@ Always run inside the ml-engine container (Postgres is the `db` service):
 
     docker compose exec ml-engine python scripts/extract_data_to_db.py
 
+If the script appears to hang after DynamoDB counts, an open Jupyter notebook kernel
+probably holds a lock on Postgres. The script terminates other sessions automatically;
+re-run after restarting the notebook kernel if needed.
+
 Reads entity items from `DYNAMODB_TABLE_NAME` (default `housef4-local-table`).
 DynamoDB Local from the repo root compose is at host.docker.internal:8000 by default
 (see ml-training/docker-compose.yml). Leave DYNAMODB_ENDPOINT unset in .env to use AWS.
@@ -105,7 +109,32 @@ def get_db_connection():
         user=os.environ.get('DB_USER', 'ml_user'),
         password=os.environ.get('DB_PASSWORD', 'ml_password'),
         database=os.environ.get('DB_NAME', 'recurring_charges_ml'),
+        connect_timeout=10,
+        options='-c lock_timeout=10000 -c statement_timeout=120000',
     )
+
+
+def release_other_db_sessions(conn):
+    """Drop other connections so DDL/TRUNCATE is not blocked by Jupyter kernels."""
+    dbname = os.environ.get('DB_NAME', 'recurring_charges_ml')
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT pg_terminate_backend(pid)
+            FROM pg_stat_activity
+            WHERE datname = %s
+              AND pid <> pg_backend_pid()
+            """,
+            (dbname,),
+        )
+        terminated = [row[0] for row in cur.fetchall() if row[0]]
+    conn.commit()
+    if terminated:
+        print(
+            f"Terminated {len(terminated)} other Postgres session(s) "
+            "(likely an open Jupyter notebook connection).\n",
+            flush=True,
+        )
 
 
 def scan_table(table_name):
@@ -155,6 +184,83 @@ def print_postgres_counts(conn, heading):
             cur.execute(f'SELECT COUNT(*) FROM {table}')
             print(f"{table.ljust(30)} : {cur.fetchone()[0]} rows")
     print("--------------------------------\n")
+
+
+TRANSACTION_ENRICHMENT_COLUMNS = (
+    ('cleaned_merchant', 'TEXT'),
+    ('cluster_id', 'VARCHAR(255)'),
+    ('category', 'VARCHAR(255)'),
+    ('status', 'VARCHAR(50)'),
+    ('suggested_category', 'VARCHAR(255)'),
+    ('category_confidence', 'DECIMAL'),
+    ('match_type', 'VARCHAR(50)'),
+    ('transaction_file_id', 'VARCHAR(255)'),
+    ('file_amount', 'DECIMAL'),
+    ('is_recurring', 'BOOLEAN DEFAULT FALSE'),
+    ('pairing_id', 'VARCHAR(255)'),
+    ('pairing_source', 'VARCHAR(50)'),
+    ('pairing_confidence', 'VARCHAR(50)'),
+    ('merchant_embedding', 'DOUBLE PRECISION[]'),
+)
+
+
+def _optional_str(item, key):
+    value = item.get(key)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text if text else None
+
+
+def _optional_decimal(item, key):
+    value = item.get(key)
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
+
+
+def _merchant_embedding(item):
+    embedding = item.get('merchant_embedding')
+    if not isinstance(embedding, list) or not embedding:
+        return None
+    return [float(x) for x in embedding]
+
+
+def ensure_transaction_enrichment_columns(conn):
+    """Add clustering/categorisation columns to legacy Postgres schemas."""
+    added = []
+    with conn.cursor() as cur:
+        for column_name, column_type in TRANSACTION_ENRICHMENT_COLUMNS:
+            cur.execute(
+                """
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'transactions'
+                  AND column_name = %s
+                """,
+                (column_name,),
+            )
+            if cur.fetchone() is None:
+                cur.execute(
+                    f'ALTER TABLE transactions ADD COLUMN {column_name} {column_type}'
+                )
+                added.append(column_name)
+
+        # Older extracts stored cleaned_merchant in memo.
+        cur.execute(
+            """
+            UPDATE transactions
+            SET cleaned_merchant = memo
+            WHERE cleaned_merchant IS NULL
+              AND memo IS NOT NULL
+              AND memo <> ''
+            """
+        )
+    conn.commit()
+    if added:
+        print(f"Added transaction columns: {', '.join(added)}\n")
 
 
 def ensure_varchar_id_columns(conn):
@@ -233,6 +339,7 @@ def extract_transactions(conn, all_items):
         if not transaction_id:
             continue
         file_id = item.get('transaction_file_id')
+        suggested = item.get('suggested_category')
         records.append((
             str(transaction_id),
             _user_id_from_item(item),
@@ -240,16 +347,36 @@ def extract_transactions(conn, all_items):
             int(item.get('date', 0)),
             _item_decimal(item, 'amount'),
             item.get('raw_merchant', ''),
-            item.get('cleaned_merchant', ''),
+            '',  # memo — legacy; use cleaned_merchant column
             item.get('currency', ''),
-            item.get('status', ''),
+            '',
             '',
             int(item.get('date', 0)),
+            _optional_str(item, 'cleaned_merchant'),
+            _optional_str(item, 'cluster_id'),
+            item.get('category', ''),
+            item.get('status', ''),
+            None if suggested is None else _optional_str(item, 'suggested_category'),
+            _optional_decimal(item, 'category_confidence'),
+            _optional_str(item, 'match_type'),
+            _optional_str(item, 'transaction_file_id') or (str(file_id) if file_id else None),
+            _optional_decimal(item, 'file_amount'),
+            bool(item.get('is_recurring', False)),
+            _optional_str(item, 'pairing_id') or _optional_str(item, 'match_id'),
+            _optional_str(item, 'pairing_source') or _optional_str(item, 'match_source'),
+            _optional_str(item, 'pairing_confidence') or _optional_str(item, 'match_confidence'),
+            _merchant_embedding(item),
         ))
 
     query = """
-    INSERT INTO transactions
-    (transaction_id, user_id, account_id, date, amount, description, memo, currency, transaction_type, mcc_code, created_at)
+    INSERT INTO transactions (
+        transaction_id, user_id, account_id, date, amount, description, memo,
+        currency, transaction_type, mcc_code, created_at,
+        cleaned_merchant, cluster_id, category, status, suggested_category,
+        category_confidence, match_type, transaction_file_id, file_amount,
+        is_recurring, pairing_id, pairing_source, pairing_confidence,
+        merchant_embedding
+    )
     VALUES %s
     ON CONFLICT (transaction_id) DO NOTHING;
     """
@@ -340,21 +467,25 @@ def extract_accounts(conn, all_items):
 
 
 def main():
-    print("Starting data extraction...")
+    print("Starting data extraction...", flush=True)
     print_config()
 
     all_items = load_dynamodb_items()
     print_dynamodb_counts(all_items)
 
+    print("Connecting to Postgres...", flush=True)
     conn = get_db_connection()
     try:
+        release_other_db_sessions(conn)
+        print("Checking Postgres schema...", flush=True)
         ensure_varchar_id_columns(conn)
+        ensure_transaction_enrichment_columns(conn)
         clear_postgres_tables(conn)
         extract_transactions(conn, all_items)
         extract_clusters(conn, all_items)
         extract_accounts(conn, all_items)
         print_postgres_counts(conn, "--- PostgreSQL counts (after load) ---")
-        print("Data extraction complete!")
+        print("Data extraction complete!", flush=True)
     finally:
         conn.close()
 

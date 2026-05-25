@@ -49,3 +49,13 @@ export {
   CATEGORY_MAP_V2,
   REGEX_RULES_V2,
 } from './taxonomyV2';
+
+export {
+  DEFAULT_MERCHANT_STRING_MATCH,
+  loadMerchantStringMatchConfig,
+  levenshteinDistance,
+  mergeLabelsByCleanedMerchant,
+  merchantsMatch,
+  type MerchantStringMatchConfig,
+  type MerchantStringMatchMode,
+} from './merchantStringMatch';

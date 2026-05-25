@@ -23,12 +23,27 @@ test('groupIndicesByLabel — lodash groupBy over source indices', () => {
 
 test('resolvePhysicalGroupLabels — rejects length mismatch for test hook', () => {
   assert.throws(
-    () => resolvePhysicalGroupLabels(2, [[0], [0]], [0]),
+    () =>
+      resolvePhysicalGroupLabels(2, [[0], [0]], {
+        physicalGroupLabels: [0],
+      }),
     /physicalGroupLabels length must match clusterable sources/,
   );
 });
 
-test('resolvePhysicalGroupLabels — splits noise in test hook labels', () => {
-  const labels = resolvePhysicalGroupLabels(2, [[0], [0]], [-1, -1]);
+test('resolvePhysicalGroupLabels — splits noise in test hook labels when match off', () => {
+  const labels = resolvePhysicalGroupLabels(2, [[0], [0]], {
+    physicalGroupLabels: [-1, -1],
+    merchantStringMatch: { mode: 'off', maxDistance: 2 },
+  });
   assert.deepEqual(labels, [-1000000, -1000001]);
+});
+
+test('resolvePhysicalGroupLabels — exact match merges identical cleaned merchants', () => {
+  const labels = resolvePhysicalGroupLabels(2, [[0], [0]], {
+    physicalGroupLabels: [-1, -1],
+    cleanedTexts: ['MCDONALDS', 'MCDONALDS'],
+    merchantStringMatch: { mode: 'exact', maxDistance: 2 },
+  });
+  assert.equal(labels[0], labels[1]);
 });

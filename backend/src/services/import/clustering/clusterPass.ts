@@ -7,13 +7,17 @@ import {
   buildSourceAssignments,
   type Assignment,
 } from './assignment';
-import { resolveClusterIdByPhysicalGroup } from './clusterIdentity';
+import {
+  resolveClusterIdByPhysicalGroup,
+  type ClusterGroupResolution,
+} from './clusterIdentity';
 import { cleanMerchantForClustering } from './merchantNormalize';
 import type { MerchantEmbedder } from './merchantsEmbedder';
 import {
   groupIndicesByLabel,
   resolvePhysicalGroupLabels,
 } from './labelGroups';
+import type { MerchantStringMatchConfig } from './merchantStringMatch';
 import type { CategorySuggestion } from './categoryClassifier';
 
 export type SourceRow =
@@ -24,6 +28,12 @@ export type ClusterPassResult = Readonly<{
   assignments: Assignment[];
   clusterSuggestions: Map<string, CategorySuggestion>;
   clusterHints: Record<string, { previousCategoryId: string | null }>;
+  /** Per clusterable source — DBSCAN label after noise split (replay / debug). */
+  physicalGroupLabels: number[];
+  /** Cleaned merchant text fed to the embedder (replay / debug). */
+  cleanedTexts: string[];
+  /** Minted cluster id + predecessor ids per physical group label (replay / debug). */
+  labelResolution: Map<number, ClusterGroupResolution>;
 }>;
 
 /**
@@ -33,7 +43,10 @@ export type ClusterPassResult = Readonly<{
 export async function runClusterPass(
   sources: SourceRow[],
   embedder: MerchantEmbedder,
-  physicalGroupLabels?: readonly number[],
+  opts: Readonly<{
+    physicalGroupLabels?: readonly number[];
+    merchantStringMatch?: MerchantStringMatchConfig;
+  }> = {},
 ): Promise<ClusterPassResult> {
   const cleanedTexts = map(sources, (s) =>
     s.kind === 'existing'
@@ -43,11 +56,11 @@ export async function runClusterPass(
 
   const embeddings = await Promise.all(cleanedTexts.map((t) => embedder.embed(t)));
 
-  const labels = resolvePhysicalGroupLabels(
-    sources.length,
-    embeddings,
-    physicalGroupLabels,
-  );
+  const labels = resolvePhysicalGroupLabels(sources.length, embeddings, {
+    physicalGroupLabels: opts.physicalGroupLabels,
+    cleanedTexts,
+    merchantStringMatch: opts.merchantStringMatch,
+  });
   const byLabel = groupIndicesByLabel(labels);
 
   const kindAtIndex = map(sources, (s) =>
@@ -81,5 +94,12 @@ export async function runClusterPass(
     embeddings,
   );
 
-  return { assignments, clusterSuggestions, clusterHints };
+  return {
+    assignments,
+    clusterSuggestions,
+    clusterHints,
+    physicalGroupLabels: labels,
+    cleanedTexts,
+    labelResolution,
+  };
 }

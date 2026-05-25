@@ -18,6 +18,11 @@ import {
 } from './assignment';
 import type { CategorySuggestion } from './categoryClassifier';
 import { runClusterPass, type SourceRow } from './clusterPass';
+import type { ClusterGroupResolution } from './clusterIdentity';
+import {
+  loadMerchantStringMatchConfig,
+  type MerchantStringMatchConfig,
+} from './merchantStringMatch';
 import type { MerchantEmbedder } from './merchantsEmbedder';
 
 export {
@@ -43,6 +48,12 @@ export type ClusterPipelineResult = {
   clusterHints: Record<string, { previousCategoryId: string | null }>;
   /** Same ordering as the first `existing.length` entries in `sources` / `assignments`. */
   existingSorted: TransactionRecord[];
+  /** Debug fields aligned to clusterable sources only (replay tooling). */
+  clusterPassDebug?: Readonly<{
+    physicalGroupLabels: number[];
+    cleanedTexts: string[];
+    labelResolution: Map<number, ClusterGroupResolution>;
+  }>;
 };
 
 export type ClusterPipelineOpts = Readonly<{
@@ -54,6 +65,8 @@ export type ClusterPipelineOpts = Readonly<{
    * DBSCAN noise (`-1`) is always split into singleton groups via `splitNoiseLabels`.
    */
   physicalGroupLabels?: readonly number[];
+  /** Override env `HOUSEF4_MERCHANT_STRING_MATCH*` (default: exact match on cleaned_merchant). */
+  merchantStringMatch?: MerchantStringMatchConfig;
 }>;
 
 function planningRowToSourceRow(row: PlanningRow): SourceRow {
@@ -115,20 +128,26 @@ export async function runClusterAndCategoryPipeline(
   let clusterSuggestions: Map<string, CategorySuggestion>;
   let assignmentsFull: Assignment[];
   let clusterHints: Record<string, { previousCategoryId: string | null }> = {};
+  let clusterPassDebug: ClusterPipelineResult['clusterPassDebug'];
 
   if (sourcesClusterable.length === 0) {
     clusterSuggestions = new Map();
     const internalAssign = internalTransferAssignment();
     assignmentsFull = sourcesFull.map(() => internalAssign);
   } else {
-    const inner = await runClusterPass(
-      sourcesClusterable,
-      embedder,
-      opts.physicalGroupLabels,
-    );
+    const inner = await runClusterPass(sourcesClusterable, embedder, {
+      physicalGroupLabels: opts.physicalGroupLabels,
+      merchantStringMatch:
+        opts.merchantStringMatch ?? loadMerchantStringMatchConfig(),
+    });
     clusterSuggestions = inner.clusterSuggestions;
     clusterHints = inner.clusterHints;
     assignmentsFull = assignmentsForPlanningRows(planningRows, inner.assignments);
+    clusterPassDebug = {
+      physicalGroupLabels: inner.physicalGroupLabels,
+      cleanedTexts: inner.cleanedTexts,
+      labelResolution: inner.labelResolution,
+    };
   }
 
   return {
@@ -137,6 +156,7 @@ export async function runClusterAndCategoryPipeline(
     clusterSuggestions,
     clusterHints,
     existingSorted,
+    clusterPassDebug,
   };
 }
 

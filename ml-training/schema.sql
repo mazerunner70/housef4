@@ -14,12 +14,27 @@ CREATE TABLE IF NOT EXISTS transactions (
     account_id VARCHAR(255),
     date BIGINT, -- milliseconds since epoch
     amount DECIMAL,
-    description TEXT,
+    description TEXT, -- raw_merchant from DynamoDB
     memo TEXT,
     currency VARCHAR(10),
     transaction_type VARCHAR(50),
     mcc_code VARCHAR(10), -- extracted if available
-    created_at BIGINT
+    created_at BIGINT,
+    -- Import / clustering enrichment (mirrors DynamoDB TRANSACTION attributes)
+    cleaned_merchant TEXT,
+    cluster_id VARCHAR(255),
+    category VARCHAR(255),
+    status VARCHAR(50), -- CLASSIFIED | PENDING_REVIEW
+    suggested_category VARCHAR(255),
+    category_confidence DECIMAL,
+    match_type VARCHAR(50), -- RULE | ML | INHERITED
+    transaction_file_id VARCHAR(255),
+    file_amount DECIMAL,
+    is_recurring BOOLEAN DEFAULT FALSE,
+    pairing_id VARCHAR(255),
+    pairing_source VARCHAR(50),
+    pairing_confidence VARCHAR(50),
+    merchant_embedding DOUBLE PRECISION[] -- MiniLM / hash vector (384 dims)
 );
 
 CREATE TABLE IF NOT EXISTS recurring_charge_patterns (
