@@ -1,17 +1,17 @@
 -- PostgreSQL schema for local ML experimentation environment
--- This closely mirrors the DynamoDB structures but flat for analytical queries
+-- IDs are opaque strings (txn_*, CL_*, UUID accounts) matching DynamoDB / api_contract.md
 
 CREATE TABLE IF NOT EXISTS accounts (
-    id UUID PRIMARY KEY,
+    id VARCHAR(255) PRIMARY KEY,
     user_id VARCHAR(255) NOT NULL,
     name VARCHAR(255),
     type VARCHAR(100)
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
-    transaction_id UUID PRIMARY KEY,
+    transaction_id VARCHAR(255) PRIMARY KEY,
     user_id VARCHAR(255) NOT NULL,
-    account_id UUID,
+    account_id VARCHAR(255),
     date BIGINT, -- milliseconds since epoch
     amount DECIMAL,
     description TEXT,
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS transactions (
 );
 
 CREATE TABLE IF NOT EXISTS recurring_charge_patterns (
-    pattern_id UUID PRIMARY KEY,
+    pattern_id VARCHAR(255) PRIMARY KEY,
     user_id VARCHAR(255) NOT NULL,
     merchant_pattern VARCHAR(255),
     frequency VARCHAR(50),
@@ -39,19 +39,19 @@ CREATE TABLE IF NOT EXISTS recurring_charge_patterns (
 );
 
 CREATE TABLE IF NOT EXISTS pattern_feedback (
-    feedback_id UUID PRIMARY KEY,
-    pattern_id UUID REFERENCES recurring_charge_patterns(pattern_id),
+    feedback_id VARCHAR(255) PRIMARY KEY,
+    pattern_id VARCHAR(255) REFERENCES recurring_charge_patterns(pattern_id),
     user_id VARCHAR(255) NOT NULL,
     feedback_type VARCHAR(50),
-    transaction_id UUID,
+    transaction_id VARCHAR(255),
     timestamp BIGINT
 );
 
 -- Results table for storing ML engine outputs
 CREATE TABLE IF NOT EXISTS ml_categorization_results (
     id SERIAL PRIMARY KEY,
-    transaction_id UUID REFERENCES transactions(transaction_id),
-    predicted_pattern_id UUID,
+    transaction_id VARCHAR(255) REFERENCES transactions(transaction_id),
+    predicted_pattern_id VARCHAR(255),
     predicted_merchant VARCHAR(255),
     confidence_score DECIMAL,
     is_anomaly BOOLEAN DEFAULT FALSE,

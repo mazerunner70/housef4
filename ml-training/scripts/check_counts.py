@@ -16,10 +16,11 @@ def main():
     try:
         with conn.cursor() as cur:
             tables = [
-                'transactions', 
-                'recurring_charge_patterns', 
-                'pattern_feedback', 
-                'ml_categorization_results'
+                'transactions',
+                'accounts',
+                'recurring_charge_patterns',
+                'pattern_feedback',
+                'ml_categorization_results',
             ]
             
             for table in tables:

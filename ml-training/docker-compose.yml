@@ -1,5 +1,7 @@
 version: '3.8'
 
+# ml-engine talks to Postgres on service `db`. DynamoDB Local (repo root compose, port 8000)
+# is reached via host.docker.internal — not localhost from inside a container.
 services:
   db:
     image: postgres:15
@@ -17,6 +19,8 @@ services:
     build: .
     env_file:
       - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - .:/workspace
       - ~/.aws:/root/.aws:ro
@@ -32,6 +36,9 @@ services:
       - DB_USER=ml_user
       - DB_PASSWORD=ml_password
       - DB_NAME=recurring_charges_ml
+      - DYNAMODB_TABLE_NAME=${DYNAMODB_TABLE_NAME-housef4-local-table}
+      - ML_USER_ID=${ML_USER_ID-local-dev}
+      - DYNAMODB_ENDPOINT=${DYNAMODB_ENDPOINT-http://host.docker.internal:8000}
       - HUGGINGFACE_HUB_CACHE=/workspace/.cache/huggingface
     depends_on:
       - db
