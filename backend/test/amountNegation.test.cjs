@@ -1,8 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  parsedRowsFromParserOutput,
-  applyImportAmountNegation,
+  withCanonicalAmount,
+  withNegatedCanonicalAmount,
 } = require('../dist/services/import/parse/canonical');
 const {
   suggestNegateFromInterest,
@@ -11,7 +11,7 @@ const {
 } = require('../dist/services/import/parse/amountNegation');
 
 test('suggestNegateFromInterest when interest expense is positive', () => {
-  const rows = parsedRowsFromParserOutput([
+  const rows = withCanonicalAmount([
     {
       date: 1,
       amount: 2.5,
@@ -22,7 +22,7 @@ test('suggestNegateFromInterest when interest expense is positive', () => {
 });
 
 test('suggestNegateFromInterest skips interest earned', () => {
-  const rows = parsedRowsFromParserOutput([
+  const rows = withCanonicalAmount([
     { date: 1, amount: 0.12, raw_merchant: 'INTEREST EARNED' },
   ]);
   assert.equal(suggestNegateFromInterest(rows), false);
@@ -55,11 +55,28 @@ test('parseNegateAmountsField', () => {
   assert.equal(parseNegateAmountsField('FALSE'), false);
 });
 
-test('applyImportAmountNegation flips canonical_amount only', () => {
-  const rows = parsedRowsFromParserOutput([
+test('withNegatedCanonicalAmount flips canonical_amount only', () => {
+  const [row] = withCanonicalAmount([
     { date: 1, amount: 10, raw_merchant: 'X' },
   ]);
-  applyImportAmountNegation(rows, true);
-  assert.equal(rows[0].file_amount, 10);
-  assert.equal(rows[0].canonical_amount, -10);
+  const [negated] = withNegatedCanonicalAmount([row]);
+  assert.equal(negated.file_amount, 10);
+  assert.equal(negated.canonical_amount, -10);
+});
+
+test('withNegatedCanonicalAmount leaves input row unchanged', () => {
+  const [row] = withCanonicalAmount([
+    { date: 1, amount: 10, raw_merchant: 'X' },
+  ]);
+  const snapshot = { ...row };
+  withNegatedCanonicalAmount([row]);
+  assert.deepEqual(row, snapshot);
+});
+
+test('withNegatedCanonicalAmount returns new row objects', () => {
+  const rows = withCanonicalAmount([
+    { date: 1, amount: 10, raw_merchant: 'X' },
+  ]);
+  const [negated] = withNegatedCanonicalAmount(rows);
+  assert.notEqual(negated, rows[0]);
 });

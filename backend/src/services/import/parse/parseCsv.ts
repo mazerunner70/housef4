@@ -1,6 +1,7 @@
 import { parse } from 'csv-parse/sync';
 
 import { createLogger } from '../../../logger';
+import { compact, flow, map } from '../utils/lodashImport';
 import type { ParserOutputRow } from './canonical';
 
 const log = createLogger({ component: 'import.parseCsv' });
@@ -135,12 +136,13 @@ function resolveCsvRowAmount(
   return amount;
 }
 
-export function parseBankCsv(text: string): ParserOutputRow[] {
+type CsvColumnLayout = NonNullable<ReturnType<typeof pickColumns>>;
+
+function parseCsvRecords(text: string): Record<string, string>[] {
   const bomStripped =
     text.codePointAt(0) === 0xfeff ? text.slice(1) : text;
-  let records: Record<string, string>[];
   try {
-    records = parse(bomStripped, {
+    return parse(bomStripped, {
       columns: true,
       skip_empty_lines: true,
       relax_column_count: true,
@@ -149,6 +151,40 @@ export function parseBankCsv(text: string): ParserOutputRow[] {
   } catch {
     return [];
   }
+}
+
+export function parseCsvRecord(
+  rec: Record<string, string>,
+  headers: string[],
+  cols: CsvColumnLayout,
+): ParserOutputRow | null {
+  const vals = headers.map((h) => rec[h] ?? '');
+  const raw_merchant = (vals[cols.descIdx] ?? '').trim();
+  if (!raw_merchant) return null;
+
+  const amount = resolveCsvRowAmount(vals, cols);
+  if (amount === undefined) return null;
+
+  const dateRaw = vals[cols.dateIdx] ?? '';
+  const date = parseDateCell(dateRaw);
+  if (date === null) {
+    log.warn('csv import: rejected row — unparseable date cell', {
+      dateString: dateRaw,
+    });
+    return null;
+  }
+  return { date, amount, raw_merchant };
+}
+
+const mapCsvRecords = (
+  records: Record<string, string>[],
+  headers: string[],
+  cols: CsvColumnLayout,
+): Array<ParserOutputRow | null> =>
+  map(records, (rec) => parseCsvRecord(rec, headers, cols));
+
+export function parseBankCsv(text: string): ParserOutputRow[] {
+  const records = parseCsvRecords(text);
   if (records.length === 0) return [];
 
   const first = records[0];
@@ -157,24 +193,8 @@ export function parseBankCsv(text: string): ParserOutputRow[] {
   const cols = pickColumns(headers);
   if (!cols) return [];
 
-  const rows: ParserOutputRow[] = [];
-  for (const rec of records) {
-    const vals = headers.map((h) => rec[h] ?? '');
-    const raw_merchant = (vals[cols.descIdx] ?? '').trim();
-    if (!raw_merchant) continue;
-
-    const amount = resolveCsvRowAmount(vals, cols);
-    if (amount === undefined) continue;
-
-    const dateRaw = vals[cols.dateIdx] ?? '';
-    const date = parseDateCell(dateRaw);
-    if (date === null) {
-      log.warn('csv import: rejected row — unparseable date cell', {
-        dateString: dateRaw,
-      });
-      continue;
-    }
-    rows.push({ date, amount, raw_merchant });
-  }
-  return rows;
+  return flow(
+    (recs: Record<string, string>[]) => mapCsvRecords(recs, headers, cols),
+    compact,
+  )(records);
 }

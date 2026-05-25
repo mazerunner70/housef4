@@ -1,41 +1,68 @@
+import { find } from '../utils/lodashImport';
 import type { ImportSourceFormatKey, ParsedImportRow } from './canonical';
-import { parsedRowsFromParserOutput } from './canonical';
+import { withCanonicalAmount } from './canonical';
 import { detectImportFormat } from './detectFormat';
 import { parseBankCsv } from './parseCsv';
 import { extractOfxDefaultCurrency, parseOfxLike } from './parseOfx';
 import { parseQif } from './parseQif';
 
-export function parseImportBuffer(
-  buf: Buffer,
-  filename: string | undefined,
-  mimeType: string | undefined,
-): {
+type ParseImportResult = {
   rows: ParsedImportRow[];
   format: ImportSourceFormatKey | 'unknown';
   /** When detectable (e.g. OFX `CURDEF`), ISO 4217 code for the import batch. */
   currency?: string;
-} {
+};
+
+type ParseStrategy = {
+  format: ImportSourceFormatKey;
+  parse: () => ParsedImportRow[];
+  currency?: string;
+};
+
+function firstNonemptyParse(strategies: ParseStrategy[]): ParseImportResult {
+  let matched: ParseStrategy | undefined;
+  let rows: ParsedImportRow[] = [];
+
+  find(strategies, (strategy) => {
+    const parsed = strategy.parse();
+    if (parsed.length > 0) {
+      matched = strategy;
+      rows = parsed;
+      return true;
+    }
+    return false;
+  });
+
+  if (!matched) {
+    return { rows: [], format: 'unknown' };
+  }
+
+  return {
+    rows,
+    format: matched.format,
+    ...(matched.currency !== undefined && { currency: matched.currency }),
+  };
+}
+
+export function parseImportBuffer(
+  buf: Buffer,
+  filename: string | undefined,
+  mimeType: string | undefined,
+): ParseImportResult {
   const detected = detectImportFormat(filename, mimeType, buf);
   const text = buf.toString('utf8');
 
   const tryCsv = (): ParsedImportRow[] =>
-    parsedRowsFromParserOutput(parseBankCsv(text));
+    withCanonicalAmount(parseBankCsv(text));
   const tryOfx = (): ParsedImportRow[] =>
-    parsedRowsFromParserOutput(parseOfxLike(text));
+    withCanonicalAmount(parseOfxLike(text));
   const tryQif = (): ParsedImportRow[] =>
-    parsedRowsFromParserOutput(parseQif(text));
+    withCanonicalAmount(parseQif(text));
 
-  if (detected === 'ofx') {
+  if (detected === 'ofx' || detected === 'qfx') {
     return {
       rows: tryOfx(),
-      format: 'ofx',
-      currency: extractOfxDefaultCurrency(text),
-    };
-  }
-  if (detected === 'qfx') {
-    return {
-      rows: tryOfx(),
-      format: 'qfx',
+      format: detected,
       currency: extractOfxDefaultCurrency(text),
     };
   }
@@ -46,21 +73,13 @@ export function parseImportBuffer(
     return { rows: tryCsv(), format: 'csv' };
   }
 
-  const csv = tryCsv();
-  if (csv.length > 0) {
-    return { rows: csv, format: 'csv' };
-  }
-  const ofx = tryOfx();
-  if (ofx.length > 0) {
-    return {
-      rows: ofx,
+  return firstNonemptyParse([
+    { format: 'csv', parse: tryCsv },
+    {
       format: 'ofx',
+      parse: tryOfx,
       currency: extractOfxDefaultCurrency(text),
-    };
-  }
-  const qif = tryQif();
-  if (qif.length > 0) {
-    return { rows: qif, format: 'qif' };
-  }
-  return { rows: [], format: 'unknown' };
+    },
+    { format: 'qif', parse: tryQif },
+  ]);
 }
