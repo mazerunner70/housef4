@@ -1,5 +1,6 @@
-import type { FinanceRepository } from '@housef4/db';
+import type { FinanceRepository, TransactionFileRecord } from '@housef4/db';
 
+import { find, some } from '../utils/lodashImport';
 import type { ParsedImportRow } from './canonical';
 
 /**
@@ -17,11 +18,13 @@ const INTEREST_EXPENSE_HINT =
   /\b(interest|finance charge|fin\.?\s*chg|purchase interest|cash adv(?:ance)?\s*int)\b/i;
 
 export function suggestNegateFromInterest(rows: ParsedImportRow[]): boolean {
-  for (const r of rows) {
-    if (INTEREST_INCOME_HINT.test(r.raw_merchant)) continue;
-    if (INTEREST_EXPENSE_HINT.test(r.raw_merchant) && r.file_amount > 0) return true;
-  }
-  return false;
+  return some(
+    rows,
+    (r) =>
+      !INTEREST_INCOME_HINT.test(r.raw_merchant) &&
+      INTEREST_EXPENSE_HINT.test(r.raw_merchant) &&
+      r.file_amount > 0,
+  );
 }
 
 /**
@@ -33,14 +36,14 @@ export async function suggestNegateFromPriorImport(
   userId: string,
   accountId: string,
 ): Promise<boolean> {
-  const files = await repo.listTransactionFiles(userId);
-  for (const f of files) {
-    if (f.account_id !== accountId) continue;
-    const n = f.format.amount_negated;
-    if (n === true) return true;
-    if (n === false) return false;
-  }
-  return false;
+  const files: TransactionFileRecord[] = await repo.listTransactionFiles(userId);
+  const prior = find(
+    files,
+    (f) =>
+      f.account_id === accountId &&
+      (f.format.amount_negated === true || f.format.amount_negated === false),
+  );
+  return prior?.format.amount_negated ?? false;
 }
 
 /** `true` / `1` / `yes` → true; `false` / `0` / `no` → false; empty or unknown → undefined (use auto). */

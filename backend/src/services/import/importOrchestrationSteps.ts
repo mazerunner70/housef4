@@ -14,7 +14,8 @@ import {
   suggestNegateFromPriorImport,
 } from './parse/amountNegation';
 import { allocateBatchArtefactIds } from './planning/allocateBatchIds';
-import { applyImportAmountNegation, type ParsedImportRow } from './parse/canonical';
+import { withNegatedCanonicalAmount, type ParsedImportRow } from './parse/canonical';
+import { map } from './utils/lodashImport';
 import { computeImportBlobContentSha256 } from './blob/blobFingerprint';
 import { buildLedgerSnapshot } from './planning/ledgerSnapshot';
 import type { ExtractedImportUpload } from './ingress/multipartFile';
@@ -45,6 +46,9 @@ export type AmountNegationPolicy = Readonly<{
   explicitOverride: boolean;
   explicitNegate: boolean | undefined;
 }>;
+
+export type AmountNegationResult = AmountNegationPolicy &
+  Readonly<{ rows: ParsedImportRow[] }>;
 
 type TransactionFileInput = Parameters<
   FinanceRepository['recordTransactionFile']
@@ -129,14 +133,14 @@ export async function resolveAccountAfterLock(
   return selector.existingId;
 }
 
-/** §4.2 stage **4** — canonical amount policy; mutates `rows` in place. */
+/** §4.2 stage **4** — canonical amount policy; returns new rows (no in-place mutation). */
 export async function applyAmountNegationPolicy(
   repo: FinanceRepository,
   userId: string,
   accountId: string,
   extracted: ExtractedImportUpload,
   rows: ParsedImportRow[],
-): Promise<AmountNegationPolicy> {
+): Promise<AmountNegationResult> {
   const explicitNegate = parseNegateAmountsField(extracted.negateAmounts);
   const suggestInterest = suggestNegateFromInterest(rows);
   const suggestPriorImport = await suggestNegateFromPriorImport(
@@ -144,18 +148,18 @@ export async function applyAmountNegationPolicy(
     userId,
     accountId,
   );
-  const applied = resolveAmountNegation({
+  const negateDecided = resolveAmountNegation({
     explicit: explicitNegate,
     suggestInterest,
     suggestPriorImport,
   });
-  applyImportAmountNegation(rows, applied);
   return {
-    applied,
+    applied: negateDecided,
     suggestInterest,
     suggestPriorImport,
     explicitOverride: explicitNegate !== undefined,
     explicitNegate,
+    rows: negateDecided ? withNegatedCanonicalAmount(rows) : rows,
   };
 }
 

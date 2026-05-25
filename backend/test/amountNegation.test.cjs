@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   parsedRowsFromParserOutput,
-  applyImportAmountNegation,
+  withCanonicalAmount,
 } = require('../dist/services/import/parse/canonical');
 const {
   suggestNegateFromInterest,
@@ -55,11 +55,27 @@ test('parseNegateAmountsField', () => {
   assert.equal(parseNegateAmountsField('FALSE'), false);
 });
 
-test('applyImportAmountNegation flips canonical_amount only', () => {
-  const rows = parsedRowsFromParserOutput([
+test('withCanonicalAmount flips canonical_amount only', () => {
+  const [row] = parsedRowsFromParserOutput([
     { date: 1, amount: 10, raw_merchant: 'X' },
   ]);
-  applyImportAmountNegation(rows, true);
-  assert.equal(rows[0].file_amount, 10);
-  assert.equal(rows[0].canonical_amount, -10);
+  const negated = withCanonicalAmount(row, true);
+  assert.equal(negated.file_amount, 10);
+  assert.equal(negated.canonical_amount, -10);
+});
+
+test('withCanonicalAmount leaves input row unchanged', () => {
+  const [row] = parsedRowsFromParserOutput([
+    { date: 1, amount: 10, raw_merchant: 'X' },
+  ]);
+  const snapshot = { ...row };
+  withCanonicalAmount(row, true);
+  assert.deepEqual(row, snapshot);
+});
+
+test('withCanonicalAmount returns same reference when negate is false', () => {
+  const [row] = parsedRowsFromParserOutput([
+    { date: 1, amount: 10, raw_merchant: 'X' },
+  ]);
+  assert.equal(withCanonicalAmount(row, false), row);
 });

@@ -62,8 +62,8 @@ export async function executeImportOrchestration(
     await tracer.run('2', () =>
       validateExistingAccountBeforeLock(repo, userId, selector),
     );
-    const parsed = await tracer.run('3', async () => parseImportUpload(extracted));
-    tracer.setContext({ rowCount: parsed.rows.length });
+    const parsedUpload = await tracer.run('3', async () => parseImportUpload(extracted));
+    tracer.setContext({ rowCount: parsedUpload.rows.length });
 
     const importFileId = mintImportFileId();
     const importStartedAt = Date.now();
@@ -88,9 +88,10 @@ export async function executeImportOrchestration(
           userId,
           accountId,
           extracted,
-          parsed.rows,
+          parsedUpload.rows,
         ),
       );
+      const parsed = { ...parsedUpload, rows: amountNegation.rows };
       const plan = await runImportPlanningStages(
         userId,
         repo,

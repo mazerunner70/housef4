@@ -23,6 +23,7 @@ export { default as groupBy } from 'lodash/groupBy';
 export { default as identity } from 'lodash/identity';
 export { default as isEqual } from 'lodash/isEqual';
 export { default as keyBy } from 'lodash/keyBy';
+export { default as map } from 'lodash/map';
 export { default as mapValues } from 'lodash/mapValues';
 export { default as maxBy } from 'lodash/maxBy';
 export { default as omit } from 'lodash/omit';

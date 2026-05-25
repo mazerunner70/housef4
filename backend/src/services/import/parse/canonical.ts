@@ -1,3 +1,6 @@
+import { map } from '../utils/lodashImport';
+
+
 /** Raw row from format-specific parsers (`amount` = file-signed only). */
 export type ParserOutputRow = {
   date: number;
@@ -19,10 +22,10 @@ export interface ParsedImportRow {
 }
 
 /** Attach `file_amount` / `canonical_amount` from legacy parser output (`amount` = file-signed). */
-export function parsedRowsFromParserOutput(
+export function withCanonicalAmount(
   rows: ParserOutputRow[],
 ): ParsedImportRow[] {
-  return rows.map((r) => ({
+  return map(rows, (r) => ({
     date: r.date,
     file_amount: r.amount,
     canonical_amount: r.amount,
@@ -30,15 +33,11 @@ export function parsedRowsFromParserOutput(
   }));
 }
 
-/** When import negation is on, flip canonical amounts so `canonical_amount === -file_amount`. */
-export function applyImportAmountNegation(
-  rows: ParsedImportRow[],
-  negate: boolean,
-): void {
-  if (!negate) return;
-  for (const r of rows) {
-    r.canonical_amount = -r.file_amount;
-  }
+/** When import negation is on, set `canonical_amount` to `-file_amount`; otherwise return row unchanged. */
+export function withNegatedCanonicalAmount(
+  rows: ParsedImportRow[]
+): ParsedImportRow[] {
+  return map(rows, (row) => ({ ...row, canonical_amount: -row.file_amount }));
 }
 
 export type ImportSourceFormatKey = 'csv' | 'ofx' | 'qfx' | 'qif';
