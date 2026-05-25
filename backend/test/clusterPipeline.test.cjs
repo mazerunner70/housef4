@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { splitNoiseLabels, unanimousPriorCategoryForGroup } = require('../dist/services/import/clustering/clusterPipeline');
+const { splitNoiseLabels, unanimousPriorCategoryForGroup, computeRetiredClusterIds } = require('../dist/services/import/clustering/clusterPipeline');
 
 test('splitNoiseLabels: each -1 becomes its own singleton group label', () => {
   assert.deepEqual(splitNoiseLabels([-1, -1, 0]), [-1000000, -1000001, 0]);
@@ -43,4 +43,14 @@ test('unanimousPriorCategoryForGroup — mixed existing categories returns null'
 test('unanimousPriorCategoryForGroup — new-only group returns null', () => {
   const sources = [{ kind: 'new', row: {}, id: 'n1' }];
   assert.equal(unanimousPriorCategoryForGroup([0], sources), null);
+});
+
+test('computeRetiredClusterIds — difference of before/after cluster ids', () => {
+  const existing = [
+    { cluster_id: 'CL_old' },
+    { cluster_id: 'CL_keep' },
+    { cluster_id: undefined },
+  ];
+  const assignments = [{ cluster_id: 'CL_keep' }, { cluster_id: 'CL_new' }];
+  assert.deepEqual(computeRetiredClusterIds(existing, assignments), ['CL_old']);
 });
