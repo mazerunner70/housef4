@@ -8,6 +8,7 @@ import {
 import { getImportBlobStore } from './blob/importBlobStore';
 import { importLockConflictHttpError } from './importLockHttp';
 import type { ImportStageTracer } from './importStageTracing';
+import { traceStage } from './utils/traceStage';
 import { persistImportPlan, toImportPersistPlan, type PersistPlan } from './planning/persistPlan';
 import type { ExtractedImportUpload } from './ingress/multipartFile';
 
@@ -87,19 +88,15 @@ export async function persistImportViaStaging(
   } = params;
 
   const afterPromote = async () => {
-    const patchBlob = () =>
+    await traceStage(tracer, '11', () =>
       attachImportBlobViaPatch({
         repo,
         ...importBlobPutContext(params),
-      });
-    if (tracer) {
-      await tracer.run('11', patchBlob);
-    } else {
-      await patchBlob();
-    }
+      }),
+    );
   };
 
-  const runStaging = () =>
+  await traceStage(tracer, '10', () =>
     repo.persistImportPlanViaStaging(userId, {
       importFileId,
       importStartedAt,
@@ -108,13 +105,8 @@ export async function persistImportViaStaging(
       fileCurrency: importCurrency,
       importLockAlreadyHeld: true,
       afterPromote,
-    });
-
-  if (tracer) {
-    await tracer.run('10', runStaging);
-  } else {
-    await runStaging();
-  }
+    }),
+  );
 }
 
 /** §8.6 — in-place persist (`IMPORT_LOCK` already held by orchestration). */
@@ -132,7 +124,7 @@ export async function persistImportInPlace(
   } = params;
 
   try {
-    const result = await (tracer?.run('10', () =>
+    const result = await traceStage(tracer, '10', () =>
       persistImportPlan({
         userId,
         repo,
@@ -140,16 +132,9 @@ export async function persistImportInPlace(
         importFileId,
         fileCurrency: importCurrency,
       }),
-    ) ??
-      persistImportPlan({
-        userId,
-        repo,
-        plan,
-        importFileId,
-        fileCurrency: importCurrency,
-      }));
+    );
 
-    await (tracer?.run('11', () =>
+    await traceStage(tracer, '11', () =>
       attachImportBlobAndRecordFile({
         repo,
         ...importBlobPutContext(params),
@@ -162,22 +147,9 @@ export async function persistImportInPlace(
           },
         },
       }),
-    ) ??
-      attachImportBlobAndRecordFile({
-        repo,
-        ...importBlobPutContext(params),
-        transactionFileInput: {
-          ...transactionFileInput,
-          result: {
-            ...result,
-            existingTransactionsUpdated: plan.existingPatches.length,
-            newClustersTouched: plan.summary.newClustersTouched,
-          },
-        },
-      }));
+    );
 
-    await (tracer?.run('12', () => repo.refreshStoredDashboardMetrics(userId)) ??
-      repo.refreshStoredDashboardMetrics(userId));
+    await traceStage(tracer, '12', () => repo.refreshStoredDashboardMetrics(userId));
   } catch (e) {
     await releaseImportLockBestEffort(repo, userId);
     throw e;

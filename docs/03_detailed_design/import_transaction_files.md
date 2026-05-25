@@ -17,15 +17,16 @@ This document is the **detailed design** for the server-side import pipeline: **
 | ----- | ---- | --------- |
 | HTTP handler | `backend/src/handlers/imports.ts` | Stage **1** ingress (`extractImportMultipart`) + delegate |
 | Orchestration (root) | `backend/src/services/import/importOrchestration.ts`, `importOrchestrationSteps.ts` | Ordered stages **2–12** |
-| Planning (root) | `backend/src/services/import/runImportPlanning.ts` | Stages **7–9** |
+| Planning (root) | `backend/src/services/import/runImportPlanning.ts` | Stages **7–9** (optional `embedder` DI — §4.7 Q3) |
 | Persistence (root) | `backend/src/services/import/importPersistPhase.ts` | Stage **10** (staging promote or in-place) |
-| Observability (root) | `backend/src/services/import/importStageTracing.ts` | Per-stage tracing ([`import_observability.md`](./import_observability.md)) |
+| Observability (root) | `backend/src/services/import/importStageTracing.ts`, `utils/traceStage.ts` | Per-stage tracing ([`import_observability.md`](./import_observability.md)) |
+| Shared utils | `backend/src/services/import/utils/lodashImport.ts` | Curated lodash surface ([`import_fp_migration.md`](./import_fp_migration.md)) |
 | Ingress | `backend/src/services/import/ingress/multipartFile.ts` | Stage **1** extract |
 | Parse | `backend/src/services/import/parse/` (`parseImportBuffer`, `amountNegation`, `canonical`, …) | Stages **3–4** |
-| Planning helpers | `backend/src/services/import/planning/` (`allocateBatchIds`, `ledgerSnapshot`, `persistPlan`) | Stages **5–6**, **9** |
-| Clustering | `backend/src/services/import/clustering/` (`clusterPipeline`, `clusterIdentity`, …) | Stage **8** |
+| Planning helpers | `backend/src/services/import/planning/` (`allocateBatchIds`, `ledgerSnapshot`, `planningRows`, `buildPersistPlan`, `persistPlan`) | Stages **5–6**, **9** |
+| Clustering | `backend/src/services/import/clustering/` (`clusterPass`, `clusterPipeline`, `labelGroups`, `assignment`, …) | Stage **8** |
 | Blob storage | `backend/src/services/import/blob/` (`blobFingerprint`, `importBlobPersist`, …) | Stage **2b** fingerprint; post-promote blob `Put` |
-| Transfer pairing | `backend/src/services/pairing/` | Stage **7** |
+| Transfer pairing | `backend/src/services/pairing/` (`ingest.ts`) | Stage **7** |
 
 **Status:** Orchestration modularity is a **target shape**; behaviour may still be bundled in fewer modules. Cluster rules below specify **intended** behaviour, including product decisions not yet fully implemented.
 
