@@ -28,9 +28,9 @@ import type { PersistPlan } from './planning/persistPlan';
 import type { ImportStageTracer } from './importStageTracing';
 import { traceStage } from './utils/traceStage';
 
-export type AccountSelector = Readonly<{
-  newName: string;
-  existingId: string;
+/** Parsed account target: existing id, or `null` to create from `ExtractedImportUpload.newAccountName`. */
+export type ImportAccountSelection = Readonly<{
+  existingAccountId: string | null;
 }>;
 
 export type ParsedImportUpload = Readonly<{
@@ -54,24 +54,31 @@ type TransactionFileInput = Parameters<
   FinanceRepository['recordTransactionFile']
 >[1];
 
-/** §4.2 stage **2** — parse multipart account selector fields. */
-export function parseAccountSelector(
+/** §4.2 stage **2** — parse multipart account target (`new_account_name` wins over `account_id`). */
+export function parseImportAccountSelection(
   extracted: ExtractedImportUpload,
-): AccountSelector {
+): ImportAccountSelection {
+  const newAccountName = extracted.newAccountName.trim();
+  if (newAccountName.length > 0) {
+    return { existingAccountId: null };
+  }
+  const existingId = extracted.accountId.trim();
   return {
-    newName: extracted.newAccountName.trim(),
-    existingId: extracted.accountId.trim(),
+    existingAccountId: existingId.length > 0 ? existingId : null,
   };
 }
 
 /** §4.2 stage **2** — reject when neither new nor existing account is provided. */
-export function validateAccountSelector(selector: AccountSelector): void {
-  if (selector.newName.length === 0 && selector.existingId.length === 0) {
-    throw new HttpError(
-      400,
-      'Provide new_account_name or a valid account_id for this import',
-    );
-  }
+export function validateImportAccountSelection(
+  selection: ImportAccountSelection,
+  extracted: ExtractedImportUpload,
+): void {
+  if (selection.existingAccountId !== null) return;
+  if (extracted.newAccountName.trim().length > 0) return;
+  throw new HttpError(
+    400,
+    'Provide new_account_name or a valid account_id for this import',
+  );
 }
 
 /** §4.2 stage **2b** — fingerprint raw bytes and reject duplicate uploads. */
@@ -99,10 +106,10 @@ export async function assertNoDuplicateBlobImport(
 export async function validateExistingAccountBeforeLock(
   repo: FinanceRepository,
   userId: string,
-  selector: AccountSelector,
+  selection: ImportAccountSelection,
 ): Promise<void> {
-  if (selector.newName.length > 0) return;
-  const acc = await repo.getAccount(userId, selector.existingId);
+  if (selection.existingAccountId === null) return;
+  const acc = await repo.getAccount(userId, selection.existingAccountId);
   if (!acc) {
     throw new HttpError(400, 'Unknown account_id');
   }
@@ -124,13 +131,17 @@ export function parseImportUpload(
 export async function resolveAccountAfterLock(
   repo: FinanceRepository,
   userId: string,
-  selector: AccountSelector,
+  selection: ImportAccountSelection,
+  extracted: ExtractedImportUpload,
 ): Promise<string> {
-  if (selector.newName.length > 0) {
-    const created = await repo.createAccount(userId, selector.newName);
-    return created.id;
+  if (selection.existingAccountId !== null) {
+    return selection.existingAccountId;
   }
-  return selector.existingId;
+  const created = await repo.createAccount(
+    userId,
+    extracted.newAccountName.trim(),
+  );
+  return created.id;
 }
 
 /** §4.2 stage **4** — canonical amount policy; returns new rows (no in-place mutation). */
@@ -208,6 +219,8 @@ export function buildTransactionFileInput(params: {
   contentSha256: string;
   extracted: ExtractedImportUpload;
   parsed: ParsedImportUpload;
+  /** Resolved at import (file hint → prior account file → profile default). */
+  importCurrency: string;
   amountNegated: boolean;
   importStartedAt: number;
   importCompletedAt: number;
@@ -219,6 +232,7 @@ export function buildTransactionFileInput(params: {
     contentSha256,
     extracted,
     parsed,
+    importCurrency,
     amountNegated,
     importStartedAt,
     importCompletedAt,
@@ -244,7 +258,7 @@ export function buildTransactionFileInput(params: {
     },
     format: {
       ...(parsed.format === 'unknown' ? {} : { source_format: parsed.format }),
-      ...(parsed.currency && { currency: parsed.currency }),
+      currency: importCurrency,
       amount_negated: amountNegated,
     },
     timing: {
@@ -295,9 +309,10 @@ export function buildImportOrchestrationResponse(params: {
   plan: PersistPlan;
   importFileId: string;
   parsed: ParsedImportUpload;
+  importCurrency: string;
   amountNegation: AmountNegationPolicy;
 }): Record<string, unknown> {
-  const { plan, importFileId, parsed, amountNegation } = params;
+  const { plan, importFileId, parsed, importCurrency, amountNegation } = params;
   const base: Record<string, unknown> = {
     rowCount: plan.summary.importRowCount,
     knownMerchants: plan.summary.knownMerchants,
@@ -305,6 +320,7 @@ export function buildImportOrchestrationResponse(params: {
     existingTransactionsUpdated: plan.existingPatches.length,
     newClustersTouched: plan.summary.newClustersTouched,
     importFileId,
+    currency: importCurrency,
   };
   if (parsed.format !== 'unknown') {
     base.sourceFormat = parsed.format;

@@ -44,7 +44,7 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
     export VITE_COGNITO_REGION="$REGION"
     export VITE_COGNITO_USER_POOL_ID="$POOL"
     export VITE_COGNITO_CLIENT_ID="$CLIENT"
-    pnpm --filter frontend build
+    pnpm --filter ./frontend build
   )
 else
   echo "== Skipping build (--skip-build)"

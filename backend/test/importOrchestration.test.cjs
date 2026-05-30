@@ -150,6 +150,11 @@ function createStubRepo(overrides = {}) {
     releaseImportLock: async () => {
       log('releaseImportLock');
     },
+
+    getDefaultCurrencyCode: async () => {
+      log('getDefaultCurrencyCode');
+      return overrides.defaultCurrency ?? 'USD';
+    },
   };
 
   return repo;
@@ -193,6 +198,7 @@ test('executeImportOrchestration — zero-row CSV commits persist stages in §4.
   assert.equal(typeof result.importFileId, 'string');
   assert.match(result.importFileId, /^[0-9a-f-]{36}$/i);
   assert.equal(result.sourceFormat, 'csv');
+  assert.equal(result.currency, 'USD');
   assert.deepEqual(result.amountNegation, {
     applied: false,
     suggestInterest: false,
@@ -216,6 +222,8 @@ test('executeImportOrchestration — zero-row CSV commits persist stages in §4.
   assert.equal(repo.lastTransactionFile.content_sha256, expectedSha);
   assert.equal(repo.lastTransactionFile.account_id, 'acc-1');
   assert.equal(repo.lastTransactionFile.id, result.importFileId);
+  assert.equal(repo.lastTransactionFile.format.currency, 'USD');
+  assert.equal(repo.lastIngest.fileCurrency, 'USD');
   assert.equal(repo.lastIngest.transactionFileId, result.importFileId);
   assert.deepEqual(repo.lastPatches, []);
   assert.deepEqual(repo.lastRetiredClusterIds, []);

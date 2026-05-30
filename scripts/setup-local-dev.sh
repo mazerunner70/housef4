@@ -62,6 +62,6 @@ echo "        DYNAMODB_ENDPOINT=${DDB_URL} DEV_AUTH_USER_ID=local-dev APP_ENV=lo
 echo "      pnpm --filter @housef4/backend run start:local"
 echo
 echo "    Terminal 2 — frontend (VITE_LOCAL_USER_ID in frontend/.env.development):"
-echo "      pnpm --filter frontend dev"
+echo "      pnpm dev:frontend"
 echo
 echo "==================================================================="

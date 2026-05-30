@@ -2,12 +2,14 @@ import type { ImportParseResult } from '@/lib/types'
 import type { ReactNode } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
+import { ImportCurrencyEditor } from '@/features/import/components/ImportCurrencyEditor'
 
 type ImportSummaryCardProps = {
   readonly summary: ImportParseResult
   readonly onContinueDashboard: () => void
   readonly onReviewUnknown: () => void
   readonly onReviewTransactions: () => void
+  readonly onCurrencyApplied?: (currency: string) => void
 }
 
 export function ImportSummaryCard({
@@ -15,6 +17,7 @@ export function ImportSummaryCard({
   onContinueDashboard,
   onReviewUnknown,
   onReviewTransactions,
+  onCurrencyApplied,
 }: ImportSummaryCardProps) {
   const neg = summary.amountNegation
   let normalizationSubtext: ReactNode = null
@@ -76,6 +79,11 @@ export function ImportSummaryCard({
           </div>
         )}
       </div>
+      <ImportCurrencyEditor
+        importFileId={summary.importFileId}
+        initialCurrency={summary.currency}
+        onApplied={onCurrencyApplied}
+      />
       {neg && (
         <p className="mt-4 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-zinc-400">
           {neg.applied ? (

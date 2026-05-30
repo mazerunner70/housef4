@@ -269,6 +269,13 @@ export function DataImportPage() {
       {phase === 'done' && summary && (
         <ImportSummaryCard
           summary={summary}
+          onCurrencyApplied={(currency) => {
+            setSummary((prev) => (prev ? { ...prev, currency } : prev))
+            const prev = useAppStore.getState().lastImportSummary
+            if (prev?.importFileId === summary.importFileId) {
+              setLastImportSummary({ ...prev, currency })
+            }
+          }}
           onContinueDashboard={() => navigate('/dashboard')}
           onReviewUnknown={() => navigate('/review-queue')}
           onReviewTransactions={() =>

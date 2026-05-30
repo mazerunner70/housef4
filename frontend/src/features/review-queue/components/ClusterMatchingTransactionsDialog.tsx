@@ -1,37 +1,65 @@
-import { useEffect, useId, useRef } from 'react'
+import { useEffect, useId, useMemo, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
 import { useTransactionsByCluster } from '@/hooks/useTransactions'
+import { useTransactionFiles } from '@/hooks/useTransactionFiles'
 import { cn } from '@/lib/cn'
+import { formatCurrencyAmount, resolveCurrencyCode } from '@/lib/formatCurrency'
 
 type ClusterMatchingTransactionsDialogProps = {
   clusterId: string
+  /** From cluster aggregate or profile default when the cluster has no stored currency. */
+  currencyCode: string
   onClose: () => void
 }
 
 function formatTransactionDate(ms: number): string {
-  return new Date(ms).toLocaleDateString(undefined, { dateStyle: 'full' })
-}
-
-function formatAmount(n: number): string {
-  return n.toLocaleString(undefined, { style: 'currency', currency: 'USD' })
+  return new Date(ms).toLocaleDateString(undefined, { dateStyle: 'medium' })
 }
 
 export function ClusterMatchingTransactionsDialog({
   clusterId,
+  currencyCode,
   onClose,
 }: Readonly<ClusterMatchingTransactionsDialogProps>) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const titleId = useId()
   const query = useTransactionsByCluster(clusterId, true)
+  const filesQuery = useTransactionFiles()
+  const formattedRows = useMemo(
+    () =>
+      query.data?.transactions.map((t) => {
+        const fileCurrency = filesQuery.data?.transaction_files.find(
+          (f) => f.id === t.transaction_file_id,
+        )?.format.currency
+        const code = resolveCurrencyCode(
+          t.currency ?? fileCurrency,
+          currencyCode,
+        )
+        return {
+          id: t.id,
+          dateLabel: formatTransactionDate(t.date),
+          merchant: t.raw_merchant,
+          amountLabel: formatCurrencyAmount(t.amount, code),
+        }
+      }) ?? [],
+    [query.data?.transactions, filesQuery.data?.transaction_files, currencyCode],
+  )
 
   useEffect(() => {
     const d = dialogRef.current
-    if (d && !d.open) d.showModal()
+    if (!d) return
+
+    const frame = requestAnimationFrame(() => {
+      if (!d.open) d.showModal()
+    })
+
     return () => {
-      d?.close()
+      cancelAnimationFrame(frame)
+      d.close()
     }
   }, [])
 
@@ -45,7 +73,7 @@ export function ClusterMatchingTransactionsDialog({
     return () => d.removeEventListener('close', handleClose)
   }, [onClose])
 
-  return (
+  return createPortal(
     <dialog
       ref={dialogRef}
       className={cn(
@@ -84,7 +112,7 @@ export function ClusterMatchingTransactionsDialog({
             No transactions in this cluster.
           </p>
         )}
-        {query.isSuccess && query.data.transactions.length > 0 && (
+        {query.isSuccess && formattedRows.length > 0 && (
           <table className="w-full border-collapse text-left text-sm">
             <thead>
               <tr className="border-b border-[var(--color-border)] text-xs font-medium tracking-wide text-zinc-500 uppercase">
@@ -96,19 +124,19 @@ export function ClusterMatchingTransactionsDialog({
               </tr>
             </thead>
             <tbody className="text-zinc-200">
-              {query.data.transactions.map((t) => (
+              {formattedRows.map((row) => (
                 <tr
-                  key={t.id}
+                  key={row.id}
                   className="border-b border-[var(--color-border-subtle)] last:border-0"
                 >
                   <td className="max-w-[40%] align-top py-3 pr-4 text-zinc-300">
-                    {formatTransactionDate(t.date)}
+                    {row.dateLabel}
                   </td>
                   <td className="align-top py-3 pr-4 break-words text-zinc-100">
-                    {t.raw_merchant}
+                    {row.merchant}
                   </td>
                   <td className="align-top py-3 text-right tabular-nums text-zinc-100">
-                    {formatAmount(t.amount)}
+                    {row.amountLabel}
                   </td>
                 </tr>
               ))}
@@ -116,6 +144,7 @@ export function ClusterMatchingTransactionsDialog({
           </table>
         )}
       </div>
-    </dialog>
+    </dialog>,
+    document.body,
   )
 }

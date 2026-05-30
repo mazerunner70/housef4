@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { startTransition, useId, useState } from 'react'
 
 import type { PendingCluster } from '@/lib/types'
 import { formatCurrencyAmount, resolveCurrencyCode } from '@/lib/formatCurrency'
@@ -12,8 +12,10 @@ import { ConfirmClusterTagButton } from '@/features/review-queue/components/Conf
 
 type ClusterReviewRowProps = Readonly<{
   cluster: PendingCluster
-  /** Profile default (ISO 4217) from `GET /api/review-queue` when the cluster has no file currency. */
+  /** Profile default (ISO 4217) from `GET /api/review-queue`. */
   defaultCurrency: string
+  /** From `TRANSACTION_FILE.format.currency` via cluster members when aggregate omits `currency`. */
+  fileCurrency?: string
   onConfirm: (clusterId: string, category: string) => void
   isSubmitting?: boolean
 }>
@@ -21,6 +23,7 @@ type ClusterReviewRowProps = Readonly<{
 export function ClusterReviewRow({
   cluster,
   defaultCurrency,
+  fileCurrency,
   onConfirm,
   isSubmitting,
 }: ClusterReviewRowProps) {
@@ -30,9 +33,13 @@ export function ClusterReviewRow({
   const [categoryMenuOpen, setCategoryMenuOpen] = useState(false)
   const [matchingTxOpen, setMatchingTxOpen] = useState(false)
 
+  const displayCurrency = resolveCurrencyCode(
+    cluster.currency,
+    fileCurrency ?? defaultCurrency,
+  )
   const totalFormatted = formatCurrencyAmount(
     cluster.total_amount,
-    resolveCurrencyCode(cluster.currency, defaultCurrency),
+    displayCurrency,
   )
 
   return (
@@ -79,7 +86,7 @@ export function ClusterReviewRow({
             type="button"
             variant="secondary"
             className="mt-1 w-full sm:w-auto"
-            onClick={() => setMatchingTxOpen(true)}
+            onClick={() => startTransition(() => setMatchingTxOpen(true))}
           >
             View matching transactions
           </Button>
@@ -106,6 +113,7 @@ export function ClusterReviewRow({
       {matchingTxOpen ? (
         <ClusterMatchingTransactionsDialog
           clusterId={cluster.cluster_id}
+          currencyCode={displayCurrency}
           onClose={() => setMatchingTxOpen(false)}
         />
       ) : null}

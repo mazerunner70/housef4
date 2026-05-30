@@ -58,6 +58,8 @@ export type Transaction = {
   pairing_id?: string
   pairing_source?: string
   pairing_confidence?: string
+  /** ISO 4217 from the import file batch when stored on the transaction row. */
+  currency?: string
 }
 
 export type TransactionsResponse = {
@@ -111,6 +113,8 @@ export type ImportParseResult = {
   newClustersTouched?: number
   /** Id of the persisted `TRANSACTION_FILE` record for this run. */
   importFileId: string
+  /** ISO 4217 resolved at import (file → prior account file → profile default). */
+  currency: string
   /** Detected from filename / MIME; echoed by `POST /api/imports` when wired. */
   sourceFormat?: ImportSourceFormat
   /** Import sign normalization (canonical: negative = from account, positive = into account). */

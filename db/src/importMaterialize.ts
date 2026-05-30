@@ -79,6 +79,8 @@ function importTransactionToDynamoItem(
     if (r.pairing_source !== undefined) item.pairing_source = r.pairing_source;
     if (r.pairing_confidence !== undefined) item.pairing_confidence = r.pairing_confidence;
   }
+  const cur = r.currency?.trim().toUpperCase();
+  if (cur && /^[A-Z]{3}$/.test(cur)) item.currency = cur;
   return item;
 }
 

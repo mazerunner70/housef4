@@ -3,18 +3,14 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 
 import { Spinner } from '@/components/ui/Spinner'
+import { useImportFileCurrency } from '@/hooks/useImportFileCurrency'
 import { useTransactionsByImportFile } from '@/hooks/useTransactions'
+import { formatCurrencyAmount } from '@/lib/formatCurrency'
 import type { Transaction } from '@/lib/types'
 import { cn } from '@/lib/cn'
 
 type ViewMode = 'date' | 'cluster' | 'category'
 type DateOrder = 'asc' | 'desc'
-
-const money = new Intl.NumberFormat(undefined, {
-  style: 'currency',
-  currency: 'USD',
-  maximumFractionDigits: 2,
-})
 
 function shortClusterLabel(clusterId: string): string {
   if (clusterId.length <= 14) return clusterId
@@ -62,7 +58,12 @@ function groupByCluster(
 function TransactionRow({
   t,
   showCategory,
-}: Readonly<{ t: Transaction; showCategory: boolean }>) {
+  currencyCode,
+}: Readonly<{
+  t: Transaction
+  showCategory: boolean
+  currencyCode: string
+}>) {
   const hasCategory = t.category.trim().length > 0
   return (
     <li className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
@@ -88,7 +89,7 @@ function TransactionRow({
             : 'tabular-nums text-emerald-400/90'
         }
       >
-        {money.format(t.amount)}
+        {formatCurrencyAmount(t.amount, currencyCode)}
       </span>
     </li>
   )
@@ -131,6 +132,7 @@ export function ImportTransactionsReviewPage() {
     searchParams.get('transactionFileId')?.trim() || undefined
 
   const query = useTransactionsByImportFile(transactionFileId)
+  const currencyCode = useImportFileCurrency(transactionFileId)
 
   const batch = useMemo(
     () => query.data?.transactions ?? [],
@@ -306,7 +308,12 @@ export function ImportTransactionsReviewPage() {
       {viewMode === 'date' && (
         <ul className="space-y-1 rounded-xl border border-[var(--color-border)] bg-white/[0.03] p-4">
           {sortedByDate.map((t) => (
-            <TransactionRow key={t.id} t={t} showCategory />
+            <TransactionRow
+              key={t.id}
+              t={t}
+              showCategory
+              currencyCode={currencyCode}
+            />
           ))}
         </ul>
       )}
@@ -336,7 +343,12 @@ export function ImportTransactionsReviewPage() {
                 </summary>
                 <ul className="space-y-1 border-t border-[var(--color-border)] px-4 py-3">
                   {rows.map((t) => (
-                    <TransactionRow key={t.id} t={t} showCategory />
+                    <TransactionRow
+                      key={t.id}
+                      t={t}
+                      showCategory
+                      currencyCode={currencyCode}
+                    />
                   ))}
                 </ul>
               </details>
@@ -404,6 +416,7 @@ export function ImportTransactionsReviewPage() {
                               key={t.id}
                               t={t}
                               showCategory={false}
+                              currencyCode={currencyCode}
                             />
                           ))}
                         </ul>
