@@ -37,7 +37,7 @@ REGION="${AWS_REGION:-$(terraform -chdir="$TF_DIR" output -raw aws_region)}"
   export VITE_COGNITO_REGION="$REGION"
   export VITE_COGNITO_USER_POOL_ID="$POOL"
   export VITE_COGNITO_CLIENT_ID="$CLIENT"
-  pnpm --filter frontend build
+  pnpm --filter ./frontend build
 )
 
 echo

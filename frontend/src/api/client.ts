@@ -314,6 +314,39 @@ export async function getTransactionFiles(): Promise<TransactionFilesResponse> {
   return fetchJson<TransactionFilesResponse>('/api/transaction-files')
 }
 
+export type PatchTransactionFileCurrencyBody = {
+  currency: string
+  setDefaultCurrency?: boolean
+}
+
+export type PatchTransactionFileCurrencyResult = {
+  currency: string
+  transactions_updated: number
+  clusters_rebuilt: number
+  profile_default_updated: boolean
+}
+
+/** `PATCH /api/transaction-files/:importFileId` — update batch currency post-import. */
+export async function patchTransactionFileCurrency(
+  importFileId: string,
+  body: PatchTransactionFileCurrencyBody,
+): Promise<PatchTransactionFileCurrencyResult> {
+  const id = importFileId.trim()
+  return fetchJson<PatchTransactionFileCurrencyResult>(
+    `/api/transaction-files/${encodeURIComponent(id)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        currency: body.currency,
+        ...(body.setDefaultCurrency === true
+          ? { set_default_currency: true }
+          : {}),
+      }),
+    },
+  )
+}
+
 export async function getAccounts(): Promise<AccountsResponse> {
   return fetchJson<AccountsResponse>('/api/accounts')
 }

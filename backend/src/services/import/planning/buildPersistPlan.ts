@@ -138,6 +138,7 @@ export function insertsFromNewRows(
   assignments: Assignment[],
   parsedLength: number,
   pairingByLegId?: Readonly<Record<string, TransferPairingAssignment>>,
+  importCurrency?: string,
 ): ImportTransactionInput[] {
   const nExisting = sources.length - parsedLength;
   const newRows = map(
@@ -171,6 +172,7 @@ export function insertsFromNewRows(
           pairing_source: pairing.pairing_source,
           pairing_confidence: pairing.pairing_confidence,
         }),
+        ...(importCurrency && { currency: importCurrency }),
       };
     },
   );
@@ -197,6 +199,7 @@ export type BuildPersistPlanParams = Readonly<{
   existing: TransactionRecord[];
   pairingByLegId: Readonly<Record<string, TransferPairingAssignment>>;
   pipeline: ClusterPipelineResult;
+  importCurrency?: string;
 }>;
 
 /** §4.2 stage 9 — assemble planning output from stages 7–8 artefacts. */
@@ -215,6 +218,7 @@ export function buildPersistPlan(params: BuildPersistPlanParams): PersistPlan {
     assignments,
     parsedLength,
     pairingByLegId,
+    params.importCurrency,
   );
   const retiredClusterIds = computeRetiredClusterIds(existing, assignments);
   const summary = summarizeInserts(toInsert, parsedLength);

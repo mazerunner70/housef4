@@ -5,8 +5,10 @@
   "description": "Monorepo for housef4 project",
   "scripts": {
     "dev": "pnpm -r run dev",
+    "dev:frontend": "pnpm --filter ./frontend dev",
     "build": "pnpm -r run build",
     "test": "pnpm -r run test",
+    "nosql-workbench": "bash scripts/start-nosql-workbench.sh",
     "build-deploy:local": "bash scripts/setup-local-dev.sh",
     "build-deploy:local:fresh": "bash scripts/setup-local-dev-fresh.sh",
     "test:auth:local": "bash scripts/test-local-auth-curl.sh",

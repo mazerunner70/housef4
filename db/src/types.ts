@@ -42,6 +42,8 @@ export interface TransactionRecord {
   pairing_confidence?: string;
   /** Import file id for the `TRANSACTION_FILE` row that created this transaction (same id as in `FILE#…` / `importFileId`). */
   transaction_file_id: string;
+  /** ISO 4217 from the import file batch; denormalized from `TRANSACTION_FILE.format.currency`. */
+  currency?: string;
 }
 
 /** Partial update applied to existing transactions after a re-clustering import. */
@@ -161,6 +163,8 @@ export interface ImportTransactionInput {
   pairing_id?: string;
   pairing_source?: string;
   pairing_confidence?: string;
+  /** ISO 4217 from the import file batch (`format.currency`). */
+  currency?: string;
 }
 
 export interface ImportIngestResult {
@@ -186,7 +190,10 @@ export interface TransactionFileSource {
  */
 export interface TransactionFileFormat {
   source_format?: string;
-  /** ISO 4217 when known (e.g. from OFX `CURDEF`), for display. */
+  /**
+   * ISO 4217 for this import batch. Set at ingest via `resolveImportCurrency`
+   * (file hint → prior file for account → profile default).
+   */
   currency?: string;
   /**
    * When true, import applied `-file_amount` into stored canonical `amount` for this run.

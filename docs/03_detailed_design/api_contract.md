@@ -42,6 +42,7 @@ Accepts a bank or PFM export file, parses it server-side into normalized transac
   "importFileId": "550e8400-e29b-41d4-a716-446655440000",
   "existingTransactionsUpdated": 12,
   "newClustersTouched": 4,
+  "currency": "USD",
   "amountNegation": {
     "applied": true,
     "suggestInterest": true,
@@ -60,6 +61,7 @@ Optional fields are omitted when not applicable (e.g. `sourceFormat` when unknow
 | `unknownMerchants` | number | Rows requiring cluster review (feeds review queue). |
 | `sourceFormat` | string (optional) | One of: `csv`, `ofx`, `qfx`, `qif`. Omitted if the server cannot determine the format. |
 | `importFileId` | string | Id of the persisted **transaction file** record for this import (see [`database/data_model.md`](./database/data_model.md) `TRANSACTION_FILE`). |
+| `currency` | string | ISO 4217 resolved at import (file hint → prior file for same account → profile `default_currency`, else `USD`). Stored on **`TRANSACTION_FILE.format.currency`**; editable via **`PATCH /api/transaction-files/:id`**. |
 | `existingTransactionsUpdated` | number (optional) | Existing rows whose cluster or embeddings changed. |
 | `newClustersTouched` | number (optional) | Distinct cluster ids in the new rows. |
 | `amountNegation` | object (optional) | **`applied`**: signs were negated for canonical import; **`suggestInterest`**: interest-line heuristic favored negation; **`suggestPriorImport`**: latest prior import for this account recorded `format.amount_negated`; **`explicitOverride`**: `negate_amounts` was set in the multipart request. |
@@ -126,6 +128,37 @@ When blob storage is **`filesystem`** or **`s3`** ([`import_file_blob_storage.md
 When **`IMPORT_BLOB_BACKEND`** is **`off`**, no blob is attempted (legacy behaviour).
 
 After a successful import, subsequent **`GET /api/metrics`**, **`GET /api/transactions`**, **`GET /api/review-queue`**, **`GET /api/accounts`**, and **`GET /api/transaction-files`** responses must reflect the new data (including any new account).
+
+### Post-import currency (`PATCH /api/transaction-files/:importFileId`)
+
+Updates **`TRANSACTION_FILE.format.currency`**, stamps **`currency`** on all transactions created in that import (**GSI2**), rebuilds affected **`CLUSTER#…`** aggregates, and optionally sets profile **`default_currency`** for future imports.
+
+**Request** — JSON body:
+
+```json
+{
+  "currency": "EUR",
+  "set_default_currency": true
+}
+```
+
+| Field | Type | Notes |
+|--------|------|--------|
+| `currency` | string | Required; 3-letter ISO 4217 (case-insensitive on input, stored uppercase). |
+| `set_default_currency` | boolean (optional) | When **`true`**, also updates **`PROFILE.default_currency`**. |
+
+**Response `200`:**
+
+```json
+{
+  "currency": "EUR",
+  "transactions_updated": 340,
+  "clusters_rebuilt": 42,
+  "profile_default_updated": true
+}
+```
+
+**Errors:** **`400`** invalid body or currency; **`404`** unknown **`importFileId`** for this user.
 
 ### SPA client obligations (imports and `cluster_id`)
 

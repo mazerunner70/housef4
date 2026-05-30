@@ -19,14 +19,15 @@ import {
   assertNoDuplicateBlobImport,
   buildImportOrchestrationResponse,
   buildTransactionFileInput,
-  parseAccountSelector,
+  parseImportAccountSelection,
   parseImportUpload,
   persistImportResult,
   resolveAccountAfterLock,
   runImportPlanningStages,
-  validateAccountSelector,
+  validateImportAccountSelection,
   validateExistingAccountBeforeLock,
 } from './importOrchestrationSteps';
+import { resolveImportCurrency } from './resolveImportCurrency';
 import type { ImportStageTracer } from './importStageTracing';
 import { createImportStageTracer } from './importStageTracing';
 import type { ExtractedImportUpload } from './ingress/multipartFile';
@@ -52,15 +53,15 @@ export async function executeImportOrchestration(
   const { userId, repo, extracted } = params;
   const tracer = params.tracer ?? createImportStageTracer({ userId });
   const log = getLog();
-  const selector = parseAccountSelector(extracted);
+  const accountSelection = parseImportAccountSelection(extracted);
 
   try {
-    validateAccountSelector(selector);
+    validateImportAccountSelection(accountSelection, extracted);
     const contentSha256 = await tracer.run('2b', () =>
       assertNoDuplicateBlobImport(repo, userId, extracted.file.buffer),
     );
     await tracer.run('2', () =>
-      validateExistingAccountBeforeLock(repo, userId, selector),
+      validateExistingAccountBeforeLock(repo, userId, accountSelection),
     );
     const parsedUpload = await tracer.run('3', async () => parseImportUpload(extracted));
     tracer.setContext({ rowCount: parsedUpload.rows.length });
@@ -80,7 +81,7 @@ export async function executeImportOrchestration(
     let persistStarted = false;
     try {
       const accountId = await tracer.run('2', () =>
-        resolveAccountAfterLock(repo, userId, selector),
+        resolveAccountAfterLock(repo, userId, accountSelection, extracted),
       );
       const amountNegation = await tracer.run('4', () =>
         applyAmountNegationPolicy(
@@ -92,11 +93,17 @@ export async function executeImportOrchestration(
         ),
       );
       const parsed = { ...parsedUpload, rows: amountNegation.rows };
+      const importCurrency = await resolveImportCurrency(
+        repo,
+        userId,
+        accountId,
+        parsed.currency,
+      );
       const plan = await runImportPlanningStages(
         userId,
         repo,
         accountId,
-        parsed,
+        { ...parsed, currency: importCurrency },
         tracer,
       );
 
@@ -106,6 +113,7 @@ export async function executeImportOrchestration(
         contentSha256,
         extracted,
         parsed,
+        importCurrency,
         amountNegated: amountNegation.applied,
         importStartedAt,
         importCompletedAt: Date.now(),
@@ -119,7 +127,7 @@ export async function executeImportOrchestration(
         plan,
         importFileId,
         importStartedAt,
-        importCurrency: parsed.currency,
+        importCurrency,
         transactionFileInput,
         extracted,
         contentSha256,
@@ -143,6 +151,7 @@ export async function executeImportOrchestration(
         plan,
         importFileId,
         parsed,
+        importCurrency,
         amountNegation,
       });
     } catch (e) {

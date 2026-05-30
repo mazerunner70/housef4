@@ -60,6 +60,9 @@ export async function getTransactionsPayload(
       if (t.file_amount !== undefined) {
         row.file_amount = t.file_amount;
       }
+      if (t.currency !== undefined && t.currency !== '') {
+        row.currency = t.currency;
+      }
       return row;
     }),
   };

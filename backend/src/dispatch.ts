@@ -6,6 +6,7 @@ import { postImportPayload } from './handlers/imports';
 import { getMePayload } from './handlers/me';
 import { getMetricsPayload } from './handlers/metrics';
 import { getReviewQueuePayload } from './handlers/reviewQueue';
+import { patchTransactionFileCurrencyPayload } from './handlers/patchTransactionFileCurrency';
 import { getTransactionFilesPayload } from './handlers/transactionFiles';
 import { postTagRulePayload } from './handlers/tagRule';
 import { getTransactionsCsvExport } from './handlers/transactionsCsvExport';
@@ -37,6 +38,14 @@ function apiRouteTail(normalizedPath: string): string[] {
 function matchesApiTail(normalizedPath: string, tail: string[]): boolean {
   const t = apiRouteTail(normalizedPath);
   return t.length === tail.length && tail.every((seg, i) => t[i] === seg);
+}
+
+/** `/api/transaction-files/<importFileId>` — returns id or null. */
+function transactionFileIdFromPath(normalizedPath: string): string | null {
+  const t = apiRouteTail(normalizedPath);
+  if (t.length !== 2 || t[0] !== 'transaction-files') return null;
+  const id = t[1]?.trim();
+  return id ? id : null;
 }
 
 /** True for `/api/...` routes that are not public (health). Matches API Gateway JWT on `ANY /api/{proxy+}`. */
@@ -148,6 +157,11 @@ interface AuthenticatedPostRoute {
   handler: (uid: string, req: InternalRequest) => Promise<InternalResponse>;
 }
 
+interface AuthenticatedPatchRoute {
+  routeLog: string;
+  handler: (uid: string, req: InternalRequest) => Promise<InternalResponse>;
+}
+
 const authenticatedPostRoutes: AuthenticatedPostRoute[] = [
   {
     tail: ['imports'],
@@ -175,6 +189,24 @@ const authenticatedPostRoutes: AuthenticatedPostRoute[] = [
   },
 ];
 
+const authenticatedPatchRoutes: AuthenticatedPatchRoute[] = [
+  {
+    routeLog: 'transaction-files/currency',
+    handler: async (uid, req) => {
+      const importFileId = transactionFileIdFromPath(req.path);
+      if (!importFileId) {
+        return jsonResponse(404, { error: 'Not Found' });
+      }
+      const body = await patchTransactionFileCurrencyPayload(
+        uid,
+        importFileId,
+        req.rawBody,
+      );
+      return jsonResponse(200, body);
+    },
+  },
+];
+
 async function matchAuthenticatedRoute(
   method: string,
   path: string,
@@ -192,6 +224,14 @@ async function matchAuthenticatedRoute(
   if (method === 'POST') {
     for (const r of authenticatedPostRoutes) {
       if (matchesApiTail(path, r.tail)) {
+        const response = await r.handler(uid, req);
+        return { response, routeLog: r.routeLog };
+      }
+    }
+  }
+  if (method === 'PATCH') {
+    for (const r of authenticatedPatchRoutes) {
+      if (transactionFileIdFromPath(path)) {
         const response = await r.handler(uid, req);
         return { response, routeLog: r.routeLog };
       }

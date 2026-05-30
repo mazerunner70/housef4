@@ -23,7 +23,7 @@ import { computeIngestTransferPairings } from '../pairing';
 export type ImportPlanningContext = Readonly<{
   /** Financial account this file is imported into (`ACCOUNT#…`). */
   importAccountId: string;
-  /** ISO 4217 when known from the parsed file (transfer pairing only). */
+  /** Resolved batch currency (file hint → prior account file → profile default). */
   importCurrency?: string;
   /** §4.2 stage 5 output; `newTransactionIds[i]` ↔ `parsed[i]`. */
   newTransactionIds: readonly string[];
@@ -127,6 +127,7 @@ export async function runImportPlanning(
     existing,
     pairingByLegId,
     pipeline,
+    importCurrency: ctx.importCurrency,
   };
   return traceStage(tracer, '9', () => buildPersistPlan(planParams));
 }

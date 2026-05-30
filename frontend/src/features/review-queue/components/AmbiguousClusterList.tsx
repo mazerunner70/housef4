@@ -4,6 +4,8 @@ import { ClusterReviewRow } from '@/features/review-queue/components/ClusterRevi
 type AmbiguousClusterListProps = {
   clusters: PendingCluster[]
   defaultCurrency: string
+  /** Fallback from import file metadata when `cluster.currency` is unset. */
+  currencyByClusterId: ReadonlyMap<string, string>
   onConfirm: (clusterId: string, category: string) => void
   submittingId?: string | null
 }
@@ -11,6 +13,7 @@ type AmbiguousClusterListProps = {
 export function AmbiguousClusterList({
   clusters,
   defaultCurrency,
+  currencyByClusterId,
   onConfirm,
   submittingId,
 }: AmbiguousClusterListProps) {
@@ -29,6 +32,7 @@ export function AmbiguousClusterList({
           <ClusterReviewRow
             cluster={cluster}
             defaultCurrency={defaultCurrency}
+            fileCurrency={currencyByClusterId.get(cluster.cluster_id)}
             onConfirm={onConfirm}
             isSubmitting={submittingId === cluster.cluster_id}
           />

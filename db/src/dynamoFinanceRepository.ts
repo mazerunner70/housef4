@@ -43,6 +43,7 @@ import {
   type DashboardMetricsStored,
 } from './dashboardMetrics';
 import { dbLog } from './structuredLog';
+import { normalizeIso4217Currency } from './importCurrency';
 import {
   buildClusterAggregateItem,
   type ClusterAggregateMember,
@@ -362,6 +363,21 @@ export interface FinanceRepository {
     importFileId: string,
     blob: ImportBlobRef,
   ): Promise<void>;
+  /**
+   * Update `TRANSACTION_FILE.format.currency`, stamp matching transactions, rebuild clusters.
+   * Optionally set profile `default_currency`.
+   */
+  patchTransactionFileCurrency(
+    userId: string,
+    importFileId: string,
+    currency: string,
+    opts?: { setProfileDefault?: boolean },
+  ): Promise<{
+    currency: string;
+    transactions_updated: number;
+    clusters_rebuilt: number;
+    profile_default_updated: boolean;
+  }>;
   /**
    * When a completed import stored `content_sha256`, returns metadata for duplicate-blob **409** responses.
    */
@@ -739,6 +755,10 @@ function transactionOptionalFields(
   copyOptionalTxnStringFields(item, rec);
   copyTransferPairingFields(item, rec);
   copyFileAmountIfPresent(item, rec);
+  const currency = wireString(item.currency, '');
+  if (currency !== '') {
+    rec.currency = currency;
+  }
 }
 
 function transactionItemToRecord(
@@ -813,6 +833,8 @@ function importTransactionToDynamoItem(
     if (r.pairing_source !== undefined) item.pairing_source = r.pairing_source;
     if (r.pairing_confidence !== undefined) item.pairing_confidence = r.pairing_confidence;
   }
+  const cur = normalizeIso4217Currency(r.currency);
+  if (cur) item.currency = cur;
   return item;
 }
 
@@ -1362,6 +1384,115 @@ export class DynamoFinanceRepository implements FinanceRepository {
         ConditionExpression: 'entity_type = :et',
       }),
     );
+  }
+
+  async patchTransactionFileCurrency(
+    userId: string,
+    importFileId: string,
+    currency: string,
+    opts?: { setProfileDefault?: boolean },
+  ): Promise<{
+    currency: string;
+    transactions_updated: number;
+    clusters_rebuilt: number;
+    profile_default_updated: boolean;
+  }> {
+    const normalized = normalizeIso4217Currency(currency);
+    if (!normalized) {
+      throw new Error('Invalid ISO 4217 currency code');
+    }
+
+    const pk = userPk(userId);
+    const fileKey = { PK: pk, SK: fileSk(importFileId) };
+    const fileGot = await this.doc.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: fileKey,
+      }),
+    );
+    if (fileGot.Item?.entity_type !== 'TRANSACTION_FILE') {
+      throw new Error(`Unknown transaction file ${importFileId}`);
+    }
+
+    await this.doc.send(
+      new UpdateCommand({
+        TableName: this.tableName,
+        Key: fileKey,
+        UpdateExpression: 'SET #format.#currency = :c',
+        ExpressionAttributeNames: {
+          '#format': 'format',
+          '#currency': 'currency',
+        },
+        ExpressionAttributeValues: {
+          ':c': normalized,
+          ':et': 'TRANSACTION_FILE',
+        },
+        ConditionExpression: 'entity_type = :et',
+      }),
+    );
+
+    const gsi2pk = fileTxnGsi2Pk(userId, importFileId);
+    const txnItems: Record<string, unknown>[] = [];
+    const clusterIds = new Set<string>();
+    let startKey: Record<string, unknown> | undefined;
+
+    do {
+      const res = await this.doc.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          IndexName: GSI2,
+          KeyConditionExpression: 'GSI2PK = :pk',
+          ExpressionAttributeValues: { ':pk': gsi2pk },
+          ExclusiveStartKey: startKey,
+        }),
+      );
+      for (const item of res.Items ?? []) {
+        const row = item as Record<string, unknown>;
+        if (row.entity_type !== 'TRANSACTION') continue;
+        const cid = wireString(row.cluster_id, '');
+        if (cid) clusterIds.add(cid);
+        txnItems.push({ ...row, currency: normalized });
+      }
+      startKey = res.LastEvaluatedKey as Record<string, unknown> | undefined;
+    } while (startKey);
+
+    if (txnItems.length > 0) {
+      await batchWriteAll(this.doc, this.tableName, txnItems);
+    }
+
+    const clusterIdList = [...clusterIds];
+    if (clusterIdList.length > 0) {
+      await this.rebuildClusterAggregatesAfterImport(
+        userId,
+        clusterIdList,
+        normalized,
+      );
+    }
+
+    let profile_default_updated = false;
+    if (opts?.setProfileDefault) {
+      await this.ensureProfile(userId);
+      await this.doc.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: { PK: pk, SK: PROFILE_SK },
+          UpdateExpression: 'SET default_currency = :c',
+          ExpressionAttributeValues: {
+            ':c': normalized,
+            ':et': 'PROFILE',
+          },
+          ConditionExpression: 'entity_type = :et',
+        }),
+      );
+      profile_default_updated = true;
+    }
+
+    return {
+      currency: normalized,
+      transactions_updated: txnItems.length,
+      clusters_rebuilt: clusterIdList.length,
+      profile_default_updated,
+    };
   }
 
   async findDuplicateBlobImport(
