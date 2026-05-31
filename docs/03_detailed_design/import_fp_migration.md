@@ -383,6 +383,8 @@ difference(uniq(map(existing, 'cluster_id')), uniq(map(assignments, 'cluster_id'
 | `traceStage` in orchestration + planning | Removes tracer boilerplate |
 | Embedder injection at planning boundary | Clearer test seam (§4.7 Q3) |
 
+**Done when:** `traceStage` used at all orchestration stage boundaries; optional `embedder` threads from `executeImportOrchestration` → `runImportPlanning`; §9 success criteria checked off.
+
 **Defer:** orchestration **`flow`** DSL until types stabilise (§4.5 step 5).
 
 ---

@@ -1,15 +1,43 @@
 import * as http from 'node:http';
 import { randomUUID } from 'node:crypto';
 
+import flow from 'lodash/flow';
+
 import { resolveLocalUserId } from '../auth/resolveLocalUserId';
+import type { AppConfig } from '../config';
 import { loadConfig } from '../config';
 import { dispatch } from '../dispatch';
 import { createLogger } from '../logger';
 import { getLog, runWithRequestLogAsync } from '../requestLogContext';
-import type { InternalRequest } from '../types';
+import type { InternalRequest, InternalResponse } from '../types';
+import {
+  bodyFieldsFromBuffer,
+  methodMayHaveBody,
+  normalizeHeaderValues,
+  queryFromUrl,
+  serializeResponsePayload,
+} from './httpCommon';
 
 const PORT = Number(process.env.PORT) || 3000;
 const MAX_BODY_BYTES = 50 * 1024 * 1024;
+
+type LocalRequestLine = {
+  method: string;
+  path: string;
+  query?: Record<string, string | undefined>;
+};
+
+const parseLocalRequestLine = flow(
+  (req: http.IncomingMessage) => ({
+    method: req.method ?? 'GET',
+    url: new URL(req.url ?? '/', 'http://127.0.0.1'),
+  }),
+  ({ method, url }) => ({
+    method,
+    path: url.pathname,
+    query: queryFromUrl(url),
+  }),
+);
 
 function readBodyBuffer(req: http.IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -29,83 +57,97 @@ function readBodyBuffer(req: http.IncomingMessage): Promise<Buffer> {
   });
 }
 
-function incomingHeaders(
+async function toLocalInternalRequest(
   req: http.IncomingMessage,
-): Record<string, string | undefined> {
-  const out: Record<string, string | undefined> = {};
-  for (const [k, v] of Object.entries(req.headers)) {
-    out[k] = Array.isArray(v) ? v.join(', ') : v;
+  cfg: AppConfig,
+  line: LocalRequestLine,
+): Promise<InternalRequest> {
+  let rawBody = '';
+  let bodyBuffer: Buffer | undefined;
+  if (methodMayHaveBody(line.method)) {
+    const fields = bodyFieldsFromBuffer(await readBodyBuffer(req));
+    rawBody = fields.rawBody;
+    bodyBuffer = fields.bodyBuffer;
   }
-  return out;
+
+  return {
+    method: line.method,
+    path: line.path,
+    query: line.query,
+    headers: normalizeHeaderValues(req.headers),
+    rawBody,
+    bodyBuffer,
+    userId: resolveLocalUserId(cfg),
+  };
 }
 
-export async function startLocalServer(): Promise<http.Server> {
-  const cfg = loadConfig();
-  const boot = createLogger({ phase: 'localServer.boot' });
-  boot.info('localServer.listen', {
+function writeNodeResponse(res: http.ServerResponse, out: InternalResponse): void {
+  res.writeHead(out.statusCode, { ...out.headers });
+  res.end(serializeResponsePayload(out.body));
+}
+
+function respondUnhandledError(res: http.ServerResponse, err: unknown): void {
+  createLogger({ phase: 'localServer' }).error('http.request.unhandled', {
+    err: err instanceof Error ? err.message : String(err),
+    errName: err instanceof Error ? err.name : undefined,
+    stack: err instanceof Error ? err.stack : undefined,
+  });
+  if (res.headersSent) {
+    res.end();
+    return;
+  }
+  res.writeHead(500, { 'content-type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Internal Server Error' }));
+}
+
+async function handleLocalRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  cfg: AppConfig,
+): Promise<void> {
+  await runWithRequestLogAsync(randomUUID(), async () => {
+    const log = getLog();
+    const line = parseLocalRequestLine(req);
+    log.info('http.request', { method: line.method, path: line.path });
+
+    const internal = await toLocalInternalRequest(req, cfg, line);
+    const out = await dispatch(internal);
+
+    log.info('http.response', {
+      statusCode: out.statusCode,
+      method: line.method,
+      path: line.path,
+    });
+    writeNodeResponse(res, out);
+  });
+}
+
+function listenAsync(server: http.Server, port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.listen(port, () => resolve());
+    server.on('error', reject);
+  });
+}
+
+function logBoot(cfg: AppConfig): void {
+  createLogger({ phase: 'localServer.boot' }).info('localServer.listen', {
     appEnv: cfg.appEnv,
     port: PORT,
     dynamodbTableName: cfg.dynamodbTableName ?? null,
     dynamodbEndpoint: cfg.dynamodbEndpoint ?? null,
     awsRegion: cfg.awsRegion ?? process.env.AWS_REGION ?? 'eu-west-2',
   });
+}
 
-  const server = http.createServer(async (req, res) => {
-    try {
-      await runWithRequestLogAsync(randomUUID(), async () => {
-        const log = getLog();
-        const urlRaw = req.url ?? '/';
-        const method = req.method ?? 'GET';
-        const url = new URL(urlRaw, 'http://127.0.0.1');
-        const pathOnly = url.pathname;
-        const query: Record<string, string | undefined> = {};
-        url.searchParams.forEach((value, key) => {
-          query[key] = value;
-        });
-        log.info('http.request', { method, path: pathOnly });
+export async function startLocalServer(): Promise<http.Server> {
+  const cfg = loadConfig();
+  logBoot(cfg);
 
-        let rawBody = '';
-        let bodyBuffer: Buffer | undefined;
-        if (method !== 'GET' && method !== 'HEAD') {
-          bodyBuffer = await readBodyBuffer(req);
-          rawBody = bodyBuffer.length ? bodyBuffer.toString('utf8') : '';
-        }
-        const internal: InternalRequest = {
-          method,
-          path: pathOnly,
-          query: Object.keys(query).length > 0 ? query : undefined,
-          headers: incomingHeaders(req),
-          rawBody,
-          bodyBuffer,
-          userId: resolveLocalUserId(cfg),
-        };
-        const out = await dispatch(internal);
-        log.info('http.response', { statusCode: out.statusCode, method, path: pathOnly });
-        const headerPairs: Record<string, string | number> = { ...out.headers };
-        res.writeHead(out.statusCode, headerPairs);
-        const payload =
-          typeof out.body === 'string' ? out.body : JSON.stringify(out.body);
-        res.end(payload);
-      });
-    } catch (err) {
-      createLogger({ phase: 'localServer' }).error('http.request.unhandled', {
-        err: err instanceof Error ? err.message : String(err),
-        errName: err instanceof Error ? err.name : undefined,
-        stack: err instanceof Error ? err.stack : undefined,
-      });
-      if (res.headersSent) {
-        res.end();
-      } else {
-        res.writeHead(500, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Internal Server Error' }));
-      }
-    }
+  const server = http.createServer((req, res) => {
+    handleLocalRequest(req, res, cfg).catch((err) => respondUnhandledError(res, err));
   });
 
-  await new Promise<void>((resolve, reject) => {
-    server.listen(PORT, () => resolve());
-    server.on('error', reject);
-  });
+  await listenAsync(server, PORT);
 
   createLogger({ phase: 'localServer.boot' }).info('localServer.ready', {
     url: `http://localhost:${PORT}/api/health`,

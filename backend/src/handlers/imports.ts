@@ -9,6 +9,7 @@ import {
   MultipartFileTooLargeError,
 } from '../services/import/ingress/multipartFile';
 import { createImportStageTracer } from '../services/import/importStageTracing';
+import { traceStage } from '../services/import/utils/traceStage';
 import type { InternalRequest } from '../types';
 
 /**
@@ -30,7 +31,7 @@ export async function postImportPayload(
   // §4.2 stage 1 — Ingress (`extractImportMultipart`).
   let extracted;
   try {
-    extracted = await tracer.run('1', () =>
+    extracted = await traceStage(tracer, '1', () =>
       extractImportMultipart(req.headers, buf),
     );
   } catch (e) {

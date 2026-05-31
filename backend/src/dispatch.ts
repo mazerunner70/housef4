@@ -16,44 +16,35 @@ import { normalizeApiPath } from './pathNormalize';
 import { getLog } from './requestLogContext';
 import type { InternalRequest, InternalResponse } from './types';
 
-function isHealthPath(normalizedPath: string): boolean {
+function pathnameSegments(normalizedPath: string): string[] {
   const pathname = normalizedPath.split('?')[0] ?? '';
-  const segments = pathname.split('/').filter((s) => s.length > 0);
-  const apiIdx = segments.indexOf('api');
-  if (apiIdx < 0) return false;
-  return (
-    segments[apiIdx + 1] === 'health' && apiIdx + 2 === segments.length
-  );
+  return pathname.split('/').filter((s) => s.length > 0);
 }
 
 /** Path segments after `/api/` for the normalized path (e.g. `['rules','tag']`). */
 function apiRouteTail(normalizedPath: string): string[] {
-  const pathname = normalizedPath.split('?')[0] ?? '';
-  const segments = pathname.split('/').filter((s) => s.length > 0);
+  const segments = pathnameSegments(normalizedPath);
   const apiIdx = segments.indexOf('api');
-  if (apiIdx < 0) return [];
-  return segments.slice(apiIdx + 1);
+  return apiIdx < 0 ? [] : segments.slice(apiIdx + 1);
 }
 
-function matchesApiTail(normalizedPath: string, tail: string[]): boolean {
-  const t = apiRouteTail(normalizedPath);
-  return t.length === tail.length && tail.every((seg, i) => t[i] === seg);
-}
+const isHealthPath = (normalizedPath: string): boolean => {
+  const tail = apiRouteTail(normalizedPath);
+  return tail.length === 1 && tail[0] === 'health';
+};
+
+const tailKey = (tail: string[]): string => tail.join('/');
 
 /** `/api/transaction-files/<importFileId>` — returns id or null. */
-function transactionFileIdFromPath(normalizedPath: string): string | null {
-  const t = apiRouteTail(normalizedPath);
-  if (t.length !== 2 || t[0] !== 'transaction-files') return null;
-  const id = t[1]?.trim();
-  return id ? id : null;
+function transactionFileIdFromTail(tail: string[]): string | null {
+  if (tail.length !== 2 || tail[0] !== 'transaction-files') return null;
+  const id = tail[1]?.trim();
+  return id || null;
 }
 
 /** True for `/api/...` routes that are not public (health). Matches API Gateway JWT on `ANY /api/{proxy+}`. */
-function requiresAuthenticatedApiUser(normalizedPath: string): boolean {
-  const pathname = normalizedPath.split('?')[0] ?? '';
-  if (!pathname.startsWith('/api/')) return false;
-  return !isHealthPath(normalizedPath);
-}
+const requiresAuthenticatedApiUser = (normalizedPath: string): boolean =>
+  (normalizedPath.split('?')[0] ?? '').startsWith('/api/') && !isHealthPath(normalizedPath);
 
 function jsonResponse(
   statusCode: number,
@@ -67,6 +58,9 @@ function jsonResponse(
   };
 }
 
+const jsonOk = (body: unknown, extraHeaders?: Record<string, string>) =>
+  jsonResponse(200, body, extraHeaders);
+
 function csvAttachmentResponse(statusCode: number, csvBody: string, filename: string): InternalResponse {
   return {
     statusCode,
@@ -78,134 +72,121 @@ function csvAttachmentResponse(statusCode: number, csvBody: string, filename: st
   };
 }
 
-interface AuthenticatedGetRoute {
+type RouteHandler = (uid: string, req: InternalRequest) => Promise<InternalResponse>;
+
+type MatchedRoute = {
+  routeLog: string;
+  handler: RouteHandler;
+};
+
+type TailRouteSpec = MatchedRoute & {
+  method: string;
   tail: string[];
-  routeLog: string;
-  handler: (uid: string, req: InternalRequest) => Promise<InternalResponse>;
-}
+};
 
-const authenticatedGetRoutes: AuthenticatedGetRoute[] = [
-  {
-    tail: ['me'],
-    routeLog: 'me',
-    handler: async (uid) => jsonResponse(200, getMePayload(uid)),
-  },
-  {
-    tail: ['metrics'],
-    routeLog: 'metrics',
-    handler: async (uid) =>
-      jsonResponse(200, await getMetricsPayload(uid)),
-  },
-  {
-    tail: ['accounts'],
-    routeLog: 'accounts',
-    handler: async (uid) =>
-      jsonResponse(200, await getAccountsPayload(uid)),
-  },
-  {
-    tail: ['transactions', 'export'],
-    routeLog: 'transactions/export',
-    handler: async (uid, req) => {
-      const csv = await getTransactionsCsvExport(uid, req);
-      const filename = `housef4-transactions-${Date.now()}.csv`;
-      return csvAttachmentResponse(200, csv, filename);
-    },
-  },
-  {
-    tail: ['transactions'],
-    routeLog: 'transactions',
-    handler: async (uid, req) => {
-      const transactionFileId =
-        req.query?.transactionFileId?.trim() || undefined;
-      const clusterId = req.query?.clusterId?.trim() || undefined;
-      const body = await getTransactionsPayload(uid, {
-        transactionFileId,
-        clusterId,
-      });
-      return jsonResponse(200, body);
-    },
-  },
-  {
-    tail: ['review-queue'],
-    routeLog: 'review-queue',
-    handler: async (uid) =>
-      jsonResponse(200, await getReviewQueuePayload(uid)),
-  },
-  {
-    tail: ['transaction-files'],
-    routeLog: 'transaction-files',
-    handler: async (uid) =>
-      jsonResponse(200, await getTransactionFilesPayload(uid)),
-  },
-  {
-    tail: ['backup', 'export'],
-    routeLog: 'backup/export',
-    handler: async (uid) => {
-      const body = await getBackupExportPayload(uid);
-      const filename = `housef4-backup-${body.exported_at}.json`;
-      return jsonResponse(200, body, {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Content-Disposition': `attachment; filename="${filename}"`,
-      });
-    },
-  },
-];
+type CustomRouteSpec = MatchedRoute & {
+  method: string;
+  match: (tail: string[]) => boolean;
+};
 
-interface AuthenticatedPostRoute {
-  tail: string[];
-  routeLog: string;
-  handler: (uid: string, req: InternalRequest) => Promise<InternalResponse>;
-}
+type RouteSpec = TailRouteSpec | CustomRouteSpec;
 
-interface AuthenticatedPatchRoute {
-  routeLog: string;
-  handler: (uid: string, req: InternalRequest) => Promise<InternalResponse>;
-}
+const route = (
+  method: string,
+  routeLog: string,
+  tail: string[],
+  handler: RouteHandler,
+): TailRouteSpec => ({ method, routeLog, tail, handler });
 
-const authenticatedPostRoutes: AuthenticatedPostRoute[] = [
-  {
-    tail: ['imports'],
-    routeLog: 'imports',
-    handler: async (uid, req) =>
-      jsonResponse(200, await postImportPayload(uid, req)),
-  },
-  {
-    tail: ['rules', 'tag'],
-    routeLog: 'rules/tag',
-    handler: async (uid, req) =>
-      jsonResponse(200, await postTagRulePayload(uid, req.rawBody)),
-  },
-  {
-    tail: ['backup', 'restore'],
-    routeLog: 'backup/restore',
-    handler: async (uid, req) =>
-      jsonResponse(200, await postBackupRestorePayload(uid, req)),
-  },
-  {
-    tail: ['backup', 'restore', 'abort'],
-    routeLog: 'backup/restore/abort',
-    handler: async (uid) =>
-      jsonResponse(200, await postBackupRestoreAbortPayload(uid)),
-  },
-];
+const customRoute = (
+  method: string,
+  routeLog: string,
+  match: (tail: string[]) => boolean,
+  handler: RouteHandler,
+): CustomRouteSpec => ({ method, routeLog, match, handler });
 
-const authenticatedPatchRoutes: AuthenticatedPatchRoute[] = [
-  {
-    routeLog: 'transaction-files/currency',
-    handler: async (uid, req) => {
-      const importFileId = transactionFileIdFromPath(req.path);
-      if (!importFileId) {
-        return jsonResponse(404, { error: 'Not Found' });
+function compileRoutes(specs: RouteSpec[]): {
+  byMethodAndTail: Map<string, Map<string, MatchedRoute>>;
+  customByMethod: Map<string, CustomRouteSpec[]>;
+} {
+  const byMethodAndTail = new Map<string, Map<string, MatchedRoute>>();
+  const customByMethod = new Map<string, CustomRouteSpec[]>();
+
+  for (const spec of specs) {
+    if ('tail' in spec) {
+      let methodRoutes = byMethodAndTail.get(spec.method);
+      if (!methodRoutes) {
+        methodRoutes = new Map();
+        byMethodAndTail.set(spec.method, methodRoutes);
       }
-      const body = await patchTransactionFileCurrencyPayload(
-        uid,
-        importFileId,
-        req.rawBody,
-      );
-      return jsonResponse(200, body);
+      methodRoutes.set(tailKey(spec.tail), spec);
+      continue;
+    }
+    const customRoutes = customByMethod.get(spec.method) ?? [];
+    customRoutes.push(spec);
+    customByMethod.set(spec.method, customRoutes);
+  }
+
+  return { byMethodAndTail, customByMethod };
+}
+
+const syncPayload = (fn: (uid: string) => unknown): RouteHandler =>
+  async (uid) => jsonOk(fn(uid));
+
+const asyncPayloadUid = (fn: (uid: string) => Promise<unknown>): RouteHandler =>
+  async (uid) => jsonOk(await fn(uid));
+
+const asyncPayloadReq = (
+  fn: (uid: string, req: InternalRequest) => Promise<unknown>,
+): RouteHandler => async (uid, req) => jsonOk(await fn(uid, req));
+
+const queryParam = (req: InternalRequest, name: string): string | undefined =>
+  req.query?.[name]?.trim() || undefined;
+
+const authenticatedRouteSpecs: RouteSpec[] = [
+  route('GET', 'me', ['me'], syncPayload(getMePayload)),
+  route('GET', 'metrics', ['metrics'], asyncPayloadUid(getMetricsPayload)),
+  route('GET', 'accounts', ['accounts'], asyncPayloadUid(getAccountsPayload)),
+  route('GET', 'transactions/export', ['transactions', 'export'], async (uid, req) => {
+    const csv = await getTransactionsCsvExport(uid, req);
+    return csvAttachmentResponse(200, csv, `housef4-transactions-${Date.now()}.csv`);
+  }),
+  route('GET', 'transactions', ['transactions'], async (uid, req) =>
+    jsonOk(
+      await getTransactionsPayload(uid, {
+        transactionFileId: queryParam(req, 'transactionFileId'),
+        clusterId: queryParam(req, 'clusterId'),
+      }),
+    ),
+  ),
+  route('GET', 'review-queue', ['review-queue'], asyncPayloadUid(getReviewQueuePayload)),
+  route('GET', 'transaction-files', ['transaction-files'], asyncPayloadUid(getTransactionFilesPayload)),
+  route('GET', 'backup/export', ['backup', 'export'], async (uid) => {
+    const body = await getBackupExportPayload(uid);
+    return jsonOk(body, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Disposition': `attachment; filename="housef4-backup-${body.exported_at}.json"`,
+    });
+  }),
+  route('POST', 'imports', ['imports'], asyncPayloadReq(postImportPayload)),
+  route('POST', 'rules/tag', ['rules', 'tag'], async (uid, req) =>
+    jsonOk(await postTagRulePayload(uid, req.rawBody)),
+  ),
+  route('POST', 'backup/restore', ['backup', 'restore'], asyncPayloadReq(postBackupRestorePayload)),
+  route('POST', 'backup/restore/abort', ['backup', 'restore', 'abort'], asyncPayloadUid(postBackupRestoreAbortPayload)),
+  customRoute(
+    'PATCH',
+    'transaction-files/currency',
+    (tail) => transactionFileIdFromTail(tail) !== null,
+    async (uid, req) => {
+      const importFileId = transactionFileIdFromTail(apiRouteTail(normalizeApiPath(req.path)));
+      if (!importFileId) return jsonResponse(404, { error: 'Not Found' });
+      return jsonOk(await patchTransactionFileCurrencyPayload(uid, importFileId, req.rawBody));
     },
-  },
+  ),
 ];
+
+const { byMethodAndTail, customByMethod } = compileRoutes(authenticatedRouteSpecs);
 
 async function matchAuthenticatedRoute(
   method: string,
@@ -213,31 +194,47 @@ async function matchAuthenticatedRoute(
   uid: string,
   req: InternalRequest,
 ): Promise<{ response: InternalResponse; routeLog: string } | null> {
-  if (method === 'GET') {
-    for (const r of authenticatedGetRoutes) {
-      if (matchesApiTail(path, r.tail)) {
-        const response = await r.handler(uid, req);
-        return { response, routeLog: r.routeLog };
-      }
+  const tail = apiRouteTail(path);
+  const tailRoute = byMethodAndTail.get(method)?.get(tailKey(tail));
+  if (tailRoute) {
+    return { response: await tailRoute.handler(uid, req), routeLog: tailRoute.routeLog };
+  }
+
+  for (const customRouteSpec of customByMethod.get(method) ?? []) {
+    if (customRouteSpec.match(tail)) {
+      return {
+        response: await customRouteSpec.handler(uid, req),
+        routeLog: customRouteSpec.routeLog,
+      };
     }
   }
-  if (method === 'POST') {
-    for (const r of authenticatedPostRoutes) {
-      if (matchesApiTail(path, r.tail)) {
-        const response = await r.handler(uid, req);
-        return { response, routeLog: r.routeLog };
-      }
-    }
-  }
-  if (method === 'PATCH') {
-    for (const r of authenticatedPatchRoutes) {
-      if (transactionFileIdFromPath(path)) {
-        const response = await r.handler(uid, req);
-        return { response, routeLog: r.routeLog };
-      }
-    }
-  }
+
   return null;
+}
+
+function logAndReturn(
+  log: ReturnType<typeof getLog>,
+  route: string,
+  response: InternalResponse,
+): InternalResponse {
+  log.info('dispatch.response', { route, statusCode: response.statusCode });
+  return response;
+}
+
+function handleDispatchError(err: unknown): InternalResponse {
+  const log = getLog();
+  if (err instanceof HttpError) {
+    log.info('dispatch.httpError', {
+      statusCode: err.statusCode,
+      message: err.message,
+    });
+    return jsonResponse(err.statusCode, err.body);
+  }
+  log.error('dispatch.error', {
+    err: err instanceof Error ? err.message : String(err),
+    errName: err instanceof Error ? err.name : undefined,
+  });
+  return jsonResponse(500, { error: 'Internal Server Error' });
 }
 
 /**
@@ -251,9 +248,7 @@ export async function dispatch(req: InternalRequest): Promise<InternalResponse> 
     log.debug('dispatch.route', { method, path });
 
     if ((method === 'GET' || method === 'HEAD') && isHealthPath(path)) {
-      const body = await getHealthPayload();
-      log.info('dispatch.response', { route: 'health', statusCode: 200 });
-      return jsonResponse(200, body);
+      return logAndReturn(log, 'health', jsonOk(await getHealthPayload()));
     }
 
     if (requiresAuthenticatedApiUser(path)) {
@@ -265,11 +260,7 @@ export async function dispatch(req: InternalRequest): Promise<InternalResponse> 
 
       const matched = await matchAuthenticatedRoute(method, path, uid, req);
       if (matched) {
-        log.info('dispatch.response', {
-          route: matched.routeLog,
-          statusCode: matched.response.statusCode,
-        });
-        return matched.response;
+        return logAndReturn(log, matched.routeLog, matched.response);
       }
 
       log.info('dispatch.notFound', { method, path, authenticated: true });
@@ -279,17 +270,6 @@ export async function dispatch(req: InternalRequest): Promise<InternalResponse> 
     log.info('dispatch.notFound', { method, path, authenticated: false });
     return jsonResponse(404, { error: 'Not Found' });
   } catch (err) {
-    if (err instanceof HttpError) {
-      log.info('dispatch.httpError', {
-        statusCode: err.statusCode,
-        message: err.message,
-      });
-      return jsonResponse(err.statusCode, err.body);
-    }
-    log.error('dispatch.error', {
-      err: err instanceof Error ? err.message : String(err),
-      errName: err instanceof Error ? err.name : undefined,
-    });
-    return jsonResponse(500, { error: 'Internal Server Error' });
+    return handleDispatchError(err);
   }
 }

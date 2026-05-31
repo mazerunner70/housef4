@@ -7,14 +7,14 @@ import { loadConfig } from '../config';
 import { dispatch } from '../dispatch';
 import { getLog, runWithRequestLogAsync } from '../requestLogContext';
 import type { InternalRequest } from '../types';
+import { bodyFieldsFromBuffer, serializeResponsePayload } from './httpCommon';
 
 function jsonProxyResult(
   statusCode: number,
   body: unknown,
   extraHeaders: Record<string, string> = {},
 ): APIGatewayProxyResult {
-  const payload =
-    typeof body === 'string' ? body : JSON.stringify(body);
+  const payload = serializeResponsePayload(body);
   const headers =
     typeof body === 'string'
       ? { ...extraHeaders }
@@ -60,15 +60,15 @@ function getBodyBytes(event: APIGatewayEvent): Buffer {
 }
 
 function toInternalRequest(event: APIGatewayEvent): InternalRequest {
-  const bodyBuffer = getBodyBytes(event);
+  const { rawBody, bodyBuffer } = bodyFieldsFromBuffer(getBodyBytes(event));
   const qp = event.queryStringParameters;
   return {
     method: event.httpMethod ?? 'GET',
     path: event.path ?? '/',
     query: qp ? { ...qp } : undefined,
     headers: lambdaHeaders(event),
-    rawBody: bodyBuffer.length ? bodyBuffer.toString('utf8') : '',
-    bodyBuffer: bodyBuffer.length ? bodyBuffer : undefined,
+    rawBody,
+    bodyBuffer,
     userId: getAuthenticatedUserId(event),
   };
 }

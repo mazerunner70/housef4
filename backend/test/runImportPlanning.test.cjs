@@ -133,3 +133,35 @@ test('runImportPlanning — §6.0 remint retires prior cluster ids on existing r
   const remintedId = plan.toInsert[0].cluster_id;
   assert.equal(plan.clusterHints[remintedId]?.previousCategoryId, 'Food');
 });
+
+test('runImportPlanning — injected embedder bypasses model load (§4.7 Q3)', async () => {
+  let embedCalls = 0;
+  const stubEmbedder = {
+    usesModel: false,
+    embed: async () => {
+      embedCalls += 1;
+      return new Float32Array([0.1, 0.2, 0.3]);
+    },
+  };
+  const parsed = [
+    {
+      date: 1_700_000_000_000,
+      raw_merchant: 'Coffee Shop',
+      amount: -4.5,
+    },
+  ];
+
+  const plan = await runImportPlanning('user-1', parsed, {
+    importAccountId: 'acc-checking',
+    newTransactionIds: ['txn-new-1'],
+    ledgerSnapshot: {
+      transactions: [],
+      fileIdToAccountId: new Map(),
+    },
+    embedder: stubEmbedder,
+    physicalGroupLabels: [0],
+  });
+
+  assert.ok(embedCalls > 0);
+  assert.equal(plan.toInsert.length, 1);
+});

@@ -28,9 +28,11 @@ import {
   validateExistingAccountBeforeLock,
 } from './importOrchestrationSteps';
 import { resolveImportCurrency } from './resolveImportCurrency';
+import type { MerchantEmbedder } from './clustering';
 import type { ImportStageTracer } from './importStageTracing';
 import { createImportStageTracer } from './importStageTracing';
 import type { ExtractedImportUpload } from './ingress/multipartFile';
+import { traceStage } from './utils/traceStage';
 
 export type RunImportOrchestrationParams = Readonly<{
   userId: string;
@@ -39,6 +41,8 @@ export type RunImportOrchestrationParams = Readonly<{
   extracted: ExtractedImportUpload;
   /** When omitted (e.g. unit tests), stage **1** is not traced. */
   tracer?: ImportStageTracer;
+  /** Test seam — inject stub embedder at planning boundary (§4.7 Q3). */
+  embedder?: MerchantEmbedder;
 }>;
 
 /**
@@ -57,13 +61,13 @@ export async function executeImportOrchestration(
 
   try {
     validateImportAccountSelection(accountSelection, extracted);
-    const contentSha256 = await tracer.run('2b', () =>
+    const contentSha256 = await traceStage(tracer, '2b', () =>
       assertNoDuplicateBlobImport(repo, userId, extracted.file.buffer),
     );
-    await tracer.run('2', () =>
+    await traceStage(tracer, '2', () =>
       validateExistingAccountBeforeLock(repo, userId, accountSelection),
     );
-    const parsedUpload = await tracer.run('3', async () => parseImportUpload(extracted));
+    const parsedUpload = await traceStage(tracer, '3', () => parseImportUpload(extracted));
     tracer.setContext({ rowCount: parsedUpload.rows.length });
 
     const importFileId = mintImportFileId();
@@ -80,10 +84,10 @@ export async function executeImportOrchestration(
 
     let persistStarted = false;
     try {
-      const accountId = await tracer.run('2', () =>
+      const accountId = await traceStage(tracer, '2', () =>
         resolveAccountAfterLock(repo, userId, accountSelection, extracted),
       );
-      const amountNegation = await tracer.run('4', () =>
+      const amountNegation = await traceStage(tracer, '4', () =>
         applyAmountNegationPolicy(
           repo,
           userId,
@@ -105,6 +109,7 @@ export async function executeImportOrchestration(
         accountId,
         { ...parsed, currency: importCurrency },
         tracer,
+        params.embedder,
       );
 
       const transactionFileInput = buildTransactionFileInput({

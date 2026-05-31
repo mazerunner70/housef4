@@ -27,15 +27,15 @@ flowchart LR
 
 ## Story backlog
 
-| Issue | Phase | Title | Priority | Blocks |
+| Issue | Phase | Title | Priority | Status |
 | ----- | ----- | ----- | -------- | ------ |
-| [HOU-54](https://linear.app/house-f4/issue/HOU-54) | 0 | Add lodash and lodashImport re-export module | High | — |
-| [HOU-55](https://linear.app/house-f4/issue/HOU-55) | 1 | Immutable parse and canonical amount transforms | High | HOU-54 |
-| [HOU-56](https://linear.app/house-f4/issue/HOU-56) | 2 | Introduce PlanningRow model for index alignment | High | HOU-55 |
-| [HOU-57](https://linear.app/house-f4/issue/HOU-57) | 3 | Decompose cluster pass with lodash transforms | High | HOU-56 |
-| [HOU-58](https://linear.app/house-f4/issue/HOU-58) | 4 | Extract buildPersistPlan pure module | Medium | HOU-57 |
-| [HOU-59](https://linear.app/house-f4/issue/HOU-59) | 5 | Refactor pairing ingest with lodash | Medium | HOU-55 |
-| [HOU-60](https://linear.app/house-f4/issue/HOU-60) | 6 | Shell cleanup and migration doc sign-off | Low | HOU-58 |
+| [HOU-54](https://linear.app/house-f4/issue/HOU-54) | 0 | Add lodash and lodashImport re-export module | High | Done |
+| [HOU-55](https://linear.app/house-f4/issue/HOU-55) | 1 | Immutable parse and canonical amount transforms | High | Done |
+| [HOU-56](https://linear.app/house-f4/issue/HOU-56) | 2 | Introduce PlanningRow model for index alignment | High | Done |
+| [HOU-57](https://linear.app/house-f4/issue/HOU-57) | 3 | Decompose cluster pass with lodash transforms | High | Done |
+| [HOU-58](https://linear.app/house-f4/issue/HOU-58) | 4 | Extract buildPersistPlan pure module | Medium | Done |
+| [HOU-59](https://linear.app/house-f4/issue/HOU-59) | 5 | Refactor pairing ingest with lodash | Medium | Done |
+| [HOU-60](https://linear.app/house-f4/issue/HOU-60) | 6 | Shell cleanup and migration doc sign-off | Low | Done |
 
 ## Risks / assumptions
 
@@ -51,4 +51,4 @@ flowchart LR
 
 ## Maintenance
 
-When completing a phase, check off success criteria in [`import_fp_migration.md`](../../03_detailed_design/import_fp_migration.md) §9 and update implementation pointers in [`import_transaction_files.md`](../../03_detailed_design/import_transaction_files.md) if new modules are added.
+All phases complete. Success criteria are checked off in [`import_fp_migration.md`](../../03_detailed_design/import_fp_migration.md) §9. Update implementation pointers in [`import_transaction_files.md`](../../03_detailed_design/import_transaction_files.md) when adding new import modules.

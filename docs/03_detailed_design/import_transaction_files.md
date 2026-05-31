@@ -16,7 +16,7 @@ This document is the **detailed design** for the server-side import pipeline: **
 | Layer | Path | §4.2 role |
 | ----- | ---- | --------- |
 | HTTP handler | `backend/src/handlers/imports.ts` | Stage **1** ingress (`extractImportMultipart`) + delegate |
-| Orchestration (root) | `backend/src/services/import/importOrchestration.ts`, `importOrchestrationSteps.ts` | Ordered stages **2–12** |
+| Orchestration (root) | `backend/src/services/import/importOrchestration.ts`, `importOrchestrationSteps.ts` | Ordered stages **2–12** (`traceStage`; optional `embedder` DI — §4.7 Q3) |
 | Planning (root) | `backend/src/services/import/runImportPlanning.ts` | Stages **7–9** (optional `embedder` DI — §4.7 Q3) |
 | Persistence (root) | `backend/src/services/import/importPersistPhase.ts` | Stage **10** (staging promote or in-place) |
 | Observability (root) | `backend/src/services/import/importStageTracing.ts`, `utils/traceStage.ts` | Per-stage tracing ([`import_observability.md`](./import_observability.md)) |
@@ -151,7 +151,7 @@ Target API shape: `**runImportPlanning(…): PersistPlan`** then `**persistImpor
 
 The following are coupling or legacy patterns; they do **not** invalidate the **pure planning** preference in §4.1—they are where purity is **bounded** or phased in.
 
-- **Canonical row mutation:** `applyImportAmountNegation` may mutate `ParsedImportRow[]` in place today; prefer **pure** outputs when refactored (§4.7 Q4).
+- **Canonical row mutation:** `withNegatedCanonicalAmount` returns new rows; stage **4** is immutable (see [`import_fp_migration.md`](./import_fp_migration.md) Phase 1).
 - **Merchant embedder lifecycle:** Pass **one** `MerchantEmbedder` per request (DI: real in Lambda, stub in unit tests—§4.7 Q3).
 - **Single ledger snapshot:** Do not re-`listTransactions` per sub-stage; thread `**LedgerSnapshot`**.
 - **Dynamo write choreography:** `patchExistingTransactionsAfterImport` → `ingestImportBatch` → `retireClusterAggregates` (then file row) is one **subroutine**—see also [§8.1](#81-transactions).

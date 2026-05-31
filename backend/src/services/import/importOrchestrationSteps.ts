@@ -25,6 +25,7 @@ import {
 } from './importPersistPhase';
 import { runImportPlanning } from './runImportPlanning';
 import type { PersistPlan } from './planning/persistPlan';
+import type { MerchantEmbedder } from './clustering';
 import type { ImportStageTracer } from './importStageTracing';
 import { traceStage } from './utils/traceStage';
 
@@ -181,6 +182,7 @@ export async function runImportPlanningStages(
   accountId: string,
   parsed: ParsedImportUpload,
   tracer?: ImportStageTracer,
+  embedder?: MerchantEmbedder,
 ): Promise<PersistPlan> {
   const { rows } = parsed;
   const { transactionIds } = await traceStage(tracer, '5', () =>
@@ -196,6 +198,7 @@ export async function runImportPlanningStages(
       importAccountId: accountId,
       importCurrency: parsed.currency,
       newTransactionIds: transactionIds,
+      embedder,
     });
   }
 
@@ -209,6 +212,7 @@ export async function runImportPlanningStages(
     newTransactionIds: transactionIds,
     ledgerSnapshot,
     tracer,
+    embedder,
   });
 }
 
