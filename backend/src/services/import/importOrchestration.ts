@@ -97,12 +97,13 @@ export async function executeImportOrchestration(
         ),
       );
       const parsed = { ...parsedUpload, rows: amountNegation.rows };
-      const importCurrency = await resolveImportCurrency(
-        repo,
-        userId,
-        accountId,
-        parsed.currency,
-      );
+      const { currency: importCurrency, currencyChoice } =
+        await resolveImportCurrency(
+          repo,
+          userId,
+          accountId,
+          parsed.currency,
+        );
       const plan = await runImportPlanningStages(
         userId,
         repo,
@@ -119,6 +120,7 @@ export async function executeImportOrchestration(
         extracted,
         parsed,
         importCurrency,
+        currencyChoice,
         amountNegated: amountNegation.applied,
         importStartedAt,
         importCompletedAt: Date.now(),

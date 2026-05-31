@@ -13,17 +13,18 @@ function stubRepo(overrides = {}) {
 }
 
 test('resolveImportCurrency — file hint wins', async () => {
-  const code = await resolveImportCurrency(
+  const result = await resolveImportCurrency(
     stubRepo({ transactionFiles: [{ account_id: 'a1', format: { currency: 'GBP' } }] }),
     'user-1',
     'a1',
     'eur',
   );
-  assert.equal(code, 'EUR');
+  assert.equal(result.currency, 'EUR');
+  assert.equal(result.currencyChoice, 'file_hint');
 });
 
 test('resolveImportCurrency — prior account file when no hint', async () => {
-  const code = await resolveImportCurrency(
+  const result = await resolveImportCurrency(
     stubRepo({
       transactionFiles: [
         { id: 'f2', account_id: 'a1', format: { currency: 'CAD' } },
@@ -33,14 +34,16 @@ test('resolveImportCurrency — prior account file when no hint', async () => {
     'user-1',
     'a1',
   );
-  assert.equal(code, 'CAD');
+  assert.equal(result.currency, 'CAD');
+  assert.equal(result.currencyChoice, 'prior_account_file');
 });
 
 test('resolveImportCurrency — profile default when no hint or prior', async () => {
-  const code = await resolveImportCurrency(
+  const result = await resolveImportCurrency(
     stubRepo({ defaultCurrency: 'CHF' }),
     'user-1',
     'a1',
   );
-  assert.equal(code, 'CHF');
+  assert.equal(result.currency, 'CHF');
+  assert.equal(result.currencyChoice, 'profile_default');
 });

@@ -184,6 +184,13 @@ export interface TransactionFileSource {
   content_type?: string;
 }
 
+/** How `format.currency` was chosen for this import batch (provenance). */
+export type TransactionFileCurrencyChoice =
+  | 'file_hint'
+  | 'prior_account_file'
+  | 'profile_default'
+  | 'user_override';
+
 /**
  * §2 — How the file is classified for parsing (`parseImportBuffer` / sniffing).
  * Filled after format detection, before or alongside row parse.
@@ -195,6 +202,11 @@ export interface TransactionFileFormat {
    * (file hint → prior file for account → profile default).
    */
   currency?: string;
+  /**
+   * Provenance for `currency`: file metadata hint, prior account file,
+   * profile default, or user PATCH override. Omitted on legacy rows.
+   */
+  currencyChoice?: TransactionFileCurrencyChoice;
   /**
    * When true, import applied `-file_amount` into stored canonical `amount` for this run.
    * Canonical sign: negative = money from the account, positive = into the account (`import_field_mapping.md` §8).
