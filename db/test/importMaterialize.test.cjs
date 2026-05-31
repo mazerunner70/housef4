@@ -1,5 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { money } = require('@housef4/money');
 
 const {
   materializeImportPlanToItems,
@@ -23,7 +24,7 @@ function txnItem(id, clusterId, fileId = 'file-old') {
     id,
     date: 1_700_000_000_000,
     raw_merchant: 'Shop',
-    amount: -10,
+    amount_minor: -1000,
     category: 'Food',
     status: 'CLASSIFIED',
     is_recurring: false,
@@ -42,7 +43,7 @@ test('materializeImportPlanToItems — adds file row and new txn without mutatin
       cluster_id: 'CL_old',
       sample_merchants: ['Shop'],
       total_transactions: 1,
-      total_amount: 10,
+      total_amount_minor: 1000,
       suggested_category: null,
       assigned_category: 'Food',
       pending_review: false,
@@ -69,7 +70,8 @@ test('materializeImportPlanToItems — adds file row and new txn without mutatin
         date: 1_700_100_000_000,
         raw_merchant: 'Cafe',
         cleaned_merchant: 'Cafe',
-        amount: -5,
+        canonicalAmount: money(-500),
+        fileAmount: money(-500),
         cluster_id: 'CL_new',
         category: 'Food',
         status: 'CLASSIFIED',
@@ -103,6 +105,7 @@ test('materializeImportPlanToItems — adds file row and new txn without mutatin
     importFileId,
     plan,
     primaryPartitionItems: primary,
+    fileCurrency: 'USD',
     transactionFile: {
       id: importFileId,
       account_id: 'acc-1',
@@ -126,7 +129,7 @@ test('materializeImportPlanToItems — adds file row and new txn without mutatin
   );
   assert.ok(remintCluster);
   assert.equal(remintCluster.total_transactions, 1);
-  assert.equal(remintCluster.total_amount, 10);
+  assert.equal(remintCluster.total_amount_minor, 1000);
 });
 
 test('materializeImportPlanToItems — zero-row import adds TRANSACTION_FILE only', () => {

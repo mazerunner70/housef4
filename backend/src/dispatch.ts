@@ -6,7 +6,6 @@ import { postImportPayload } from './handlers/imports';
 import { getMePayload } from './handlers/me';
 import { getMetricsPayload } from './handlers/metrics';
 import { getReviewQueuePayload } from './handlers/reviewQueue';
-import { patchTransactionFileCurrencyPayload } from './handlers/patchTransactionFileCurrency';
 import { getTransactionFilesPayload } from './handlers/transactionFiles';
 import { postTagRulePayload } from './handlers/tagRule';
 import { getTransactionsCsvExport } from './handlers/transactionsCsvExport';
@@ -145,7 +144,9 @@ const queryParam = (req: InternalRequest, name: string): string | undefined =>
 
 const authenticatedRouteSpecs: RouteSpec[] = [
   route('GET', 'me', ['me'], syncPayload(getMePayload)),
-  route('GET', 'metrics', ['metrics'], asyncPayloadUid(getMetricsPayload)),
+  route('GET', 'metrics', ['metrics'], async (uid, req) =>
+    jsonOk(await getMetricsPayload(uid, queryParam(req, 'currency'))),
+  ),
   route('GET', 'accounts', ['accounts'], asyncPayloadUid(getAccountsPayload)),
   route('GET', 'transactions/export', ['transactions', 'export'], async (uid, req) => {
     const csv = await getTransactionsCsvExport(uid, req);
@@ -174,16 +175,6 @@ const authenticatedRouteSpecs: RouteSpec[] = [
   ),
   route('POST', 'backup/restore', ['backup', 'restore'], asyncPayloadReq(postBackupRestorePayload)),
   route('POST', 'backup/restore/abort', ['backup', 'restore', 'abort'], asyncPayloadUid(postBackupRestoreAbortPayload)),
-  customRoute(
-    'PATCH',
-    'transaction-files/currency',
-    (tail) => transactionFileIdFromTail(tail) !== null,
-    async (uid, req) => {
-      const importFileId = transactionFileIdFromTail(apiRouteTail(normalizeApiPath(req.path)));
-      if (!importFileId) return jsonResponse(404, { error: 'Not Found' });
-      return jsonOk(await patchTransactionFileCurrencyPayload(uid, importFileId, req.rawBody));
-    },
-  ),
 ];
 
 const { byMethodAndTail, customByMethod } = compileRoutes(authenticatedRouteSpecs);

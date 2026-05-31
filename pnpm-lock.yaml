@@ -25,6 +25,9 @@ importers:
       '@housef4/db':
         specifier: workspace:*
         version: link:../db
+      '@housef4/money':
+        specifier: workspace:*
+        version: link:../money
       '@xenova/transformers':
         specifier: 2.17.2
         version: 2.17.2
@@ -71,6 +74,9 @@ importers:
       '@aws-sdk/lib-dynamodb':
         specifier: ^3.500.0
         version: 3.1024.0(@aws-sdk/client-dynamodb@3.1024.0)
+      '@housef4/money':
+        specifier: workspace:*
+        version: link:../money
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -166,6 +172,15 @@ importers:
       vite:
         specifier: ^8.0.5
         version: 8.0.10(@types/node@25.6.0)(jiti@2.6.1)
+
+  money:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.0
+        version: 20.19.39
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
 
 packages:
 

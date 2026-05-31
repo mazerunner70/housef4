@@ -16,6 +16,7 @@ import {
 } from './categoryClassifier';
 import type { SourceRow } from './clusterPass';
 import { cleanMerchantForClustering } from './merchantNormalize';
+import { parsedRowAmounts } from '../parse/parsedRowAmounts';
 import { hashEmbedding, meanNormalized } from './merchantsEmbedder';
 
 export type Assignment = {
@@ -224,6 +225,7 @@ export function buildNewImportInputs(
   sources: SourceRow[],
   assignments: Assignment[],
   parsedLength: number,
+  importCurrency: string,
   pairingByLegId?: Readonly<Record<string, TransferPairingAssignment>>,
 ): ImportTransactionInput[] {
   const nExisting = sources.length - parsedLength;
@@ -234,14 +236,15 @@ export function buildNewImportInputs(
     const a = assignments[i];
     const row = s.row;
     const pairing = pairingByLegId?.[s.id];
+    const amounts = parsedRowAmounts(row, importCurrency);
     out.push({
       user_id: userId,
       id: s.id,
       date: row.date,
       raw_merchant: row.raw_merchant,
       cleaned_merchant: cleanMerchantForClustering(row.raw_merchant),
-      file_amount: row.file_amount,
-      amount: row.canonical_amount,
+      canonicalAmount: amounts.canonicalAmount,
+      fileAmount: amounts.fileAmount,
       cluster_id: a.cluster_id,
       category: a.category,
       status: a.status,

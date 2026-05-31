@@ -1,9 +1,19 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { money } = require('@housef4/money');
 
 const {
   runImportPlanning,
 } = require('../dist/services/import/runImportPlanning');
+
+function parsedRow(date, merchant, amountMajor) {
+  return {
+    date,
+    raw_merchant: merchant,
+    file_amount: amountMajor,
+    canonical_amount: amountMajor,
+  };
+}
 
 test('runImportPlanning — zero parsed rows returns empty PersistPlan', async () => {
   const plan = await runImportPlanning('user-1', [], {
@@ -30,7 +40,7 @@ test('runImportPlanning — requires ledgerSnapshot when parsed rows exist', asy
     () =>
       runImportPlanning(
         'user-1',
-        [{ date: 1_700_000_000_000, raw_merchant: 'Coffee', amount: -5 }],
+        [parsedRow(1_700_000_000_000, 'Coffee', -5)],
         {
           importAccountId: 'acc-1',
           newTransactionIds: ['txn-new-1'],
@@ -45,7 +55,7 @@ test('runImportPlanning — newTransactionIds length must match parsed rows', as
     () =>
       runImportPlanning(
         'user-1',
-        [{ date: 1_700_000_000_000, raw_merchant: 'Coffee', amount: -5 }],
+        [parsedRow(1_700_000_000_000, 'Coffee', -5)],
         {
           importAccountId: 'acc-1',
           newTransactionIds: ['txn-a', 'txn-b'],
@@ -60,13 +70,7 @@ test('runImportPlanning — newTransactionIds length must match parsed rows', as
 });
 
 test('runImportPlanning — single row produces insert intent', async () => {
-  const parsed = [
-    {
-      date: 1_700_000_000_000,
-      raw_merchant: 'Coffee Shop',
-      amount: -4.5,
-    },
-  ];
+  const parsed = [parsedRow(1_700_000_000_000, 'Coffee Shop', -4.5)];
   const newTransactionIds = ['txn-new-1'];
 
   const plan = await runImportPlanning('user-1', parsed, {
@@ -83,6 +87,7 @@ test('runImportPlanning — single row produces insert intent', async () => {
   assert.equal(plan.toInsert.length, 1);
   assert.equal(plan.toInsert[0].id, 'txn-new-1');
   assert.equal(plan.toInsert[0].raw_merchant, 'Coffee Shop');
+  assert.equal(plan.toInsert[0].canonicalAmount.units, -450);
   assert.equal(plan.existingPatches.length, 0);
   assert.equal(plan.summary.newClustersTouched, 1);
   assert.equal(plan.summary.knownMerchants + plan.summary.unknownMerchants, 1);
@@ -96,20 +101,14 @@ test('runImportPlanning — §6.0 remint retires prior cluster ids on existing r
     date: 1_699_000_000_000,
     raw_merchant: 'Coffee Shop',
     cleaned_merchant: 'coffee shop',
-    amount: -3,
+    canonicalAmount: money(-300),
     cluster_id: priorClusterId,
     category: 'Food',
     status: 'CLASSIFIED',
     is_recurring: false,
     transaction_file_id: 'file-old',
   };
-  const parsed = [
-    {
-      date: 1_700_000_000_000,
-      raw_merchant: 'Coffee Shop',
-      amount: -4.5,
-    },
-  ];
+  const parsed = [parsedRow(1_700_000_000_000, 'Coffee Shop', -4.5)];
 
   const plan = await runImportPlanning('user-1', parsed, {
     importAccountId: 'acc-checking',
@@ -119,7 +118,6 @@ test('runImportPlanning — §6.0 remint retires prior cluster ids on existing r
       transactions: [existingTxn],
       fileIdToAccountId: new Map([['file-old', 'acc-checking']]),
     },
-    // Force one physical group without relying on DBSCAN min_samples tuning.
     physicalGroupLabels: [0, 0],
   });
 
@@ -143,16 +141,11 @@ test('runImportPlanning — injected embedder bypasses model load (§4.7 Q3)', a
       return new Float32Array([0.1, 0.2, 0.3]);
     },
   };
-  const parsed = [
-    {
-      date: 1_700_000_000_000,
-      raw_merchant: 'Coffee Shop',
-      amount: -4.5,
-    },
-  ];
+  const parsed = [parsedRow(1_700_000_000_000, 'Coffee Shop', -4.5)];
 
   const plan = await runImportPlanning('user-1', parsed, {
     importAccountId: 'acc-checking',
+    importCurrency: 'USD',
     newTransactionIds: ['txn-new-1'],
     ledgerSnapshot: {
       transactions: [],

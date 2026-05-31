@@ -158,14 +158,49 @@ export type ApiHttpErrorBody = string
 /** Non-OK HTTP response with the entity body as text. */
 export class ApiHttpError extends Error {
   readonly status: number
+  readonly statusText: string
   readonly body: ApiHttpErrorBody
 
   constructor(status: number, statusText: string, body: ApiHttpErrorBody = '') {
     super(`${status} ${statusText}`)
     this.name = 'ApiHttpError'
     this.status = status
+    this.statusText = statusText
     this.body = body
   }
+}
+
+type ApiErrorJson = {
+  error?: string
+  message?: string
+  account_currency?: string
+  file_currency?: string
+}
+
+/** User-facing text from a structured API error body. */
+export function formatApiHttpErrorMessage(err: ApiHttpError): string {
+  const trimmed = err.body.trim()
+  if (trimmed) {
+    try {
+      const data = JSON.parse(trimmed) as ApiErrorJson
+      if (data.error === 'currency_mismatch') {
+        const importCurrency = data.account_currency?.trim()
+        const file = data.file_currency?.trim()
+        if (importCurrency && file) {
+          return `The import file currency (${file}) does not match the selected import currency (${importCurrency}).`
+        }
+        if (importCurrency) {
+          return `Import currency does not match the selected import currency (${importCurrency}).`
+        }
+      }
+      if (typeof data.message === 'string' && data.message.trim()) {
+        return data.message.trim()
+      }
+    } catch {
+      // fall through to status line
+    }
+  }
+  return err.message
 }
 
 async function readResponseText(res: Response): Promise<string> {
@@ -267,29 +302,44 @@ export async function getHealth(): Promise<HealthResponse> {
 }
 
 export type PostImportAccount =
-  | { accountId: string; newAccountName?: never }
-  | { accountId?: never; newAccountName: string }
+  | { accountId: string; currency: string; newAccountName?: never }
+  | { accountId?: never; newAccountName: string; currency: string }
 
 /**
- * `POST /api/imports` — multipart: **`file`**, and either **`account_id`** or
- * **`new_account_name`** (see API contract).
+ * `POST /api/imports` — multipart: **`file`**, **`currency`**, and either
+ * **`account_id`** or **`new_account_name`** (see API contract).
  */
 export async function postImport(
   file: File,
   account: PostImportAccount,
 ): Promise<ImportParseResult> {
+  const auth = await authorizationHeader()
   const body = new FormData()
   body.append('file', file)
+  body.append('currency', account.currency)
   if (typeof account.accountId === 'string') {
     body.append('account_id', account.accountId)
   } else {
     body.append('new_account_name', account.newAccountName)
   }
-  return fetchJson<ImportParseResult>('/api/imports', { method: 'POST', body })
+  const res = await fetch('/api/imports', {
+    method: 'POST',
+    body,
+    headers: { ...auth },
+  })
+  const text = await readResponseText(res)
+  if (!res.ok) {
+    throw new ApiHttpError(res.status, res.statusText, text)
+  }
+  return JSON.parse(text) as ImportParseResult
 }
 
-export async function getMetrics(): Promise<MetricsResponse> {
-  return fetchJson<MetricsResponse>('/api/metrics', { cache: 'no-store' })
+export async function getMetrics(currency: string): Promise<MetricsResponse> {
+  const code = currency.trim()
+  return fetchJson<MetricsResponse>(
+    `/api/metrics?currency=${encodeURIComponent(code)}`,
+    { cache: 'no-store' },
+  )
 }
 
 export type GetTransactionsOptions = {
@@ -312,39 +362,6 @@ export async function getTransactions(
 
 export async function getTransactionFiles(): Promise<TransactionFilesResponse> {
   return fetchJson<TransactionFilesResponse>('/api/transaction-files')
-}
-
-export type PatchTransactionFileCurrencyBody = {
-  currency: string
-  setDefaultCurrency?: boolean
-}
-
-export type PatchTransactionFileCurrencyResult = {
-  currency: string
-  transactions_updated: number
-  clusters_rebuilt: number
-  profile_default_updated: boolean
-}
-
-/** `PATCH /api/transaction-files/:importFileId` — update batch currency post-import. */
-export async function patchTransactionFileCurrency(
-  importFileId: string,
-  body: PatchTransactionFileCurrencyBody,
-): Promise<PatchTransactionFileCurrencyResult> {
-  const id = importFileId.trim()
-  return fetchJson<PatchTransactionFileCurrencyResult>(
-    `/api/transaction-files/${encodeURIComponent(id)}`,
-    {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        currency: body.currency,
-        ...(body.setDefaultCurrency === true
-          ? { set_default_currency: true }
-          : {}),
-      }),
-    },
-  )
 }
 
 export async function getAccounts(): Promise<AccountsResponse> {

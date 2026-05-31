@@ -12,15 +12,17 @@ import type {
   TransferPairingLeg,
 } from '@housef4/db';
 import { TRANSFER_PAIRING_DAY_MS, computeAutoTransferPairingsSortedPools } from '@housef4/db';
+import { money, type Money } from '@housef4/money';
 
 import type { ParsedImportRow } from '../import/parse/canonical';
+import { parsedRowAmounts } from '../import/parse/parsedRowAmounts';
 import { flow, map, reject, zipStrict } from '../import/utils/lodashImport';
 
 /** Default W in **W × 86 400 000 ms** (`transfer_matching.md` §3). */
 export const INGEST_TRANSFER_PAIR_WINDOW_DAYS = 4;
 
 /** Default residual tolerance for ingest pairing (`transfer_matching.md` §3.1). */
-export const INGEST_TRANSFER_PAIR_EPSILON = 0.01;
+export const INGEST_TRANSFER_PAIR_EPSILON = money(0);
 
 export function existingTxnTouchesImportDateWindow(
   txnDateMs: number,
@@ -39,7 +41,7 @@ function ingestProposalLegsFromParsed(params: {
   parsed: readonly ParsedImportRow[];
   newTransactionIds: readonly string[];
   importAccountId: string;
-  importCurrency?: string;
+  importCurrency: string;
 }): TransferPairingLeg[] {
   return map(
     zipStrict(params.parsed, params.newTransactionIds),
@@ -47,8 +49,8 @@ function ingestProposalLegsFromParsed(params: {
       id: nid,
       account_id: params.importAccountId,
       date: row.date,
-      amount: row.canonical_amount,
-      ...(params.importCurrency ? { currency: params.importCurrency } : {}),
+      canonicalAmount: parsedRowAmounts(row, params.importCurrency).canonicalAmount,
+      currency: params.importCurrency,
     }),
   );
 }
@@ -77,7 +79,7 @@ function ingestCounterpartLegsNearImport(params: {
         id: tx.id,
         account_id: fileIdToAccountId.get(tx.transaction_file_id)!,
         date: tx.date,
-        amount: tx.amount,
+        canonicalAmount: tx.canonicalAmount,
       })),
   )(existingTransactions);
 }
@@ -89,16 +91,16 @@ function ingestCounterpartLegsNearImport(params: {
  */
 export function computeIngestTransferPairings(params: {
   importAccountId: string;
-  importCurrency?: string;
+  importCurrency: string;
   parsed: readonly ParsedImportRow[];
   newTransactionIds: readonly string[];
   existingTransactions: readonly TransactionRecord[];
   fileIdToAccountId: ReadonlyMap<string, string>;
   windowDays?: number;
-  epsilon?: number;
+  epsilonAmount?: Money;
 }): Record<string, TransferPairingAssignment> {
   const windowDays = params.windowDays ?? INGEST_TRANSFER_PAIR_WINDOW_DAYS;
-  const epsilon = params.epsilon ?? INGEST_TRANSFER_PAIR_EPSILON;
+  const epsilonAmount = params.epsilonAmount ?? INGEST_TRANSFER_PAIR_EPSILON;
   const importDatesMs = params.parsed.map((r) => r.date);
 
   const proposalLegs = ingestProposalLegsFromParsed({
@@ -117,7 +119,8 @@ export function computeIngestTransferPairings(params: {
   const proposalRootIds = new Set(params.newTransactionIds);
   const { byLegId } = computeAutoTransferPairingsSortedPools(counterpartLegs, proposalLegs, {
     windowDays,
-    epsilon,
+    amountCurrency: params.importCurrency,
+    epsilonAmount,
     proposalRootIds,
   });
   return byLegId;

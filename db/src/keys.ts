@@ -4,6 +4,8 @@
  * See `docs/03_detailed_design/database/data_model.md` for the full key and GSI1 layout.
  */
 
+import { parseCurrency } from '@housef4/money';
+
 /** Prefix for synthetic system rows on a user partition (restore single-flight lock). */
 export const SYSTEM_PREFIX = 'SYSTEM#';
 
@@ -15,8 +17,15 @@ export const FILE_PREFIX = 'FILE#';
 /** One financial account the user labels (e.g. checking). `SK` = `ACCOUNT#<account_id>`. */
 export const ACCOUNT_PREFIX = 'ACCOUNT#';
 export const PROFILE_SK = 'PROFILE';
-/** Stored dashboard aggregates (transaction-derived); one item per user. */
+/** Stored dashboard aggregates (transaction-derived); one item per currency per user. */
+export const METRICS_SK_PREFIX = 'METRICS#';
+
+/** Legacy single-row key for pre–per-currency metrics; use {@link metricsSk} for new rows. */
 export const METRICS_SK = 'METRICS';
+
+export function metricsSk(currency: string): string {
+  return `${METRICS_SK_PREFIX}${parseCurrency(currency).id}`;
+}
 /** In-progress restore lock; `entity_type`: `RESTORE_LOCK` (see `data_model.md` 8.2a). */
 export const RESTORE_LOCK_SK = `${SYSTEM_PREFIX}RESTORE_LOCK`;
 /** In-progress import lock; `entity_type`: `IMPORT_LOCK` (see `data_model.md` 8.5a). */

@@ -4,7 +4,8 @@
  * `docs/03_detailed_design/import_transaction_files.md`.
  */
 
-import type { FinanceRepository, TransactionFileCurrencyChoice } from '@housef4/db';
+import type { FinanceRepository } from '@housef4/db';
+import { normalizeIso4217Currency } from '@housef4/db';
 
 import { HttpError } from '../../httpError';
 import {
@@ -75,7 +76,15 @@ export function validateImportAccountSelection(
   extracted: ExtractedImportUpload,
 ): void {
   if (selection.existingAccountId !== null) return;
-  if (extracted.newAccountName.trim().length > 0) return;
+  if (extracted.newAccountName.trim().length > 0) {
+    if (!normalizeIso4217Currency(extracted.currency)) {
+      throw new HttpError(
+        400,
+        'currency is required when creating a new account',
+      );
+    }
+    return;
+  }
   throw new HttpError(
     400,
     'Provide new_account_name or a valid account_id for this import',
@@ -138,9 +147,14 @@ export async function resolveAccountAfterLock(
   if (selection.existingAccountId !== null) {
     return selection.existingAccountId;
   }
+  const currency = normalizeIso4217Currency(extracted.currency);
+  if (!currency) {
+    throw new HttpError(400, 'currency is required when creating a new account');
+  }
   const created = await repo.createAccount(
     userId,
     extracted.newAccountName.trim(),
+    currency,
   );
   return created.id;
 }
@@ -181,6 +195,7 @@ export async function runImportPlanningStages(
   repo: FinanceRepository,
   accountId: string,
   parsed: ParsedImportUpload,
+  importCurrency: string,
   tracer?: ImportStageTracer,
   embedder?: MerchantEmbedder,
 ): Promise<PersistPlan> {
@@ -196,7 +211,7 @@ export async function runImportPlanningStages(
     tracer?.markSkipped('9', 'zero_rows');
     return runImportPlanning(userId, rows, {
       importAccountId: accountId,
-      importCurrency: parsed.currency,
+      importCurrency,
       newTransactionIds: transactionIds,
       embedder,
     });
@@ -208,7 +223,7 @@ export async function runImportPlanningStages(
 
   return runImportPlanning(userId, rows, {
     importAccountId: accountId,
-    importCurrency: parsed.currency,
+    importCurrency,
     newTransactionIds: transactionIds,
     ledgerSnapshot,
     tracer,
@@ -223,9 +238,7 @@ export function buildTransactionFileInput(params: {
   contentSha256: string;
   extracted: ExtractedImportUpload;
   parsed: ParsedImportUpload;
-  /** Resolved at import (file hint → prior account file → profile default). */
   importCurrency: string;
-  currencyChoice: TransactionFileCurrencyChoice;
   amountNegated: boolean;
   importStartedAt: number;
   importCompletedAt: number;
@@ -238,7 +251,6 @@ export function buildTransactionFileInput(params: {
     extracted,
     parsed,
     importCurrency,
-    currencyChoice,
     amountNegated,
     importStartedAt,
     importCompletedAt,
@@ -265,7 +277,6 @@ export function buildTransactionFileInput(params: {
     format: {
       ...(parsed.format === 'unknown' ? {} : { source_format: parsed.format }),
       currency: importCurrency,
-      currencyChoice,
       amount_negated: amountNegated,
     },
     timing: {
@@ -283,7 +294,7 @@ export async function persistImportResult(params: {
   plan: PersistPlan;
   importFileId: string;
   importStartedAt: number;
-  importCurrency?: string;
+  importCurrency: string;
   transactionFileInput: TransactionFileInput;
   extracted: ExtractedImportUpload;
   contentSha256: string;

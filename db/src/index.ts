@@ -1,3 +1,9 @@
+export {
+  canonicalAmountToWireMajor,
+  fileAmountToWireMajor,
+  recordToStoredAmountFields,
+  totalAmountToWireMajor,
+} from './storedAmount';
 export * from './types';
 export * from './keys';
 export * from './userPartition';
@@ -37,14 +43,20 @@ export type {
 } from './clusterAggregates';
 export {
   normalizeIso4217Currency,
-  normalizeTransactionFileCurrencyChoice,
+  parseIso4217Currency,
+  SUPPORTED_CREATE_ACCOUNT_CURRENCIES,
 } from './importCurrency';
+export {
+  buildFileCurrencyLookup,
+  currencyForTransaction,
+  currencyObjectForTransaction,
+  type FileCurrencyLookup,
+} from './transactionCurrency';
 export { getDocumentClient, getImportStagingTableName, requireImportStagingTableName, requireRestoreStagingTableName, requireTableName } from './dynamoClient';
 export {
   HEALTH_CHECK_PK,
   HEALTH_CHECK_SK,
   readHealthCheckDetail,
-  readHealthCheckText,
 } from './healthCheck';
 export type {
   HealthCheckDiagnosticCode,

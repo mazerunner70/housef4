@@ -1,24 +1,19 @@
-import type { TransactionFileCurrencyChoice } from './types';
+import {
+  parseCurrency,
+  SUPPORTED_CREATE_ACCOUNT_CURRENCIES,
+  type Currency,
+  type CurrencyId,
+} from '@housef4/money';
 
-/** Normalize ISO 4217 for import / profile currency fields. */
-export function normalizeIso4217Currency(code?: string): string | undefined {
-  const normalized = code?.trim().toUpperCase();
-  if (normalized && /^[A-Z]{3}$/.test(normalized)) return normalized;
-  return undefined;
+/** Normalize ISO 4217 to a supported code string for storage and wire JSON. */
+export function normalizeIso4217Currency(code?: string): CurrencyId | undefined {
+  if (!code?.trim()) return undefined;
+  return parseCurrency(code).id;
 }
 
-/** Normalize stored `format.currencyChoice`; omit unknown legacy values. */
-export function normalizeTransactionFileCurrencyChoice(
-  value?: string,
-): TransactionFileCurrencyChoice | undefined {
-  const normalized = value?.trim().toLowerCase();
-  if (
-    normalized === 'file_hint' ||
-    normalized === 'prior_account_file' ||
-    normalized === 'profile_default' ||
-    normalized === 'user_override'
-  ) {
-    return normalized;
-  }
-  return undefined;
+/** Parse ISO 4217 to a {@link Currency} value (throws when unsupported). */
+export function parseIso4217Currency(code: string): Currency {
+  return parseCurrency(code);
 }
+
+export { SUPPORTED_CREATE_ACCOUNT_CURRENCIES };

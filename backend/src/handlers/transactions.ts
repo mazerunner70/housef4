@@ -1,4 +1,10 @@
-import { getFinanceRepository } from '@housef4/db';
+import {
+  buildFileCurrencyLookup,
+  canonicalAmountToWireMajor,
+  currencyForTransaction,
+  fileAmountToWireMajor,
+  getFinanceRepository,
+} from '@housef4/db';
 
 import { getLog } from '../requestLogContext';
 import { cleanMerchantForClustering } from '../services/import/clustering';
@@ -12,6 +18,11 @@ export async function getTransactionsPayload(
   const fileId = opts?.transactionFileId?.trim() || undefined;
   const clusterId = opts?.clusterId?.trim() || undefined;
   const repo = getFinanceRepository();
+  const [accounts, files] = await Promise.all([
+    repo.listAccounts(userId),
+    repo.listTransactionFiles(userId),
+  ]);
+  const currencyForFile = buildFileCurrencyLookup(accounts, files);
   let rows =
     fileId === undefined
       ? await repo.listTransactions(userId)
@@ -27,17 +38,19 @@ export async function getTransactionsPayload(
   });
   return {
     transactions: rows.map((t) => {
+      const currency = currencyForTransaction(t, currencyForFile);
       const row: Record<string, unknown> = {
         id: t.id,
         date: t.date,
         raw_merchant: t.raw_merchant,
         cleaned_merchant: t.cleaned_merchant ?? cleanMerchantForClustering(t.raw_merchant),
-        amount: t.amount,
+        amount: canonicalAmountToWireMajor(t, currency),
         cluster_id: t.cluster_id,
         category: t.category,
         status: t.status,
         is_recurring: t.is_recurring,
         transaction_file_id: t.transaction_file_id,
+        currency,
       };
       if (t.suggested_category !== undefined) {
         row.suggested_category = t.suggested_category;
@@ -57,11 +70,9 @@ export async function getTransactionsPayload(
       if (t.pairing_confidence !== undefined) {
         row.pairing_confidence = t.pairing_confidence;
       }
-      if (t.file_amount !== undefined) {
-        row.file_amount = t.file_amount;
-      }
-      if (t.currency !== undefined && t.currency !== '') {
-        row.currency = t.currency;
+      const fileAmountMajor = fileAmountToWireMajor(t, currency);
+      if (fileAmountMajor !== undefined) {
+        row.file_amount = fileAmountMajor;
       }
       return row;
     }),

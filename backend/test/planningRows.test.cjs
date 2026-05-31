@@ -1,5 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { money } = require('@housef4/money');
 
 const {
   buildPlanningRows,
@@ -13,7 +14,7 @@ function existingTxn(id, date, pairingId) {
     user_id: 'user-1',
     date,
     raw_merchant: `Merchant ${id}`,
-    amount: -10,
+    canonicalAmount: money(-1000),
     cluster_id: 'CL_old',
     category: 'Food',
     status: 'CLASSIFIED',
@@ -27,7 +28,8 @@ function parsedRow(rawMerchant, date = 1_700_000_000_000) {
   return {
     date,
     raw_merchant: rawMerchant,
-    amount: -5,
+    file_amount: -5,
+    canonical_amount: -5,
   };
 }
 

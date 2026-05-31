@@ -24,7 +24,7 @@ export type ImportPlanningContext = Readonly<{
   /** Financial account this file is imported into (`ACCOUNT#…`). */
   importAccountId: string;
   /** Resolved batch currency (file hint → prior account file → profile default). */
-  importCurrency?: string;
+  importCurrency: string;
   /** §4.2 stage 5 output; `newTransactionIds[i]` ↔ `parsed[i]`. */
   newTransactionIds: readonly string[];
   /** §4.2 stage 6 output; required when `parsed.length > 0`. */

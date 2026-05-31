@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ChangeEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 
@@ -6,13 +6,14 @@ import { Button } from '@/components/ui/Button'
 import { ImportDropzone } from '@/features/import/components/ImportDropzone'
 import { ImportSummaryCard } from '@/features/import/components/ImportSummaryCard'
 import { UploadProgressIndicator } from '@/features/import/components/UploadProgressIndicator'
-import { postImport, type PostImportAccount } from '@/api/client'
+import { postImport, type PostImportAccount, ApiHttpError, formatApiHttpErrorMessage } from '@/api/client'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useTransactionFiles } from '@/hooks/useTransactionFiles'
 import {
   invalidateFinanceCaches,
   neutralizeClusterKeyedCaches,
 } from '@/lib/financeQueryCache'
+import { SUPPORTED_CREATE_ACCOUNT_CURRENCIES } from '@/lib/supportedCurrencies'
 import type { ImportParseResult } from '@/lib/types'
 import { useAppStore } from '@/store/appStore'
 
@@ -55,10 +56,11 @@ function importSatisfied(
   accountLoadError: boolean,
   choice: string,
   newName: string,
+  importCurrency: string,
 ): boolean {
   const t = newName.trim()
-  if (accountLoadError) return t.length > 0
-  if (choice === NEW_ACCOUNT) return t.length > 0
+  if (accountLoadError) return t.length > 0 && importCurrency.length > 0
+  if (choice === NEW_ACCOUNT) return t.length > 0 && importCurrency.length > 0
   return choice.length > 0
 }
 
@@ -66,11 +68,49 @@ function importAccountParam(
   accountLoadError: boolean,
   choice: string,
   newName: string,
+  importCurrency: string,
 ): PostImportAccount {
   if (accountLoadError || choice === NEW_ACCOUNT) {
-    return { newAccountName: newName.trim() }
+    return { newAccountName: newName.trim(), currency: importCurrency }
   }
-  return { accountId: choice }
+  return { accountId: choice, currency: importCurrency }
+}
+
+function currencyForAccountChoice(
+  choice: string,
+  accountCurrencyById: ReadonlyMap<string, string>,
+): string {
+  if (choice && choice !== NEW_ACCOUNT) {
+    return accountCurrencyById.get(choice) ?? 'USD'
+  }
+  return 'USD'
+}
+
+function importFailureMessage(error: unknown): string {
+  if (error instanceof ApiHttpError) {
+    return formatApiHttpErrorMessage(error)
+  }
+  if (error instanceof Error) {
+    return error.message
+  }
+  return 'Import failed'
+}
+
+function importCurrencyHint(
+  accountLoadError: boolean,
+  accountChoice: string,
+  currencyManuallySelected: boolean,
+): string {
+  if (accountChoice === NEW_ACCOUNT || accountLoadError) {
+    return 'Currency for the new account created with this import.'
+  }
+  if (accountChoice && !currencyManuallySelected) {
+    return 'Matches the selected account. Change here to override for this import.'
+  }
+  if (accountChoice) {
+    return 'Used as the import currency for this upload.'
+  }
+  return 'Defaults to USD until an account is selected.'
 }
 
 export function DataImportPage() {
@@ -85,6 +125,8 @@ export function DataImportPage() {
   const [error, setError] = useState<string | null>(null)
   const [accountChoice, setAccountChoice] = useState('')
   const [newAccountName, setNewAccountName] = useState('')
+  const [importCurrency, setImportCurrency] = useState<string>('USD')
+  const [currencyManuallySelected, setCurrencyManuallySelected] = useState(false)
   const fileHistory = useTransactionFiles()
   const accountsQuery = useAccounts()
 
@@ -96,11 +138,34 @@ export function DataImportPage() {
     return m
   }, [accountsQuery.data?.accounts])
 
+  const accountCurrencyById = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const a of accountsQuery.data?.accounts ?? []) {
+      m.set(a.id, a.currency)
+    }
+    return m
+  }, [accountsQuery.data?.accounts])
+
+  const handleAccountChange = (choice: string) => {
+    setAccountChoice(choice)
+    if (choice !== NEW_ACCOUNT) {
+      setNewAccountName('')
+    }
+    setCurrencyManuallySelected(false)
+    setImportCurrency(currencyForAccountChoice(choice, accountCurrencyById))
+  }
+
+  const handleImportCurrencyChange = (e: ChangeEvent<HTMLSelectElement>) => {
+    setImportCurrency(e.target.value)
+    setCurrencyManuallySelected(true)
+  }
+
   const accountLoadError = accountsQuery.isError
   const canImport = importSatisfied(
     accountLoadError,
     accountChoice,
     newAccountName,
+    importCurrency,
   )
 
   const handleFile = async (file: File) => {
@@ -112,7 +177,7 @@ export function DataImportPage() {
     try {
       const result = await postImport(
         file,
-        importAccountParam(accountLoadError, accountChoice, newAccountName),
+        importAccountParam(accountLoadError, accountChoice, newAccountName, importCurrency),
       )
       setSummary(result)
       setLastImportSummary(result)
@@ -120,8 +185,7 @@ export function DataImportPage() {
       invalidateFinanceCaches(queryClient)
       setPhase('done')
     } catch (e) {
-      const message = e instanceof Error ? e.message : 'Import failed'
-      setError(message)
+      setError(importFailureMessage(e))
       // Ledger unchanged on failure — restore authoritative caches after neutralize.
       invalidateFinanceCaches(queryClient)
       setPhase('idle')
@@ -206,12 +270,7 @@ export function DataImportPage() {
                 id="import-account"
                 className="w-full rounded-lg border border-white/[0.12] bg-zinc-900/80 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500/40"
                 value={accountChoice}
-                onChange={(e) => {
-                  setAccountChoice(e.target.value)
-                  if (e.target.value !== NEW_ACCOUNT) {
-                    setNewAccountName('')
-                  }
-                }}
+                onChange={(e) => handleAccountChange(e.target.value)}
               >
                 <option value="" disabled>
                   Select an account…
@@ -225,7 +284,7 @@ export function DataImportPage() {
               </select>
             )}
             {accountChoice === NEW_ACCOUNT && (
-              <div className="pt-1">
+              <div className="space-y-2 pt-1">
                 <label
                   htmlFor="import-new-account"
                   className="sr-only"
@@ -245,6 +304,33 @@ export function DataImportPage() {
             <p className="text-xs text-zinc-500">
               Every import is stored against one account. Pick an existing
               one or name a new account for this file.
+            </p>
+          </div>
+          <div className="max-w-md space-y-2">
+            <label
+              htmlFor="import-currency"
+              className="block text-sm font-medium text-zinc-200"
+            >
+              Currency
+            </label>
+            <select
+              id="import-currency"
+              className="w-full rounded-lg border border-white/[0.12] bg-zinc-900/80 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+              value={importCurrency}
+              onChange={handleImportCurrencyChange}
+            >
+              {SUPPORTED_CREATE_ACCOUNT_CURRENCIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-zinc-500">
+              {importCurrencyHint(
+                accountLoadError,
+                accountChoice,
+                currencyManuallySelected,
+              )}
             </p>
           </div>
           <ImportDropzone
@@ -269,13 +355,6 @@ export function DataImportPage() {
       {phase === 'done' && summary && (
         <ImportSummaryCard
           summary={summary}
-          onCurrencyApplied={(currency) => {
-            setSummary((prev) => (prev ? { ...prev, currency } : prev))
-            const prev = useAppStore.getState().lastImportSummary
-            if (prev?.importFileId === summary.importFileId) {
-              setLastImportSummary({ ...prev, currency })
-            }
-          }}
           onContinueDashboard={() => navigate('/dashboard')}
           onReviewUnknown={() => navigate('/review-queue')}
           onReviewTransactions={() =>

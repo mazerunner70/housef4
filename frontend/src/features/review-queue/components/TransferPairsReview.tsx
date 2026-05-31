@@ -17,10 +17,6 @@ import { useTransactions } from '@/hooks/useTransactions'
 import { cn } from '@/lib/cn'
 import { formatCurrencyAmount, resolveCurrencyCode } from '@/lib/formatCurrency'
 
-type TransferPairsReviewProps = Readonly<{
-  defaultCurrency: string
-}>
-
 function ToggleButton({
   pressed,
   onClick,
@@ -63,18 +59,16 @@ function confidenceBadgeClass(confidence: string | undefined): string {
 
 function TransferPairRow({
   pair,
-  defaultCurrency,
   groupBy,
 }: Readonly<{
   pair: TransferPair
-  defaultCurrency: string
   groupBy: TransferGroupBy
 }>) {
   const counterparty =
     groupBy === 'source' ? pair.destination : pair.source
   const amountLabel = formatCurrencyAmount(
     pair.amount,
-    resolveCurrencyCode(pair.source.currency, defaultCurrency),
+    resolveCurrencyCode(pair.source.currency),
   )
 
   return (
@@ -155,7 +149,7 @@ function TransferPairRow({
   )
 }
 
-export function TransferPairsReview({ defaultCurrency }: TransferPairsReviewProps) {
+export function TransferPairsReview() {
   const [reviewOpen, setReviewOpen] = useState(false)
   const [groupBy, setGroupBy] = useState<TransferGroupBy>('source')
 
@@ -295,7 +289,6 @@ export function TransferPairsReview({ defaultCurrency }: TransferPairsReviewProp
                   <TransferPairRow
                     key={pair.pairing_id}
                     pair={pair}
-                    defaultCurrency={defaultCurrency}
                     groupBy={groupBy}
                   />
                 ))}

@@ -6,9 +6,10 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc -w",
-    "test": "pnpm run build && node --test test/userPartition.test.cjs test/backupExport.test.cjs test/backupRestore.test.cjs test/clusterAggregates.test.cjs test/duplicateBlobImport.test.cjs test/importMaterialize.test.cjs test/patchTransactionFileCurrency.test.cjs test/transactionCsvExport.test.cjs test/transactionFileCurrencyChoice.test.cjs test/transferPairing.test.cjs"
+    "test": "pnpm run build && node --test test/userPartition.test.cjs test/backupExport.test.cjs test/backupRestore.test.cjs test/clusterAggregates.test.cjs test/duplicateBlobImport.test.cjs test/importMaterialize.test.cjs test/transactionCsvExport.test.cjs test/transferPairing.test.cjs"
   },
   "dependencies": {
+    "@housef4/money": "workspace:*",
     "@aws-sdk/client-dynamodb": "^3.500.0",
     "@aws-sdk/lib-dynamodb": "^3.500.0",
     "zod": "^4.3.6"

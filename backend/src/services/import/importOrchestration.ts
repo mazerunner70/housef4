@@ -27,7 +27,7 @@ import {
   validateImportAccountSelection,
   validateExistingAccountBeforeLock,
 } from './importOrchestrationSteps';
-import { resolveImportCurrency } from './resolveImportCurrency';
+import { resolveAndValidateImportCurrency } from './validateImportCurrency';
 import type { MerchantEmbedder } from './clustering';
 import type { ImportStageTracer } from './importStageTracing';
 import { createImportStageTracer } from './importStageTracing';
@@ -97,18 +97,23 @@ export async function executeImportOrchestration(
         ),
       );
       const parsed = { ...parsedUpload, rows: amountNegation.rows };
-      const { currency: importCurrency, currencyChoice } =
-        await resolveImportCurrency(
-          repo,
-          userId,
-          accountId,
-          parsed.currency,
-        );
+      const isNewAccount = accountSelection.existingAccountId === null;
+      const storedAccountCurrency = isNewAccount
+        ? undefined
+        : await repo.getAccountStoredCurrency(userId, accountId);
+      const importCurrency = resolveAndValidateImportCurrency({
+        isNewAccount,
+        clientCurrency: extracted.currency,
+        storedAccountCurrency,
+        fileCurrencyHint: parsed.currency,
+      });
+      await repo.ensureAccountCurrencyIfUnset(userId, accountId, importCurrency);
       const plan = await runImportPlanningStages(
         userId,
         repo,
         accountId,
-        { ...parsed, currency: importCurrency },
+        parsed,
+        importCurrency,
         tracer,
         params.embedder,
       );
@@ -120,7 +125,6 @@ export async function executeImportOrchestration(
         extracted,
         parsed,
         importCurrency,
-        currencyChoice,
         amountNegated: amountNegation.applied,
         importStartedAt,
         importCompletedAt: Date.now(),

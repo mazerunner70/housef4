@@ -1,5 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { money } = require('@housef4/money');
 
 const {
   replayClusteringForUser,
@@ -19,7 +20,7 @@ test('replayClusteringForUser — diffs cleaned and category against stored ledg
       date: 1_700_000_000_000,
       raw_merchant: 'SAINSBURYS S/MKTS ON 03 NOV CLP',
       cleaned_merchant: 'WRONG',
-      amount: -10,
+      canonicalAmount: money(-1000),
       cluster_id: 'CL_old_a',
       category: 'Uncategorized',
       status: 'PENDING_REVIEW',
@@ -35,7 +36,7 @@ test('replayClusteringForUser — diffs cleaned and category against stored ledg
       date: 1_700_000_000_001,
       raw_merchant: 'SAINSBURYS S/MKTS ON 04 NOV CLP',
       cleaned_merchant: 'SAINSBURYS SUPERMARKET',
-      amount: -12,
+      canonicalAmount: money(-1200),
       cluster_id: 'CL_old_a',
       category: 'Groceries',
       status: 'CLASSIFIED',
@@ -48,7 +49,7 @@ test('replayClusteringForUser — diffs cleaned and category against stored ledg
       date: 1_700_000_000_002,
       raw_merchant: 'Payment, Thank You',
       cleaned_merchant: 'PAYMENT, THANK YOU',
-      amount: 100,
+      canonicalAmount: money(10000),
       cluster_id: 'CL_old_c',
       category: 'Uncategorized',
       status: 'PENDING_REVIEW',
@@ -90,7 +91,7 @@ test('replayClusteringForUser — skips paired transfer legs', async () => {
       id: 'txn-paired',
       date: 1_700_000_000_000,
       raw_merchant: 'Transfer to savings',
-      amount: -50,
+      canonicalAmount: money(-5000),
       cluster_id: 'internal_transfer',
       category: 'Uncategorized',
       status: 'CLASSIFIED',

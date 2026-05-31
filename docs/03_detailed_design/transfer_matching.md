@@ -60,8 +60,8 @@ Transaction **B** is a **candidate partner** for **A** if:
 
 ### 3.1 Tolerance ε
 
-- If amounts are **integer cents**, **ε = 0** may suffice.
-- Otherwise use **ε = 1 cent** or **`max(1¢, 0.01 × min(|A|, |B|))`** for minor rounding; choose one policy and centralize it in config.
+- Amounts use **`Money`** in pairing logic (`canonicalAmount`); storage remains integer `*_minor` attributes (`money_representation.md`). Default ingest **`epsilonAmount: money(0)`** — exact residual cancellation.
+- For deliberate sub-unit tolerance (tests or future policy), set **`epsilonAmount`** to the allowed residual as `Money` (e.g. **`money(1)`** = one cent at scale 2).
 
 ### 3.2 Currency
 

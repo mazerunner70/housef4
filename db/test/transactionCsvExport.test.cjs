@@ -1,5 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { money } = require('@housef4/money');
 const {
   escapeCsvCell,
   formatTransactionsAsCsv,
@@ -27,7 +28,7 @@ test('formatTransactionsAsCsv joins account and import metadata', () => {
         id: 't1',
         date: 2000,
         raw_merchant: 'Co,ffee',
-        amount: -5,
+        canonicalAmount: money(-500),
         category: 'Food',
         status: 'CLASSIFIED',
         is_recurring: false,

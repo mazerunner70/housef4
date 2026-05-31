@@ -39,8 +39,7 @@ export function enrichTransactionsWithAccount(
       ? (accountNameById.get(account_id) ?? account_id)
       : 'Unknown account'
     const currency = resolveCurrencyCode(
-      t.currency,
-      fileCurrencyById.get(t.transaction_file_id),
+      t.currency ?? fileCurrencyById.get(t.transaction_file_id),
     )
     return { ...t, account_id, account_name, currency }
   })

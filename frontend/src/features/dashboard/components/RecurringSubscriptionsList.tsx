@@ -3,11 +3,13 @@ import { cn } from '@/lib/cn'
 
 type RecurringSubscriptionsListProps = {
   transactions: Transaction[]
+  currency: string
   className?: string
 }
 
 export function RecurringSubscriptionsList({
   transactions,
+  currency,
   className,
 }: RecurringSubscriptionsListProps) {
   const recurring = transactions.filter((t) => t.is_recurring)
@@ -45,7 +47,7 @@ export function RecurringSubscriptionsList({
               <p className="tabular-nums text-zinc-200">
                 {t.amount.toLocaleString(undefined, {
                   style: 'currency',
-                  currency: 'USD',
+                  currency: t.currency || currency,
                 })}
               </p>
             </li>

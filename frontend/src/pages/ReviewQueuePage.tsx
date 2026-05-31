@@ -44,7 +44,7 @@ export function ReviewQueuePage() {
       if (!cid || m.has(cid)) continue
       m.set(
         cid,
-        resolveCurrencyCode(t.currency, fileCurrency.get(t.transaction_file_id)),
+        resolveCurrencyCode(t.currency ?? fileCurrency.get(t.transaction_file_id)),
       )
     }
     return m
@@ -78,7 +78,6 @@ export function ReviewQueuePage() {
         <>
           <AmbiguousClusterList
             clusters={clusters}
-            defaultCurrency={data.default_currency}
             currencyByClusterId={currencyByClusterId}
             onConfirm={onConfirm}
             submittingId={submittingId}
@@ -95,7 +94,7 @@ export function ReviewQueuePage() {
       )}
 
       {reviewMode === 'transfers' && (
-        <TransferPairsReview defaultCurrency={data.default_currency} />
+        <TransferPairsReview />
       )}
     </div>
   )

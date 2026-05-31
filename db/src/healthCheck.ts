@@ -104,11 +104,3 @@ export async function readHealthCheckDetail(): Promise<HealthCheckReadDetail> {
     };
   }
 }
-
-/**
- * @deprecated Prefer {@link readHealthCheckDetail} for diagnostics.
- */
-export async function readHealthCheckText(): Promise<string | undefined> {
-  const d = await readHealthCheckDetail();
-  return d.text;
-}

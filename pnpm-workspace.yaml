@@ -2,5 +2,6 @@ packages:
   - "frontend"
   - "backend"
   - "db"
+  - "money"
   - "infrastructure"
   - "docs"

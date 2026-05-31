@@ -35,7 +35,8 @@ export interface ExtractedUpload {
 export type ImportMultipartFields = {
   accountId: string;
   newAccountName: string;
-  /** Raw `negate_amounts` field: `true`/`false`/`auto`/empty — see `parseNegateAmountsField` in import pipeline. */
+  /** ISO 4217 — required when `newAccountName` is set. */
+  currency: string;
   negateAmounts: string;
 };
 
@@ -188,6 +189,7 @@ async function parseMultipartForm(
 const IMPORT_TEXT_FIELDS = [
   'account_id',
   'new_account_name',
+  'currency',
   'negate_amounts',
 ] as const;
 
@@ -197,6 +199,7 @@ function importFieldsFromForm(
   return {
     accountId: fields.account_id ?? '',
     newAccountName: fields.new_account_name ?? '',
+    currency: fields.currency ?? '',
     negateAmounts: fields.negate_amounts ?? '',
   };
 }

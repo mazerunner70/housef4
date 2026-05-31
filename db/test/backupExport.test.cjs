@@ -6,6 +6,7 @@ const {
   CLUSTER_PREFIX,
   FILE_PREFIX,
   METRICS_SK,
+  metricsSk,
   TXN_PREFIX,
   userPk,
 } = require('../dist/keys');
@@ -49,9 +50,10 @@ test('exportBackupSnapshot maps partition items into V1 envelope', async (t) => 
           },
           {
             PK: userPk('u1'),
-            SK: METRICS_SK,
+            SK: metricsSk('USD'),
             entity_type: 'METRICS',
             user_id: 'u1',
+            currency: 'USD',
             metrics_updated_at: 555,
             transaction_count: 1,
             monthly_cashflow: { income: 1, expenses: 2, net: -1 },
@@ -150,9 +152,10 @@ test('exportBackupSnapshot maps partition items into V1 envelope', async (t) => 
   assert.equal(snap.profile.entity_type, 'PROFILE');
   assert.equal(snap.profile.net_worth, 100);
 
-  assert.ok(snap.metrics);
-  assert.equal(snap.metrics.entity_type, 'METRICS');
-  assert.equal(snap.metrics.transaction_count, 1);
+  assert.ok(Array.isArray(snap.metrics));
+  assert.equal(snap.metrics.length, 1);
+  assert.equal(snap.metrics[0].entity_type, 'METRICS');
+  assert.equal(snap.metrics[0].transaction_count, 1);
 });
 
 test('exportBackupSnapshot omits RESTORE_LOCK when excludeRestoreLock filters', async (t) => {
