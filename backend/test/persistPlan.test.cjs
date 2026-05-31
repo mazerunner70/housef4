@@ -1,5 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { money } = require('@housef4/money');
 
 const {
   persistImportPlan,
@@ -63,8 +64,8 @@ function samplePlan(overrides = {}) {
         date: 1_700_000_000_000,
         raw_merchant: 'Coffee Shop',
         cleaned_merchant: 'coffee shop',
-        amount: -4.5,
-        file_amount: 4.5,
+        canonicalAmount: money(-450),
+        fileAmount: money(450),
         cluster_id: 'CL_abc',
         category: 'Food',
         status: 'PENDING_REVIEW',

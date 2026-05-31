@@ -16,7 +16,7 @@ import {
 } from 'recharts'
 
 import type { MetricsResponse } from '@/lib/types'
-import { formatUsdChartAxisTick } from '@/lib/formatCurrency'
+import { formatChartAxisTick } from '@/lib/formatCurrency'
 import { cn } from '@/lib/cn'
 import { monthStartMsFromCashflowLabel } from '@/lib/dashboardSpending'
 import { theme } from '@/lib/theme'
@@ -223,7 +223,9 @@ export function MonthlyCashFlowChart({
               tick={{ fill: chart.tick, fontSize: 11 }}
               axisLine={false}
               tickLine={false}
-              tickFormatter={(v) => formatUsdChartAxisTick(v, yMax)}
+              tickFormatter={(v) =>
+                formatChartAxisTick(v, yMax, metrics.currency)
+              }
             />
             <Tooltip
               shared
@@ -241,7 +243,7 @@ export function MonthlyCashFlowChart({
                 return [
                   n.toLocaleString(undefined, {
                     style: 'currency',
-                    currency: 'USD',
+                    currency: metrics.currency,
                   }),
                   label,
                 ]

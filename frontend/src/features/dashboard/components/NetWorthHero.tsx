@@ -6,10 +6,10 @@ type NetWorthHeroProps = {
   className?: string
 }
 
-function formatNetWorth(n: number) {
+function formatNetWorth(n: number, currency: string) {
   return n.toLocaleString(undefined, {
     style: 'currency',
-    currency: 'USD',
+    currency,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })
@@ -36,7 +36,7 @@ export function NetWorthHero({ metrics, className }: NetWorthHeroProps) {
       <div className="relative">
         <p className="text-sm font-medium text-zinc-400">Net Worth</p>
         <p className="mt-2 text-4xl font-semibold tracking-tight text-white tabular-nums sm:text-5xl md:text-[3.25rem]">
-          {formatNetWorth(metrics.net_worth)}
+          {formatNetWorth(metrics.net_worth, metrics.currency)}
         </p>
         {trendLabel != null && (
           <p className="mt-3 flex flex-wrap items-baseline gap-2 text-sm">

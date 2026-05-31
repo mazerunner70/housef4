@@ -5,28 +5,25 @@ import { useTransactionFiles } from '@/hooks/useTransactionFiles'
 import { resolveCurrencyCode } from '@/lib/formatCurrency'
 
 /**
- * ISO 4217 for a single import batch: `TRANSACTION_FILE.format.currency`,
- * then profile default from the review queue, then USD.
+ * Currency for formatting amounts on the import transactions review page.
  */
-export function useImportFileCurrency(
-  transactionFileId: string | undefined,
-): string {
+export function useImportFileCurrency(importFileId: string | undefined): string {
   const filesQuery = useTransactionFiles()
   const reviewQuery = useReviewQueue()
 
   return useMemo(() => {
-    const id = transactionFileId?.trim()
-    if (!id) {
-      return resolveCurrencyCode(undefined, reviewQuery.data?.default_currency)
-    }
+    const id = importFileId?.trim()
+    if (!id) return 'USD'
     const file = filesQuery.data?.transaction_files.find((f) => f.id === id)
-    return resolveCurrencyCode(
-      file?.format.currency,
-      reviewQuery.data?.default_currency,
+    if (file?.format.currency) {
+      return resolveCurrencyCode(file.format.currency)
+    }
+    const cluster = reviewQuery.data?.pending_clusters.find((c) =>
+      c.sample_merchants.some(Boolean),
     )
-  }, [
-    transactionFileId,
-    filesQuery.data?.transaction_files,
-    reviewQuery.data?.default_currency,
-  ])
+    if (cluster?.currency) {
+      return resolveCurrencyCode(cluster.currency)
+    }
+    return 'USD'
+  }, [importFileId, filesQuery.data?.transaction_files, reviewQuery.data?.pending_clusters])
 }

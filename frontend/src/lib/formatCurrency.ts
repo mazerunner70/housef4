@@ -1,18 +1,17 @@
+import { SUPPORTED_CREATE_ACCOUNT_CURRENCIES } from './supportedCurrencies'
+
 const FALLBACK = 'USD'
 
-function isIso4217(code: string | undefined | null): code is string {
-  return typeof code === 'string' && /^[A-Z]{3}$/i.test(code.trim())
+const SUPPORTED_CURRENCY_SET = new Set<string>(SUPPORTED_CREATE_ACCOUNT_CURRENCIES)
+
+function isSupportedCurrency(code: string | undefined | null): code is string {
+  if (typeof code !== 'string') return false
+  return SUPPORTED_CURRENCY_SET.has(code.trim().toUpperCase())
 }
 
-/**
- * Picks a display code: value from the import/cluster aggregate, then profile default, else USD.
- */
-export function resolveCurrencyCode(
-  fromCluster?: string | null,
-  profileDefault?: string | null,
-): string {
-  if (isIso4217(fromCluster)) return fromCluster.trim().toUpperCase()
-  if (isIso4217(profileDefault)) return profileDefault.trim().toUpperCase()
+/** Normalize currency for display; falls back to USD when unsupported. */
+export function resolveCurrencyCode(fromRow?: string | null): string {
+  if (isSupportedCurrency(fromRow)) return fromRow.trim().toUpperCase()
   return FALLBACK
 }
 
@@ -20,9 +19,7 @@ export function formatCurrencyAmount(
   amount: number,
   currencyCode: string,
 ): string {
-  const code = isIso4217(currencyCode)
-    ? currencyCode.trim().toUpperCase()
-    : FALLBACK
+  const code = resolveCurrencyCode(currencyCode)
   try {
     return amount.toLocaleString(undefined, { style: 'currency', currency: code })
   } catch {
@@ -33,21 +30,23 @@ export function formatCurrencyAmount(
   }
 }
 
-/**
- * Formats USD for chart Y-axis ticks: full dollars with grouping (e.g. $750, $1,000);
- * uses compact notation when the domain is very large so labels stay short.
- */
-export function formatUsdChartAxisTick(value: unknown, domainMaxUsd: number): string {
+/** Chart Y-axis tick formatter for a selected metrics currency. */
+export function formatChartAxisTick(
+  value: unknown,
+  domainMax: number,
+  currencyCode: string,
+): string {
   const n = typeof value === 'number' ? value : Number(value)
   if (!Number.isFinite(n)) return ''
+  const code = resolveCurrencyCode(currencyCode)
   const cap =
-    Number.isFinite(domainMaxUsd) && domainMaxUsd > 0
-      ? domainMaxUsd
+    Number.isFinite(domainMax) && domainMax > 0
+      ? domainMax
       : Math.max(Math.abs(n), 1)
   const useCompact = cap >= 1_000_000
   const options: Intl.NumberFormatOptions = {
     style: 'currency',
-    currency: 'USD',
+    currency: code,
     minimumFractionDigits: 0,
     maximumFractionDigits: useCompact ? 2 : 0,
     ...(useCompact ? { notation: 'compact' as const } : {}),
@@ -57,7 +56,7 @@ export function formatUsdChartAxisTick(value: unknown, domainMaxUsd: number): st
   } catch {
     return n.toLocaleString(undefined, {
       style: 'currency',
-      currency: 'USD',
+      currency: FALLBACK,
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     })

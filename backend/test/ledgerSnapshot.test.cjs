@@ -1,5 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { money } = require('@housef4/money');
 
 const {
   buildLedgerSnapshot,
@@ -15,7 +16,7 @@ test('buildLedgerSnapshot — single read pass builds transactions + file→acco
       id: 'txn_a',
       date: 1_700_000_000_000,
       raw_merchant: 'Coffee',
-      amount: -5,
+      canonicalAmount: money(-500),
       category: 'Food',
       status: 'CLASSIFIED',
       is_recurring: false,

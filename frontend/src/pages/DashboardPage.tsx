@@ -5,11 +5,12 @@ import { NetWorthHero } from '@/features/dashboard/components/NetWorthHero'
 import { MonthlyCashFlowChart } from '@/features/dashboard/components/MonthlyCashFlowChart'
 import { CategorySpendBreakdown } from '@/features/dashboard/components/CategorySpendBreakdown'
 import { RecurringSubscriptionsList } from '@/features/dashboard/components/RecurringSubscriptionsList'
-import { Spinner } from '@/components/ui/Spinner'
+import { useAccounts } from '@/hooks/useAccounts'
 import { useMetrics } from '@/hooks/useMetrics'
 import { useTransactions } from '@/hooks/useTransactions'
 import { useReviewQueue } from '@/hooks/useReviewQueue'
 import {
+  emptyMetrics,
   formatUtcMonthHeading,
   spendingByCategoryForUtcRange,
   utcMonthBoundsFromStart,
@@ -19,28 +20,51 @@ import type { SpendingCategoryRow } from '@/lib/types'
 import { cn } from '@/lib/cn'
 
 export function DashboardPage() {
-  const metricsQuery = useMetrics()
+  const accountsQuery = useAccounts()
+  const accountCurrencies = useMemo(() => {
+    const codes = new Set<string>()
+    for (const a of accountsQuery.data?.accounts ?? []) {
+      const code = a.currency?.trim().toUpperCase()
+      if (code) codes.add(code)
+    }
+    return [...codes].sort((a, b) => a.localeCompare(b))
+  }, [accountsQuery.data?.accounts])
+
+  const [preferredCurrency, setPreferredCurrency] = useState<string | undefined>()
+
+  const selectedCurrency = useMemo((): string | undefined => {
+    if (accountCurrencies.length === 0) return undefined
+    if (
+      preferredCurrency &&
+      accountCurrencies.includes(preferredCurrency)
+    ) {
+      return preferredCurrency
+    }
+    return accountCurrencies[0]
+  }, [accountCurrencies, preferredCurrency])
+
+  const metricsQuery = useMetrics(selectedCurrency)
   const transactionsQuery = useTransactions()
   const reviewQuery = useReviewQueue()
 
-  /** Axis label from `cashflow_history` — unique per month; avoids bad `month_start_ms` fallbacks. */
   const [selectedCashflowMonthLabel, setSelectedCashflowMonthLabel] = useState<
     string | null
   >(null)
 
-  const metrics = metricsQuery.data
-  const transactions = useMemo(
-    () => transactionsQuery.data?.transactions ?? [],
-    [transactionsQuery.data],
-  )
+  const displayCurrency = selectedCurrency ?? 'USD'
+  const metrics = metricsQuery.data ?? emptyMetrics(displayCurrency)
+  const transactions = useMemo(() => {
+    const all = transactionsQuery.data?.transactions ?? []
+    const code = displayCurrency.trim().toUpperCase()
+    return all.filter(
+      (t) => t.currency?.trim().toUpperCase() === code,
+    )
+  }, [transactionsQuery.data, displayCurrency])
 
   const categoryPane = useMemo((): {
     categories: SpendingCategoryRow[]
     periodLabel: string
   } => {
-    if (!metrics) {
-      return { categories: [], periodLabel: 'This month' }
-    }
     if (selectedCashflowMonthLabel == null) {
       return {
         categories: metrics.spending_by_category,
@@ -74,24 +98,6 @@ export function DashboardPage() {
 
   const pending = reviewQuery.data?.pending_clusters.length ?? 0
 
-  if (metricsQuery.isPending || transactionsQuery.isPending) {
-    return (
-      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-4">
-        <Spinner />
-        <p className="text-sm text-zinc-500">Loading your dashboard…</p>
-      </div>
-    )
-  }
-
-  if (metricsQuery.isError || !metrics) {
-    return (
-      <p className="text-zinc-400">
-        We couldn’t load metrics. Ensure the API is running and reachable (see
-        Vite proxy for <code className="text-zinc-300">/api</code>).
-      </p>
-    )
-  }
-
   return (
     <div className="space-y-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -103,19 +109,40 @@ export function DashboardPage() {
             <span className="font-medium text-zinc-200">
               {metrics.transaction_count.toLocaleString()}
             </span>{' '}
-            transactions tracked
+            transactions in {metrics.currency}
           </p>
         </div>
-        <Link
-          to="/review-queue"
-          className={cn(
-            'inline-flex shrink-0 items-center justify-center rounded-full border border-[var(--color-border)] bg-white/[0.04] px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-nav-accent)]',
-            pending > 0 &&
-              'border-amber-500/40 text-amber-200 ui-pending-ring',
+        <div className="flex flex-wrap items-center gap-3">
+          {accountCurrencies.length > 1 && (
+            <label className="flex items-center gap-2 text-sm text-zinc-400">
+              <span>Currency</span>
+              <select
+                className="rounded-lg border border-white/[0.12] bg-zinc-900/80 px-3 py-1.5 text-sm text-zinc-100"
+                value={displayCurrency}
+                onChange={(e) => {
+                  setPreferredCurrency(e.target.value)
+                  setSelectedCashflowMonthLabel(null)
+                }}
+              >
+                {accountCurrencies.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
-        >
-          Review pending{pending > 0 ? ` (${pending})` : ''}
-        </Link>
+          <Link
+            to="/review-queue"
+            className={cn(
+              'inline-flex shrink-0 items-center justify-center rounded-full border border-[var(--color-border)] bg-white/[0.04] px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-white/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-nav-accent)]',
+              pending > 0 &&
+                'border-amber-500/40 text-amber-200 ui-pending-ring',
+            )}
+          >
+            Review pending{pending > 0 ? ` (${pending})` : ''}
+          </Link>
+        </div>
       </div>
 
       <NetWorthHero metrics={metrics} />
@@ -133,6 +160,7 @@ export function DashboardPage() {
           <CategorySpendBreakdown
             categories={categoryPane.categories}
             periodLabel={categoryPane.periodLabel}
+            currency={metrics.currency}
             onClearMonthFilter={
               selectedCashflowMonthLabel === null
                 ? undefined
@@ -143,7 +171,10 @@ export function DashboardPage() {
         </div>
       </div>
 
-      <RecurringSubscriptionsList transactions={transactions} />
+      <RecurringSubscriptionsList
+        transactions={transactions}
+        currency={metrics.currency}
+      />
     </div>
   )
 }

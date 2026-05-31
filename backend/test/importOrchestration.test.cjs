@@ -26,6 +26,7 @@ function zeroRowExtracted(overrides = {}) {
     },
     accountId: 'acc-1',
     newAccountName: '',
+    currency: '',
     negateAmounts: '',
     ...overrides,
   };
@@ -49,15 +50,30 @@ function createStubRepo(overrides = {}) {
       if (overrides.getAccount) {
         return overrides.getAccount(userId, accountId);
       }
-      return { id: accountId, user_id: userId, name: 'Checking' };
+      return { id: accountId, user_id: userId, name: 'Checking', currency: 'USD' };
     },
 
-    createAccount: async (userId, name) => {
+    getAccountStoredCurrency: async (userId, accountId) => {
+      log('getAccountStoredCurrency');
+      if (overrides.getAccountStoredCurrency) {
+        return overrides.getAccountStoredCurrency(userId, accountId);
+      }
+      return 'USD';
+    },
+
+    ensureAccountCurrencyIfUnset: async (userId, accountId, currency) => {
+      log('ensureAccountCurrencyIfUnset');
+      if (overrides.ensureAccountCurrencyIfUnset) {
+        return overrides.ensureAccountCurrencyIfUnset(userId, accountId, currency);
+      }
+    },
+
+    createAccount: async (userId, name, currency) => {
       log('createAccount');
       if (overrides.createAccount) {
-        return overrides.createAccount(userId, name);
+        return overrides.createAccount(userId, name, currency);
       }
-      return { id: 'acc-new', user_id: userId, name };
+      return { id: 'acc-new', user_id: userId, name, currency: currency ?? 'USD' };
     },
 
     findDuplicateBlobImport: async () => {
@@ -150,11 +166,6 @@ function createStubRepo(overrides = {}) {
     releaseImportLock: async () => {
       log('releaseImportLock');
     },
-
-    getDefaultCurrencyCode: async () => {
-      log('getDefaultCurrencyCode');
-      return overrides.defaultCurrency ?? 'USD';
-    },
   };
 
   return repo;
@@ -209,6 +220,8 @@ test('executeImportOrchestration — zero-row CSV commits persist stages in §4.
   assertPersistStagesInOrder(repo.callLog);
   assert.equal(repo.callLog[0], 'findDuplicateBlobImport');
   assert.equal(repo.callLog[1], 'getAccount');
+  assert.ok(repo.callLog.includes('getAccountStoredCurrency'));
+  assert.ok(repo.callLog.includes('ensureAccountCurrencyIfUnset'));
   assert.ok(
     repo.callLog.indexOf('acquireImportLock') <
       repo.callLog.indexOf('listTransactionFiles'),
@@ -223,7 +236,6 @@ test('executeImportOrchestration — zero-row CSV commits persist stages in §4.
   assert.equal(repo.lastTransactionFile.account_id, 'acc-1');
   assert.equal(repo.lastTransactionFile.id, result.importFileId);
   assert.equal(repo.lastTransactionFile.format.currency, 'USD');
-  assert.equal(repo.lastTransactionFile.format.currencyChoice, 'profile_default');
   assert.equal(repo.lastIngest.fileCurrency, 'USD');
   assert.equal(repo.lastIngest.transactionFileId, result.importFileId);
   assert.deepEqual(repo.lastPatches, []);
@@ -234,6 +246,7 @@ test('executeImportOrchestration — createAccount path when new_account_name is
   const extracted = zeroRowExtracted({
     accountId: '',
     newAccountName: 'Savings',
+    currency: 'EUR',
   });
   const repo = createStubRepo();
 
@@ -246,6 +259,7 @@ test('executeImportOrchestration — createAccount path when new_account_name is
   assert.equal(repo.callLog[0], 'findDuplicateBlobImport');
   assert.equal(repo.callLog[1], 'acquireImportLock');
   assert.equal(repo.callLog[2], 'createAccount');
+  assert.ok(repo.callLog.includes('ensureAccountCurrencyIfUnset'));
   assert.equal(result.importFileId, repo.lastTransactionFile.id);
   assert.equal(repo.lastTransactionFile.account_id, 'acc-new');
 });

@@ -3,6 +3,7 @@ import {
   clusterMembersFromTransactionItems,
   liveClusterIdsFromImportPlan,
 } from './clusterAggregates';
+import { recordToStoredAmountFields } from './storedAmount';
 import {
   clusterSk,
   clusterTxnGsi1Pk,
@@ -22,6 +23,7 @@ import type {
   ImportTransactionInput,
   TransactionFileInput,
 } from './types';
+import { normalizeIso4217Currency } from './importCurrency';
 
 function wireString(v: unknown, fallback: string = ''): string {
   if (v == null) return fallback;
@@ -38,6 +40,7 @@ function importTransactionToDynamoItem(
   pk: string,
   userId: string,
   transactionFileId: string,
+  importCurrency: string,
 ): Record<string, unknown> {
   const gsi1pk = clusterTxnGsi1Pk(r.user_id, r.cluster_id);
   const gsi1sk = clusterTxnGsi1Sk(r.id);
@@ -52,8 +55,7 @@ function importTransactionToDynamoItem(
     date: r.date,
     raw_merchant: r.raw_merchant,
     cleaned_merchant: r.cleaned_merchant,
-    amount: r.amount,
-    file_amount: r.file_amount,
+    ...recordToStoredAmountFields(r),
     cluster_id: r.cluster_id,
     category: r.category,
     status: r.status,
@@ -79,8 +81,8 @@ function importTransactionToDynamoItem(
     if (r.pairing_source !== undefined) item.pairing_source = r.pairing_source;
     if (r.pairing_confidence !== undefined) item.pairing_confidence = r.pairing_confidence;
   }
-  const cur = r.currency?.trim().toUpperCase();
-  if (cur && /^[A-Z]{3}$/.test(cur)) item.currency = cur;
+  const cur = normalizeIso4217Currency(importCurrency);
+  if (cur) item.currency = cur;
   return item;
 }
 
@@ -88,13 +90,13 @@ function clusterItemFromDynamo(item: Record<string, unknown>): {
   assigned_category: string | null;
   currency?: string;
 } {
-  const cur = item.currency;
+  const cur = normalizeIso4217Currency(wireString(item.currency, ''));
   return {
     assigned_category:
       item.assigned_category === undefined
         ? null
         : (item.assigned_category as string | null),
-    ...(cur != null && cur !== '' ? { currency: String(cur) } : {}),
+    ...(cur ? { currency: cur } : {}),
   };
 }
 
@@ -199,10 +201,20 @@ export function materializeImportPlanToItems(
     }
   }
 
+  const resolvedImportCurrency =
+    normalizeIso4217Currency(fileCurrency) ??
+    normalizeIso4217Currency(transactionFile.format.currency);
+
   for (const row of plan.toInsert) {
     bySk.set(
       txnSk(row.id),
-      importTransactionToDynamoItem(row, pk, userId, importFileId),
+      importTransactionToDynamoItem(
+        row,
+        pk,
+        userId,
+        importFileId,
+        resolvedImportCurrency ?? 'USD',
+      ),
     );
   }
 
@@ -226,7 +238,7 @@ export function materializeImportPlanToItems(
         {
           fileCurrency,
           assignedCategory: prev?.assigned_category ?? null,
-          currency: prev?.currency,
+          currency: prev?.currency ?? resolvedImportCurrency,
           previousCategoryId: hint?.previousCategoryId ?? null,
         },
       ),

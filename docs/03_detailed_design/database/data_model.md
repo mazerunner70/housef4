@@ -28,7 +28,7 @@ This is the **canonical description** of how persisted application data is store
 - **Billing:** `PAY_PER_REQUEST` (on-demand).
 - **Base table keys**
   - **`PK`** (String) — partition key. User-scoped application rows use `USER#<user_id>`.
-  - **`SK`** (String) — sort key. Distinguishes entity type and id: `TXN#<transaction_id>`, `CLUSTER#<cluster_id>`, `FILE#<file_id>`, literal `PROFILE`, literal **`METRICS`** (dashboard aggregates), `SYSTEM#RESTORE_LOCK` (restore single-flight lock — see §8.2a), **`SYSTEM#IMPORT_LOCK`** (import single-flight lock — see §8.5a), or `ACCOUNT#…`.
+  - **`SK`** (String) — sort key. Distinguishes entity type and id: `TXN#<transaction_id>`, `CLUSTER#<cluster_id>`, `FILE#<file_id>`, literal `PROFILE`, literal **`METRICS#<ISO4217>`** (per-currency dashboard aggregates — see §6), `SYSTEM#RESTORE_LOCK` (restore single-flight lock — see §8.2a), **`SYSTEM#IMPORT_LOCK`** (import single-flight lock — see §8.5a), or `ACCOUNT#…`.
 - **Global secondary index: `GSI1`**
   - **GSI1PK** (String) — `USER#<user_id>#CLUSTER#<cluster_id>` (see `clusterTxnGsi1Pk` in `db/src/keys.ts`). Enables all transactions in a **cluster** for a user to be found without a table scan.
   - **GSI1SK** (String) — `TXN#<transaction_id>` (same as base `SK` for that transaction) via `clusterTxnGsi1Sk`.
@@ -75,8 +75,9 @@ Every application item (except the health system row) includes:
 | `date` | Number | **Epoch milliseconds UTC** (same convention as the API). |
 | `raw_merchant` | String | As imported. |
 | `cleaned_merchant` | String | Normalized merchant line for clustering. |
-| `amount` | Number | Canonical sign: money **from** this account (**negative**), money **into** this account (**positive**) — aligns with dashboards and spend/income rollups (`import_field_mapping.md` §8); use **`format.amount_negated`** on `TRANSACTION_FILE` when imports flipped raw signs. |
-| `file_amount` | Number (optional) | Parser-signed amount before optional import negation; set on transaction rows created by imports after this feature shipped (equals `amount` when `format.amount_negated` is false). Omitted on older rows. |
+| `amount_minor` | Number (integer) | **Canonical** signed amount in minor units for the account **`currency`**: money **from** this account (**negative**), money **into** this account (**positive**). Maps to TS **`canonicalAmount.units`** — see [`money_representation.md`](../money_representation.md). |
+| `file_amount_minor` | Number (optional, integer) | Parser-signed amount in minor units before optional import negation; maps to TS **`fileAmount.units`**. |
+| `currency` | String | **Required** ISO 4217; denormalized from the parent **`ACCOUNT`** (via import `account_id`). Must equal **`account.currency`** on every write. |
 | `cluster_id` | String (required once clustering has run); **legacy** rows may omit | Opaque grouping id (**`CL_`** + UUID recommended per **[`import_transaction_files.md`](../import_transaction_files.md)** §6.5–§6.6). **Reminted on every corpus re-cluster** (§6.0)—never carried forward purely because the embedding group stayed cohesive. **Never intentionally `null`/absent** solely because DBSCAN flagged noise—singleton/noise mints get their own ids. Drives **`GSI1`** and aligns with **`CLUSTER#…`** items. Omit **`GSI1*`** until migration/backfill if the attribute truly absent (**legacy-only** path). **`prior_cluster_ids`** (predecessor transactional ids before remint) is **planning-only** and **not** stored on transaction or **`CLUSTER#…`** items (§11.1). |
 | `category` | String | Current assigned category. |
 | `status` | String | `CLASSIFIED` \| `PENDING_REVIEW`. |
@@ -113,8 +114,8 @@ Represents a merchant **cluster** row for the review queue, aggregates, and tag 
 | `cluster_id` | String | Same as embedded in `SK`. |
 | `sample_merchants` | String[] | Sample text for UI (capped/merged in code). |
 | `total_transactions` | Number | Running count. |
-| `total_amount` | Number | Typically sum of abs(amount) contributions. |
-| `currency` | String (optional) | ISO 4217, denormalized from the import when known; preserved on later ingests that do not supply a new code. |
+| `total_amount_minor` | Number (integer) | Sum of `abs(amount_minor)` over member transactions; maps to TS **`totalAmount.units`**. |
+| `currency` | String | **Required** ISO 4217 for the aggregate; must match member transactions’ **`currency`** (single-currency rollups only). |
 | `suggested_category` | String or null | From batch / rules. |
 | `assigned_category` | String or null | User or rule assignment. |
 | `previous_category_id` | String or null | Unanimous **prior** transactional **`category`** among **existing** members that this corpus pass groups into **`cluster_id`**, persisted as a hint / diff baseline — see **`[import_transaction_files.md](../import_transaction_files.md)`** §7. **`null`** when priors disagreed, were empty, or the group has no existing members. **Always written** on import rebuild (`rebuildClusterAggregatesAfterImport`); **legacy** CLUSTER rows may omit the attribute until the next corpus re-cluster pass — treat absent as **`null`**. |
@@ -140,7 +141,7 @@ Per-upload **import history**: the uploaded file, how it was classified, when pr
 | `id` | String | Same as in `SK` after the `FILE#` prefix. |
 | `account_id` | String | Id of the user’s `ACCOUNT` item (`ACCOUNT#…` sort key id segment) for this file. Omitted on legacy items; readers treat missing as empty. |
 | **`source`** | Map (object) | **§1 — Multipart / upload audit:** `name` (client filename or display default), `size_bytes`, optional `content_type` (part MIME). |
-| **`format`** | Map (object) | **§2 — Import source type for parsing** (set after sniffing): optional `source_format` (e.g. `csv` / `ofx` / `qfx` / `qif`); **`currency`** (ISO 4217) **resolved at import** (file hint e.g. OFX `CURDEF` → latest prior `TRANSACTION_FILE` for the same `account_id` → profile `default_currency`, else `USD`); optional **`currencyChoice`** (string enum — how `currency` was set for this batch: `file_hint`, `prior_account_file`, `profile_default`, `user_override`; omitted on legacy rows and when unknown); optional **`amount_negated`** (boolean) when the server flipped signs for canonical import. |
+| **`format`** | Map (object) | **§2 — Import source type for parsing** (set after sniffing): optional `source_format` (e.g. `csv` / `ofx` / `qfx` / `qif`); **`currency`** (ISO 4217) **must equal** the target **`ACCOUNT.currency`** (copied on successful ingest; mismatch aborts with **`409 currency_mismatch`** — see [`money_representation.md`](../money_representation.md)); optional **`amount_negated`** (boolean) when the server flipped signs for canonical import. **Removed:** `currencyChoice`, import-time currency resolution, and post-import currency **`PATCH`**. |
 | **`timing`** | Map (object) | **§3 — Clock (epoch ms UTC):** `started_at` (after a successful multipart extract, before parse/enrich/ingest), `completed_at` (when the run finishes and the item is written). **Listing order** (newest first) uses `timing.completed_at`. |
 | **`result`** | Map (object) | **§4 — Batch summary** — full **`ImportIngestResult`**: `rowCount`, `knownMerchants`, `unknownMerchants`, `existingTransactionsUpdated`, `newClustersTouched` (the last two include re-cluster patch effects where applicable; see [`db/src/types.ts`](../../../db/src/types.ts)). |
 | **`content_sha256`** | String (optional) | Lowercase hex **SHA-256** of the **raw** multipart `file` bytes at ingest ([`import_transaction_files.md`](../import_transaction_files.md) §11.2.1). Written on successful imports after stage 11; used by `findDuplicateBlobImport` to reject identical-bytes re-uploads with **`409 duplicate_blob`**. Omitted on legacy items and on backups restored before this field existed. |
@@ -167,9 +168,10 @@ A user-labeled **financial account** (e.g. “Chase Checking”) so each import 
 |-----------|------|--------|
 | `id` | String | Same as the UUID in `SK` after `ACCOUNT#`. |
 | `name` | String | User-visible label (trimmed on create). |
+| **`currency`** | String | **Required** ISO 4217; chosen at account creation; **immutable**. All imports and transactions for this account use this currency. See [`money_representation.md`](../money_representation.md). |
 | `created_at` | Number | Epoch **ms** UTC. |
 
-Created via `POST /api/imports` when the client sends **`new_account_name`**, or via the same code path the handler uses. Listed with `begins_with(SK, ACCOUNT#)` (see `listAccounts`).
+Created via **`POST /api/imports`** when the client sends **`new_account_name`** **and** **`currency`**, or via the same code path the handler uses. Listed with `begins_with(SK, ACCOUNT#)` (see `listAccounts`).
 
 ---
 
@@ -182,20 +184,24 @@ One item per user for **user-level settings** (not transaction-derived dashboard
 | `PK` | `USER#<user_id>` |
 | `SK` | `PROFILE` (constant, see `PROFILE_SK` in `db/src/keys.ts`) |
 
-**Attributes:** `net_worth` (Number) is written on create (`ensureProfile`); `getMetrics` merges the live `net_worth` into the API response with data read from the **`METRICS`** item (see below). Optional `default_currency` (String, ISO 4217) may be set for display; when absent, APIs default to `USD`.
+**Attributes:** `net_worth` (Number) is written on create (`ensureProfile`); `getMetrics` merges the live `net_worth` into the API response with data read from the selected **`METRICS#<ISO4217>`** item (see §6). Optional **`default_currency`** (String, ISO 4217) may prefill the **create-account** currency dropdown in the UI only; it is **not** used to resolve import currency.
 
 ---
 
 ## 6. Metrics (`entity_type: METRICS`)
 
-One item per user holding the **cached dashboard snapshot** derived from transactions (same logical shape as transaction-derived fields on **`GET /api/metrics`**, excluding `net_worth`). **Key:**
+One item **per currency per user** holding a **cached dashboard snapshot** for that currency only (transactions whose **`account.currency`** matches). Same logical shape as transaction-derived fields on **`GET /api/metrics?currency=…`**, excluding `net_worth`. **Key:**
 
 | Key | Value pattern |
 |-----|----------------|
 | `PK` | `USER#<user_id>` |
-| `SK` | `METRICS` (constant, see `METRICS_SK` in `db/src/keys.ts`) |
+| `SK` | **`METRICS#<ISO4217>`** (e.g. `METRICS#USD`, `METRICS#EUR`) |
 
-**Attributes:** `user_id` (String); **`metrics_updated_at`** (Number, epoch ms UTC); **`monthly_cashflow`** (Map: `income`, `expenses`, `net` — **current UTC month**); **`spending_by_category`** (List of maps: `category`, `amount` — same month); **`cashflow_history`** (List of maps: `label`, `income`, `expenses` — one row per UTC month from **earliest transaction** through **current month**, oldest first); **`cashflow_period_label`** (String); optional **`net_worth_change_pct`** (Number — month-over-month **net cashflow** change ratio). See [`../api_contract.md`](../api_contract.md) §2. Written by `refreshStoredDashboardMetrics` after **`POST /api/imports`** and after **`applyTagRule`**. Does not use GSI1/GSI2. If the item is missing or invalid, `getMetrics` recomputes from a full transaction list (no write).
+**Attributes:** `user_id` (String); **`currency`** (String, ISO 4217 — redundant with SK suffix, stored for clarity); **`metrics_updated_at`** (Number, epoch ms UTC); **`monthly_cashflow`** (Map: `income`, `expenses`, `net` — **current UTC month**, **this currency only**); **`spending_by_category`** (List of maps: `category`, `amount` — same month); **`cashflow_history`** (List of maps: `label`, `income`, `expenses` — UTC months from **earliest transaction in this currency** through **current month**, oldest first); **`cashflow_period_label`** (String); optional **`net_worth_change_pct`** (Number — month-over-month **net cashflow** change ratio for this currency). See [`../api_contract.md`](../api_contract.md) §2 and [`money_representation.md`](../money_representation.md) §3.
+
+**Refresh:** `refreshStoredDashboardMetrics` recomputes **every currency** present on at least one **`ACCOUNT`** after **`POST /api/imports`** and after **`applyTagRule`**. Does not use GSI1/GSI2. If the requested currency’s item is missing or invalid, `getMetrics` may recompute from filtered transactions (optional write-back).
+
+**Removed:** single global **`SK = METRICS`** row aggregating all currencies together.
 
 ---
 
@@ -222,9 +228,9 @@ Backups are **artifacts** (JSON files on disk after download), not rows in this 
 | **`backup_schema_version`** | Number | Monotonic integer; server accepts only versions it implements (reject older/newer as **400** until migrated). Start at **`1`** for V1. |
 | **`exported_at`** | Number | Epoch **ms** UTC when export ran. |
 | **`app_user_id`** | String | Cognito **`sub`** / owning user id. **`POST /api/backup/restore`** MUST reject the file if this does not match the authenticated user (**403**). |
-| **`accounts`** | Array | Objects aligned with **`GET /api/accounts`** plus any persisted fields needed for round-trip (`id`, `name`, `created_at`). |
+| **`accounts`** | Array | Objects aligned with **`GET /api/accounts`** (`id`, `name`, **`currency`**, `created_at`). |
 | **`profile`** | Object or null | Maps to **§5 Profile** attributes (`default_currency`, `net_worth`, …). |
-| **`metrics`** | Object or null | Maps to **§6 Metrics** cached snapshot attributes (optional — may be recomputed after restore instead). |
+| **`metrics`** | Object or array or null | **Per-currency** cached snapshots (**§6**). V1 may use a map keyed by ISO code or an array of `METRICS#<ccy>` items; restore must reinstantiate all **`METRICS#…`** rows. |
 | **`transactions`** | Array | Objects aligned with **`GET /api/transactions`** plus persistence-only fields required for **§1 Transaction**: **`merchant_embedding`**, **`suggested_category`**, **`category_confidence`**, **`match_type`**, **`pairing_id`** / **`pairing_source`** / **`pairing_confidence`** when present (see [`../transfer_matching.md`](../transfer_matching.md)). Must include **`transaction_file_id`** and **`cluster_id`** (non-empty strings for modern backups; aligns with **`clusters[]`**). |
 | **`clusters`** | Array | Objects aligned with review-queue cluster records and **§2 Cluster** persistence (`cluster_id`, aggregates, `assigned_category`, `pending_review`, …). |
 | **`transaction_files`** | Array | **`TRANSACTION_FILE`** metadata only (**§3** maps: `source`, `format`, `timing`, `result`, ids, `account_id`). **V1:** do **not** embed raw file contents or S3 object bodies; see [`import_file_blob_storage.md`](../import_file_blob_storage.md) for future blob-inclusive backups. |
@@ -270,7 +276,7 @@ DynamoDB does **not** offer a single multi-item transaction that spans an arbitr
 2. **Clear staging partition:** delete every item with **`PK = USER#<user_id>`** on the **staging** table (paginated `Query` + `BatchWriteItem` **`DeleteRequest`**). Ensures no leftover rows from an aborted prior restore.
 3. **Materialize** validated items as full DynamoDB attribute maps (including **`GSI1*` / `GSI2*`** on transactions) and **batch write** them to the **staging** table only — same **`PK`/`SK`** pattern they will use on primary (see §§1–6). **Do not** write **`RESTORE_LOCK`** or **`SYSTEM#RESTORE_LOCK`** into staging from backup JSON (lock is primary-only operational metadata).
 4. **Validate materialized data** (lightweight): e.g. counts vs backup arrays, spot-check required attributes on a sample transaction; optional conditional **`TransactWriteItems`** checks only where small. Any failure → **stop**, respond **500**, **primary untouched** except lock — **release lock** after staging cleanup policy is defined (or leave lock + staging for ops retry).
-5. **Replace primary user data (not the lock yet):** paginated **delete** every application item on **primary** with **`PK = USER#<user_id>`** and **`SK`** matching **`TXN#`**, **`CLUSTER#`**, **`FILE#`**, **`ACCOUNT#`**, literal **`PROFILE`**, literal **`METRICS`** — **exclude** **`SK = SYSTEM#RESTORE_LOCK`** and **`SK = SYSTEM#IMPORT_LOCK`**. Never touch **`health-check`** or other partitions.
+5. **Replace primary user data (not the lock yet):** paginated **delete** every application item on **primary** with **`PK = USER#<user_id>`** and **`SK`** matching **`TXN#`**, **`CLUSTER#`**, **`FILE#`**, **`ACCOUNT#`**, literal **`PROFILE`**, literal **`METRICS#`** prefix (all per-currency metric rows) — **exclude** **`SK = SYSTEM#RESTORE_LOCK`** and **`SK = SYSTEM#IMPORT_LOCK`**. Never touch **`health-check`** or other partitions.
 6. **Copy staging → primary:** `Query` staging for **`PK = USER#<user_id>`** (paginated), **`BatchWriteItem`** **`PutRequest`** identical items onto **primary**. Parallelize batch fan-out where safe; **retry** idempotently on throttle.
 7. **Clear staging partition** for this user (same pattern as step 2).
 8. **Metrics refresh:** if backup omitted **`metrics`** or product prefers recompute, call **`refreshStoredDashboardMetrics`** after primary writes complete.

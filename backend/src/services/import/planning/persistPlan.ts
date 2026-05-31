@@ -47,7 +47,7 @@ export type PersistImportPlanParams = Readonly<{
   repo: FinanceRepository;
   plan: PersistPlan;
   importFileId: string;
-  fileCurrency?: string;
+  fileCurrency: string;
 }>;
 
 /**

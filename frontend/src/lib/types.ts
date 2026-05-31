@@ -8,7 +8,7 @@ export type SpendingCategoryRow = {
 }
 
 export type MetricsResponse = {
-  /** Total number of transaction rows in the app (from metrics snapshot). */
+  currency: string
   transaction_count: number
   monthly_cashflow: {
     income: number
@@ -58,8 +58,8 @@ export type Transaction = {
   pairing_id?: string
   pairing_source?: string
   pairing_confidence?: string
-  /** ISO 4217 from the import file batch when stored on the transaction row. */
-  currency?: string
+  /** ISO 4217; equals parent account currency. */
+  currency: string
 }
 
 export type TransactionsResponse = {
@@ -72,13 +72,11 @@ export type PendingCluster = {
   total_transactions: number
   total_amount: number
   suggested_category: string | null
-  /** When set, from import (e.g. OFX `CURDEF`) on the batch that formed this cluster aggregate. */
-  currency?: string
+  /** ISO 4217 for this cluster aggregate. */
+  currency: string
 }
 
 export type ReviewQueueResponse = {
-  /** User profile default (ISO 4217); used when a cluster has no `currency` yet. */
-  default_currency: string
   pending_clusters: PendingCluster[]
 }
 
@@ -96,6 +94,7 @@ export type TagRuleResponse = {
 export type AccountRow = {
   id: string
   name: string
+  currency: string
   created_at: number
 }
 
@@ -113,7 +112,7 @@ export type ImportParseResult = {
   newClustersTouched?: number
   /** Id of the persisted `TRANSACTION_FILE` record for this run. */
   importFileId: string
-  /** ISO 4217 resolved at import (file → prior account file → profile default). */
+  /** ISO 4217 — equals target account currency. */
   currency: string
   /** Detected from filename / MIME; echoed by `POST /api/imports` when wired. */
   sourceFormat?: ImportSourceFormat
@@ -142,19 +141,9 @@ export type TransactionFileSource = {
   content_type?: string
 }
 
-export type TransactionFileCurrencyChoice =
-  | 'file_hint'
-  | 'prior_account_file'
-  | 'profile_default'
-  | 'user_override'
-
 export type TransactionFileFormat = {
   source_format?: string
-  /** When known from import metadata (e.g. OFX). */
   currency?: string
-  /** How `currency` was chosen for this import batch. */
-  currencyChoice?: TransactionFileCurrencyChoice
-  /** True when this run negated parsed values to match canonical sign (negative = from account). */
   amount_negated?: boolean
 }
 

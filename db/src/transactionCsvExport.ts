@@ -3,6 +3,8 @@ import type {
   TransactionFileRecord,
   TransactionRecord,
 } from './types';
+import { canonicalAmountToWireMajor, fileAmountToWireMajor } from './storedAmount';
+import { buildFileCurrencyLookup, currencyForTransaction } from './transactionCurrency';
 
 /** RFC 4180-style CSV cell: quote when needed, escape internal quotes. */
 export function escapeCsvCell(value: string): string {
@@ -95,6 +97,8 @@ export function formatTransactionsAsCsv(input: FormatTransactionsAsCsvInput): st
     });
   }
 
+  const currencyForFile = buildFileCurrencyLookup(input.accounts, input.transactionFiles);
+
   const sorted = [...input.transactions].sort((a, b) => {
     const byDate = b.date - a.date;
     if (byDate !== 0) return byDate;
@@ -113,14 +117,16 @@ export function formatTransactionsAsCsv(input: FormatTransactionsAsCsvInput): st
         ? JSON.stringify(t.merchant_embedding)
         : '';
 
+    const currency = currencyForTransaction(t, currencyForFile);
+
     const row = [
       cell(t.user_id),
       cell(t.id),
       cell(t.date),
       cell(t.raw_merchant),
       cell(resolveCleaned(t)),
-      cell(t.amount),
-      cell(t.file_amount ?? ''),
+      cell(canonicalAmountToWireMajor(t, currency)),
+      cell(fileAmountToWireMajor(t, currency) ?? ''),
       cell(t.cluster_id ?? ''),
       cell(t.category),
       cell(t.status),

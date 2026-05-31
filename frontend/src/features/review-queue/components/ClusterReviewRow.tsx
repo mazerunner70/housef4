@@ -12,9 +12,6 @@ import { ConfirmClusterTagButton } from '@/features/review-queue/components/Conf
 
 type ClusterReviewRowProps = Readonly<{
   cluster: PendingCluster
-  /** Profile default (ISO 4217) from `GET /api/review-queue`. */
-  defaultCurrency: string
-  /** From `TRANSACTION_FILE.format.currency` via cluster members when aggregate omits `currency`. */
   fileCurrency?: string
   onConfirm: (clusterId: string, category: string) => void
   isSubmitting?: boolean
@@ -22,7 +19,6 @@ type ClusterReviewRowProps = Readonly<{
 
 export function ClusterReviewRow({
   cluster,
-  defaultCurrency,
   fileCurrency,
   onConfirm,
   isSubmitting,
@@ -33,10 +29,7 @@ export function ClusterReviewRow({
   const [categoryMenuOpen, setCategoryMenuOpen] = useState(false)
   const [matchingTxOpen, setMatchingTxOpen] = useState(false)
 
-  const displayCurrency = resolveCurrencyCode(
-    cluster.currency,
-    fileCurrency ?? defaultCurrency,
-  )
+  const displayCurrency = resolveCurrencyCode(cluster.currency ?? fileCurrency)
   const totalFormatted = formatCurrencyAmount(
     cluster.total_amount,
     displayCurrency,

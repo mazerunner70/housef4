@@ -16,6 +16,7 @@ import {
 import type { ClusterPipelineResult } from '../clustering/clusterPipeline';
 import type { SourceRow } from '../clustering/clusterPass';
 import { cleanMerchantForClustering } from '../clustering/merchantNormalize';
+import { parsedRowAmounts } from '../parse/parsedRowAmounts';
 import {
   countBy,
   filter,
@@ -137,8 +138,8 @@ export function insertsFromNewRows(
   sources: SourceRow[],
   assignments: Assignment[],
   parsedLength: number,
+  importCurrency: string,
   pairingByLegId?: Readonly<Record<string, TransferPairingAssignment>>,
-  importCurrency?: string,
 ): ImportTransactionInput[] {
   const nExisting = sources.length - parsedLength;
   const newRows = map(
@@ -150,14 +151,15 @@ export function insertsFromNewRows(
     ([s, a]) => {
       const row = s.row;
       const pairing = pairingByLegId?.[s.id];
+      const amounts = parsedRowAmounts(row, importCurrency);
       return {
         user_id: userId,
         id: s.id,
         date: row.date,
         raw_merchant: row.raw_merchant,
         cleaned_merchant: cleanMerchantForClustering(row.raw_merchant),
-        file_amount: row.file_amount,
-        amount: row.canonical_amount,
+        canonicalAmount: amounts.canonicalAmount,
+        fileAmount: amounts.fileAmount,
         cluster_id: a.cluster_id,
         category: a.category,
         status: a.status,
@@ -172,7 +174,6 @@ export function insertsFromNewRows(
           pairing_source: pairing.pairing_source,
           pairing_confidence: pairing.pairing_confidence,
         }),
-        ...(importCurrency && { currency: importCurrency }),
       };
     },
   );
@@ -199,7 +200,7 @@ export type BuildPersistPlanParams = Readonly<{
   existing: TransactionRecord[];
   pairingByLegId: Readonly<Record<string, TransferPairingAssignment>>;
   pipeline: ClusterPipelineResult;
-  importCurrency?: string;
+  importCurrency: string;
 }>;
 
 /** §4.2 stage 9 — assemble planning output from stages 7–8 artefacts. */
@@ -217,8 +218,8 @@ export function buildPersistPlan(params: BuildPersistPlanParams): PersistPlan {
     sources,
     assignments,
     parsedLength,
-    pairingByLegId,
     params.importCurrency,
+    pairingByLegId,
   );
   const retiredClusterIds = computeRetiredClusterIds(existing, assignments);
   const summary = summarizeInserts(toInsert, parsedLength);

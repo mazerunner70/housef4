@@ -1,9 +1,13 @@
+import { abs, add, money, parseCurrency, type Money } from '@housef4/money';
+
+import { readCanonicalAmountFromRow } from './storedAmount';
+
 import { clusterSk } from './keys';
 import type { ImportPersistPlan, TransactionStatus } from './types';
 
 export type ClusterAggregateMember = Readonly<{
   raw_merchant: string;
-  amount: number;
+  canonicalAmount: Money;
   category: string;
   status: TransactionStatus;
   suggested_category?: string | null;
@@ -51,10 +55,13 @@ function bestSuggestedFromMembers(
   return best;
 }
 
+function dynamoString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
 function normalizeFileCurrency(fileCurrency?: string): string | undefined {
-  const normalized = fileCurrency?.trim().toUpperCase();
-  if (normalized && /^[A-Z]{3}$/.test(normalized)) return normalized;
-  return undefined;
+  if (!fileCurrency?.trim()) return undefined;
+  return parseCurrency(fileCurrency).id;
 }
 
 /**
@@ -109,10 +116,20 @@ export function buildClusterAggregateItem(
   members: readonly ClusterAggregateMember[],
   opts: BuildClusterAggregateOptions = {},
 ): Record<string, unknown> {
-  let total_amount = 0;
+  let totalAmount = money(0);
   const merchants: string[] = [];
+  const fromFile = normalizeFileCurrency(opts.fileCurrency);
+  const clusterCurrency = fromFile ?? opts.currency;
+  if (!clusterCurrency?.trim()) {
+    throw new Error('buildClusterAggregateItem: currency is required for amount aggregation');
+  }
+
   for (const m of members) {
-    total_amount += Math.abs(m.amount);
+    totalAmount = add(
+      totalAmount,
+      abs(m.canonicalAmount, clusterCurrency),
+      clusterCurrency,
+    );
     merchants.push(m.raw_merchant);
   }
 
@@ -123,8 +140,6 @@ export function buildClusterAggregateItem(
     previousCategoryId,
     members,
   );
-  const fromFile = normalizeFileCurrency(opts.fileCurrency);
-  const clusterCurrency = fromFile ?? opts.currency;
 
   const item: Record<string, unknown> = {
     PK: pk,
@@ -133,7 +148,7 @@ export function buildClusterAggregateItem(
     cluster_id: clusterId,
     sample_merchants: uniqSampleMerchants(merchants, 3),
     total_transactions: members.length,
-    total_amount,
+    total_amount_minor: totalAmount.units,
     suggested_category: bestSuggestedFromMembers(members),
     assigned_category,
     previous_category_id: previousCategoryId,
@@ -152,12 +167,12 @@ export function clusterMembersFromTransactionItems(
   const out: ClusterAggregateMember[] = [];
   for (const item of items) {
     if (item.entity_type !== 'TRANSACTION') continue;
-    if (String(item.cluster_id ?? '') !== clusterId) continue;
+    if (dynamoString(item.cluster_id) !== clusterId) continue;
     out.push({
-      raw_merchant: String(item.raw_merchant ?? ''),
-      amount: Number(item.amount ?? 0),
-      category: String(item.category ?? ''),
-      status: String(item.status ?? 'PENDING_REVIEW') as TransactionStatus,
+      raw_merchant: dynamoString(item.raw_merchant),
+      canonicalAmount: readCanonicalAmountFromRow(item),
+      category: dynamoString(item.category),
+      status: dynamoString(item.status, 'PENDING_REVIEW') as TransactionStatus,
       suggested_category:
         item.suggested_category === undefined
           ? undefined

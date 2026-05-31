@@ -1,5 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { money } = require('@housef4/money');
 
 const {
   buildPersistPlan,
@@ -17,7 +18,7 @@ function existingTxn(overrides = {}) {
     date: 1_699_000_000_000,
     raw_merchant: 'Coffee Shop',
     cleaned_merchant: 'coffee shop',
-    amount: -3,
+    canonicalAmount: money(-300),
     cluster_id: 'CL_old',
     category: 'Food',
     status: 'CLASSIFIED',
@@ -141,6 +142,7 @@ test('buildPersistPlan — composes patches, inserts, retired clusters, summary'
       clusterHints: { CL_new: { previousCategoryId: 'Food' } },
       existingSorted,
     },
+    importCurrency: 'USD',
   });
 
   assert.equal(plan.existingPatches.length, 1);
@@ -176,6 +178,7 @@ test('insertsFromNewRows — maps new sources only', () => {
     ],
     [assignment(), assignment({ cluster_id: 'CL_rent' })],
     1,
+    'USD',
   );
 
   assert.equal(inserts.length, 1);

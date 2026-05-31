@@ -22,7 +22,7 @@ type PersistImportPhaseParams = Readonly<{
   plan: PersistPlan;
   importFileId: string;
   importStartedAt: number;
-  importCurrency?: string;
+  importCurrency: string;
   transactionFileInput: TransactionFileInput;
   extracted: ExtractedImportUpload;
   contentSha256: string;

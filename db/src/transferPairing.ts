@@ -4,6 +4,8 @@
  * Pure logic: callers supply legs (with account_id); no Dynamo or HTTP.
  */
 
+import { pairingIsExact, pairingResidualAbs, type Money } from '@housef4/money';
+
 /** Milliseconds per nominal “day” for pairing windows (`|t₁ − t₂| ≤ windowDays × this`). */
 export const TRANSFER_PAIRING_DAY_MS = 86_400_000;
 
@@ -15,7 +17,8 @@ export interface TransferPairingLeg {
   account_id: string;
   /** Epoch ms; candidates satisfy §3.|date(A) − date(B)| ≤ W × {@link TRANSFER_PAIRING_DAY_MS}. */
   date: number;
-  amount: number;
+  /** Signed canonical amount. */
+  canonicalAmount: Money;
   /**
    * When both legs specify currency, they must match. If either omits it, pairing ignores currency
    * (single-currency assumption); FX pairing is out of scope.
@@ -26,8 +29,10 @@ export interface TransferPairingLeg {
 export interface TransferPairingOptions {
   /** Nominal day count **W**: candidates satisfy |date(A) − date(B)| ≤ **W × {@link TRANSFER_PAIRING_DAY_MS}**. */
   windowDays: number;
-  /** Maximum allowed |amount(A) + amount(B)| for a candidate pair. */
-  epsilon: number;
+  /** ISO 4217 code for all amount arithmetic in this run. */
+  amountCurrency: string;
+  /** Maximum allowed |amount(A) + amount(B)| for a candidate pair. Use `money(0)` for exact integer match. */
+  epsilonAmount: Money;
   /** Injected for tests; defaults to `crypto.randomUUID` when available. */
   createPairingId?: () => string;
   /**
@@ -81,15 +86,12 @@ function currenciesCompatible(a: TransferPairingLeg, b: TransferPairingLeg): boo
   return true;
 }
 
-function residualAbs(amountA: number, amountB: number): number {
-  return Math.abs(amountA + amountB);
-}
-
-function residualConfidence(amountA: number, amountB: number): PairingConfidence {
-  const r = amountA + amountB;
-  const abs = Math.abs(r);
-  if (abs <= 1e-12) return 'exact';
-  return 'within_epsilon';
+function residualConfidence(
+  amountA: Money,
+  amountB: Money,
+  amountCurrency: string,
+): PairingConfidence {
+  return pairingIsExact(amountA, amountB, amountCurrency) ? 'exact' : 'within_epsilon';
 }
 
 function defaultCreatePairingId(): string {
@@ -107,8 +109,16 @@ function isStructuralEligibleExceptWindow(a: TransferPairingLeg, b: TransferPair
   return currenciesCompatible(a, b);
 }
 
-function passesEpsilon(a: TransferPairingLeg, b: TransferPairingLeg, epsilon: number): boolean {
-  return residualAbs(a.amount, b.amount) <= epsilon;
+function passesEpsilon(
+  a: TransferPairingLeg,
+  b: TransferPairingLeg,
+  epsilonAmount: Money,
+  amountCurrency: string,
+): boolean {
+  return (
+    pairingResidualAbs(a.canonicalAmount, b.canonicalAmount, amountCurrency) <=
+    epsilonAmount.units
+  );
 }
 
 /**
@@ -119,9 +129,10 @@ function betterEligiblePartner(
   current: TransferPairingLeg | undefined,
   cand: TransferPairingLeg,
   legA: TransferPairingLeg,
-  epsilon: number,
+  epsilonAmount: Money,
+  amountCurrency: string,
 ): TransferPairingLeg | undefined {
-  if (!passesEpsilon(legA, cand, epsilon)) return current;
+  if (!passesEpsilon(legA, cand, epsilonAmount, amountCurrency)) return current;
   if (!current) return cand;
   const distCand = Math.abs(legA.date - cand.date);
   const distCur = Math.abs(legA.date - current.date);
@@ -219,7 +230,8 @@ function bestPartnerInWindow(
   centre: number,
   left: number,
   right: number,
-  epsilon: number,
+  epsilonAmount: Money,
+  amountCurrency: string,
   paired: ReadonlySet<string>,
 ): TransferPairingLeg | undefined {
   let best: TransferPairingLeg | undefined;
@@ -229,7 +241,7 @@ function bestPartnerInWindow(
     if (cand === undefined) continue;
     if (paired.has(cand.id)) continue;
     if (!isStructuralEligibleExceptWindow(legA, cand)) continue;
-    best = betterEligiblePartner(best, cand, legA, epsilon);
+    best = betterEligiblePartner(best, cand, legA, epsilonAmount, amountCurrency);
   }
   return best;
 }
@@ -244,7 +256,8 @@ function assignPairingsOrderedSweep(
 ): TransferPairingResult {
   const deltaMs = options.windowDays * TRANSFER_PAIRING_DAY_MS;
   const proposalRootIds = options.proposalRootIds;
-  const epsilon = options.epsilon;
+  const epsilonAmount = options.epsilonAmount;
+  const amountCurrency = options.amountCurrency;
   const nextId = options.createPairingId ?? defaultCreatePairingId;
   const paired = new Set<string>();
   const byLegId: Record<string, TransferPairingAssignment> = {};
@@ -257,11 +270,24 @@ function assignPairingsOrderedSweep(
     if (paired.has(a.id)) continue;
 
     const { left, right } = windowHalfOpen(merged, centre, deltaMs, hints);
-    const best = bestPartnerInWindow(a, merged, centre, left, right, epsilon, paired);
+    const best = bestPartnerInWindow(
+      a,
+      merged,
+      centre,
+      left,
+      right,
+      epsilonAmount,
+      amountCurrency,
+      paired,
+    );
     if (!best) continue;
 
     const pairing_id = nextId();
-    const pairing_confidence = residualConfidence(a.amount, best.amount);
+    const pairing_confidence = residualConfidence(
+      a.canonicalAmount,
+      best.canonicalAmount,
+      amountCurrency,
+    );
     const assignment: TransferPairingAssignment = {
       pairing_id,
       pairing_source: 'auto',

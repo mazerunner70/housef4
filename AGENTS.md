@@ -9,6 +9,7 @@ Use this file as default project context. Prefer **small, scoped changes** and m
 | `frontend/` | React + Vite SPA |
 | `backend/` | Node.js TypeScript Lambda HTTP handlers |
 | `db/` | DynamoDB repository layer (single-table access patterns) |
+| `money/` | Canonical monetary types and minor-unit conversions (`@housef4/money`) |
 | `infrastructure/` | Terraform for AWS |
 | `scripts/` | Bash helpers (local bootstrap, deploy, auth smoke tests) |
 | `docs/` | Product and technical documentation (see `docs/README.md`) |
@@ -26,6 +27,8 @@ Use package-level scripts via `pnpm --filter <package>` when working only in one
 ## Documentation contracts
 
 Start from **`docs/README.md`** for the map of detailed design docs.
+
+Type naming across **`db/`**, **`backend/`**, and **`money/`** follows **`docs/02_architecture/decisions/001-type-naming-conventions.md`** (suffix = boundary role; `*Record` in `db`, not `*Store` for data shapes).
 
 When changing HTTP surfaces or client expectations, update **`docs/03_detailed_design/api_contract.md`** in the same change.
 

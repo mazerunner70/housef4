@@ -1,5 +1,18 @@
 import type { MetricsResponse, SpendingCategoryRow, Transaction } from '@/lib/types'
 
+/** Zeroed metrics for the dashboard shell before data exists or when the API has nothing to aggregate. */
+export function emptyMetrics(currency: string): MetricsResponse {
+  const code = currency.trim().toUpperCase()
+  return {
+    currency: code,
+    transaction_count: 0,
+    monthly_cashflow: { income: 0, expenses: 0, net: 0 },
+    net_worth: 0,
+    spending_by_category: [],
+    cashflow_period_label: 'This month',
+  }
+}
+
 export function utcMonthBoundsFromStart(monthStartMs: number): {
   start: number
   end: number

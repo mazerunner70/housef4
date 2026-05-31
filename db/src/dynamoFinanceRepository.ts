@@ -1,3 +1,5 @@
+import { money } from '@housef4/money';
+
 import {
   BatchWriteCommand,
   DeleteCommand,
@@ -17,7 +19,7 @@ import {
   fileTxnGsi2Sk,
   ACCOUNT_PREFIX,
   FILE_PREFIX,
-  METRICS_SK,
+  metricsSk,
   PROFILE_SK,
   txnSk,
   userPk,
@@ -43,14 +45,22 @@ import {
   type DashboardMetricsStored,
 } from './dashboardMetrics';
 import { dbLog } from './structuredLog';
+import { normalizeIso4217Currency } from './importCurrency';
 import {
-  normalizeIso4217Currency,
-  normalizeTransactionFileCurrencyChoice,
-} from './importCurrency';
+  buildFileCurrencyLookup,
+  currencyForTransaction,
+} from './transactionCurrency';
 import {
   buildClusterAggregateItem,
   type ClusterAggregateMember,
 } from './clusterAggregates';
+import {
+  applyStoredAmountToRecord,
+  readCanonicalAmountFromRow,
+  readClusterTotalAmount,
+  recordToStoredAmountFields,
+  storedAmountFieldsToWireMajor,
+} from './storedAmount';
 import {
   BACKUP_SCHEMA_VERSION_V1,
   type AccountRecord,
@@ -84,6 +94,10 @@ function wireString(v: unknown, fallback: string = ''): string {
   return fallback;
 }
 
+function readStoredAccountCurrency(row: Record<string, unknown>): string | undefined {
+  return normalizeIso4217Currency(wireString(row.currency, ''));
+}
+
 function applyFormatFromRow(
   o: Record<string, unknown>,
   out: TransactionFileFormat,
@@ -93,12 +107,6 @@ function applyFormatFromRow(
   }
   if (o.currency != null) {
     out.currency = wireString(o.currency);
-  }
-  const currencyChoice = normalizeTransactionFileCurrencyChoice(
-    o.currencyChoice != null ? wireString(o.currencyChoice) : undefined,
-  );
-  if (currencyChoice) {
-    out.currencyChoice = currencyChoice;
   }
   if (o.amount_negated != null) {
     out.amount_negated = o.amount_negated as boolean;
@@ -138,18 +146,30 @@ function stripDynamoIndexKeys(item: Record<string, unknown>): Record<string, unk
   return out;
 }
 
-function transactionRecordToBackupWire(rec: TransactionRecord): Record<string, unknown> {
+function transactionRecordToBackupWire(
+  rec: TransactionRecord,
+  currency: string,
+): Record<string, unknown> {
+  const wireAmounts = storedAmountFieldsToWireMajor(
+    {
+      amount_minor: rec.canonicalAmount.units,
+      file_amount_minor: rec.fileAmount?.units,
+    },
+    currency,
+  );
   const row: Record<string, unknown> = {
     entity_type: 'TRANSACTION',
     user_id: rec.user_id,
     id: rec.id,
     date: rec.date,
     raw_merchant: rec.raw_merchant,
-    amount: rec.amount,
+    amount: wireAmounts.amount,
+    amount_minor: rec.canonicalAmount.units,
     category: rec.category,
     status: rec.status,
     is_recurring: rec.is_recurring,
     transaction_file_id: rec.transaction_file_id,
+    currency,
   };
   if (rec.cleaned_merchant !== undefined) {
     row.cleaned_merchant = rec.cleaned_merchant;
@@ -157,8 +177,11 @@ function transactionRecordToBackupWire(rec: TransactionRecord): Record<string, u
   if (rec.cluster_id !== undefined) {
     row.cluster_id = rec.cluster_id;
   }
-  if (rec.file_amount !== undefined) {
-    row.file_amount = rec.file_amount;
+  if (wireAmounts.file_amount !== undefined) {
+    row.file_amount = wireAmounts.file_amount;
+  }
+  if (rec.fileAmount !== undefined) {
+    row.file_amount_minor = rec.fileAmount.units;
   }
   if (rec.merchant_embedding !== undefined && rec.merchant_embedding.length > 0) {
     row.merchant_embedding = rec.merchant_embedding;
@@ -190,7 +213,7 @@ interface BackupExportAccum {
   clusters: Record<string, unknown>[];
   transaction_files: Record<string, unknown>[];
   profile: Record<string, unknown> | null;
-  metrics: Record<string, unknown> | null;
+  metrics: Record<string, unknown>[];
 }
 
 function transactionFileBackupCompletedAt(row: Record<string, unknown>): number {
@@ -302,7 +325,9 @@ function appendPartitionItemToBackupExport(
     case 'TRANSACTION': {
       const rec = transactionItemToRecord(item, userId);
       if (rec) {
-        acc.transactions.push(transactionRecordToBackupWire(rec));
+        const currency =
+          normalizeIso4217Currency(wireString(item.currency, '')) ?? 'USD';
+        acc.transactions.push(transactionRecordToBackupWire(rec, currency));
       }
       break;
     }
@@ -318,9 +343,10 @@ function appendPartitionItemToBackupExport(
     case 'PROFILE':
       acc.profile = stripDynamoIndexKeys(item);
       break;
-    case 'METRICS':
-      acc.metrics = stripDynamoIndexKeys(item);
+    case 'METRICS': {
+      acc.metrics.push(stripDynamoIndexKeys(item));
       break;
+    }
     default:
       dbLog('warn', 'backup.export.skipped_unknown_entity', {
         entity_type: et,
@@ -335,8 +361,8 @@ export interface FinanceRepository {
     userId: string,
     transactionFileId: string,
   ): Promise<TransactionRecord[]>;
-  getMetrics(userId: string): Promise<MetricsSnapshot>;
-  /** Recompute transaction-derived dashboard fields and persist on the `METRICS` item. */
+  getMetrics(userId: string, currency: string): Promise<MetricsSnapshot>;
+  /** Recompute per-currency dashboard fields and persist `METRICS#<ISO4217>` items. */
   refreshStoredDashboardMetrics(userId: string): Promise<void>;
   listPendingClusters(userId: string): Promise<PendingClusterRecord[]>;
   patchExistingTransactionsAfterImport(
@@ -347,9 +373,8 @@ export interface FinanceRepository {
     userId: string,
     rows: ImportTransactionInput[],
     transactionFileId: string,
-    fileCurrency?: string,
+    fileCurrency: string,
   ): Promise<ImportIngestResult>;
-  getDefaultCurrencyCode(userId: string): Promise<string>;
   /** Remove CLUSTER# aggregate items whose ids are no longer referenced (import splits/merges). */
   retireClusterAggregates(userId: string, clusterIds: string[]): Promise<void>;
   /**
@@ -373,21 +398,6 @@ export interface FinanceRepository {
     blob: ImportBlobRef,
   ): Promise<void>;
   /**
-   * Update `TRANSACTION_FILE.format.currency`, stamp matching transactions, rebuild clusters.
-   * Optionally set profile `default_currency`.
-   */
-  patchTransactionFileCurrency(
-    userId: string,
-    importFileId: string,
-    currency: string,
-    opts?: { setProfileDefault?: boolean },
-  ): Promise<{
-    currency: string;
-    transactions_updated: number;
-    clusters_rebuilt: number;
-    profile_default_updated: boolean;
-  }>;
-  /**
    * When a completed import stored `content_sha256`, returns metadata for duplicate-blob **409** responses.
    */
   findDuplicateBlobImport(
@@ -400,7 +410,18 @@ export interface FinanceRepository {
     userId: string,
     accountId: string,
   ): Promise<AccountRecord | null>;
-  createAccount(userId: string, name: string): Promise<AccountRecord>;
+  createAccount(userId: string, name: string, currency: string): Promise<AccountRecord>;
+  /** ISO 4217 when persisted on the ACCOUNT item; undefined when the attribute is absent or empty. */
+  getAccountStoredCurrency(
+    userId: string,
+    accountId: string,
+  ): Promise<string | undefined>;
+  /** Set `ACCOUNT.currency` once when missing (import backfill for legacy rows). */
+  ensureAccountCurrencyIfUnset(
+    userId: string,
+    accountId: string,
+    currency: string,
+  ): Promise<void>;
   applyTagRule(
     userId: string,
     clusterId: string,
@@ -473,13 +494,13 @@ function parseClusterAggregateMetadata(
   item: Record<string, unknown> | undefined,
 ): ClusterAggregateMetadata | null {
   if (item?.entity_type !== 'CLUSTER') return null;
-  const currency = wireString(item.currency, '');
+  const currency = normalizeIso4217Currency(wireString(item.currency, ''));
   return {
     assigned_category:
       item.assigned_category === undefined
         ? null
         : (item.assigned_category as string | null),
-    ...(currency === '' ? {} : { currency }),
+    ...(currency ? { currency } : {}),
   };
 }
 
@@ -589,7 +610,7 @@ function parseBlobFromItem(item: Record<string, unknown>): ImportBlobRef | undef
   if (kind !== 'filesystem' && kind !== 's3') return undefined;
   const key = wireString(o.key, '');
   const contentSha256 = wireString(o.content_sha256, '');
-  const storedBytes = Number(o.stored_bytes ?? NaN);
+  const storedBytes = Number(o.stored_bytes ?? Number.NaN);
   if (!key || !contentSha256 || !Number.isFinite(storedBytes)) return undefined;
   const bucket = wireString(o.bucket, '');
   return {
@@ -702,15 +723,6 @@ function copyMerchantEmbeddingIfPresent(
   }
 }
 
-function copyFileAmountIfPresent(
-  item: Record<string, unknown>,
-  rec: TransactionRecord,
-) {
-  if (item.file_amount === undefined || item.file_amount === null) return;
-  const fa = Number(item.file_amount);
-  if (Number.isFinite(fa)) rec.file_amount = fa;
-}
-
 function copyOptionalTxnStringFields(
   item: Record<string, unknown>,
   rec: TransactionRecord,
@@ -763,11 +775,6 @@ function transactionOptionalFields(
   }
   copyOptionalTxnStringFields(item, rec);
   copyTransferPairingFields(item, rec);
-  copyFileAmountIfPresent(item, rec);
-  const currency = wireString(item.currency, '');
-  if (currency !== '') {
-    rec.currency = currency;
-  }
 }
 
 function transactionItemToRecord(
@@ -786,13 +793,16 @@ function transactionItemToRecord(
     id: wireString(item.id, ''),
     date: Number(item.date),
     raw_merchant: wireString(item.raw_merchant, ''),
-    amount: Number(item.amount),
+    canonicalAmount: money(0),
     category: wireString(item.category, ''),
     status: item.status as TransactionStatus,
     is_recurring: Boolean(item.is_recurring),
     transaction_file_id,
   };
   transactionOptionalFields(item, rec);
+  const accountCurrency =
+    normalizeIso4217Currency(wireString(item.currency, '')) ?? 'USD';
+  applyStoredAmountToRecord(item, rec, accountCurrency);
   return rec;
 }
 
@@ -801,6 +811,7 @@ function importTransactionToDynamoItem(
   pk: string,
   userId: string,
   transactionFileId: string,
+  importCurrency: string,
 ): Record<string, unknown> {
   const gsi1pk = clusterTxnGsi1Pk(r.user_id, r.cluster_id);
   const gsi1sk = clusterTxnGsi1Sk(r.id);
@@ -815,8 +826,7 @@ function importTransactionToDynamoItem(
     date: r.date,
     raw_merchant: r.raw_merchant,
     cleaned_merchant: r.cleaned_merchant,
-    amount: r.amount,
-    file_amount: r.file_amount,
+    ...recordToStoredAmountFields(r),
     cluster_id: r.cluster_id,
     category: r.category,
     status: r.status,
@@ -842,8 +852,11 @@ function importTransactionToDynamoItem(
     if (r.pairing_source !== undefined) item.pairing_source = r.pairing_source;
     if (r.pairing_confidence !== undefined) item.pairing_confidence = r.pairing_confidence;
   }
-  const cur = normalizeIso4217Currency(r.currency);
-  if (cur) item.currency = cur;
+  const cur = normalizeIso4217Currency(importCurrency);
+  if (!cur) {
+    throw new Error(`Import transaction ${r.id} missing account currency`);
+  }
+  item.currency = cur;
   return item;
 }
 
@@ -851,24 +864,23 @@ function pendingClusterFromItem(
   item: Record<string, unknown>,
 ): PendingClusterRecord | null {
   if (item.entity_type !== 'CLUSTER') return null;
+  const clusterCurrency =
+    normalizeIso4217Currency(wireString(item.currency, '')) ?? 'USD';
   const rec: PendingClusterRecord = {
     cluster_id: wireString(item.cluster_id),
     sample_merchants: (item.sample_merchants as string[]) ?? [],
     total_transactions: Number(item.total_transactions ?? 0),
-    total_amount: Number(item.total_amount ?? 0),
+    totalAmount: readClusterTotalAmount(item, clusterCurrency),
     suggested_category:
       item.suggested_category === undefined
         ? null
         : (item.suggested_category as string | null),
+    currency: clusterCurrency,
   };
   if (item.previous_category_id !== undefined) {
     const prior = item.previous_category_id;
     rec.previous_category_id =
       prior === null ? null : wireString(prior, '') || null;
-  }
-  const currency = wireString(item.currency, '');
-  if (currency !== '') {
-    rec.currency = currency;
   }
   return rec;
 }
@@ -940,9 +952,11 @@ export class DynamoFinanceRepository implements FinanceRepository {
 
   private async buildMetricsSnapshotFromStored(
     userId: string,
+    currency: string,
     rawMetrics: unknown,
     stored: DashboardMetricsStored,
     net_worth: number,
+    currencyForFile: (fileId: string) => string | undefined,
   ): Promise<MetricsSnapshot> {
     const rawDynamo = rawMetrics as Record<string, unknown>;
     let s = stored;
@@ -950,23 +964,33 @@ export class DynamoFinanceRepository implements FinanceRepository {
       const txns = await this.listTransactions(userId);
       const withCount: DashboardMetricsStored = {
         ...s,
-        transaction_count: txns.length,
+        transaction_count: txns.filter(
+          (t) =>
+            currencyForFile(t.transaction_file_id)?.trim().toUpperCase() ===
+            currency.trim().toUpperCase(),
+        ).length,
       };
-      await this.putDashboardMetricsItem(userId, withCount, txns.length);
+      await this.putDashboardMetricsItem(userId, currency, withCount, withCount.transaction_count);
       s = withCount;
     }
 
     if (metricsSnapshotLooksAllZero(s)) {
       const txns = await this.listTransactions(userId);
       if (txns.length > 0) {
-        const live = computeDashboardMetrics(txns, Date.now());
+        const live = computeDashboardMetrics(
+          txns,
+          Date.now(),
+          currency,
+          currencyForFile,
+        );
         if (!metricsSnapshotLooksAllZero(live)) {
           dbLog('info', 'metrics.snapshot.healed_stale_zero', {
             userIdLen: userId.length,
+            currency,
           });
-          await this.putDashboardMetricsItem(userId, live, txns.length);
+          await this.putDashboardMetricsItem(userId, currency, live, live.transaction_count);
         }
-        return { ...live, net_worth };
+        return { currency, ...live, net_worth };
       }
     }
 
@@ -974,6 +998,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
     dbLog('info', 'metrics.snapshot.read', {
       source: 'METRICS_ITEM',
       userIdLen: userId.length,
+      currency,
       metricsUpdatedAt: raw.metrics_updated_at ?? null,
       monthly_cashflow: s.monthly_cashflow,
       cashflowHistory: s.cashflow_history.map((h) => ({
@@ -983,12 +1008,16 @@ export class DynamoFinanceRepository implements FinanceRepository {
       spendingTop5: s.spending_by_category.slice(0, 5),
       net_worth,
     });
-    return { ...s, net_worth };
+    return { currency, ...s, net_worth };
   }
 
-  async getMetrics(userId: string): Promise<MetricsSnapshot> {
+  async getMetrics(userId: string, currency: string): Promise<MetricsSnapshot> {
+    const normalized = normalizeIso4217Currency(currency);
+    if (!normalized) {
+      throw new Error('Invalid metrics currency');
+    }
     const pk = userPk(userId);
-    const [profile, metricsRow] = await Promise.all([
+    const [profile, metricsRow, accounts, files] = await Promise.all([
       this.doc.send(
         new GetCommand({
           TableName: this.tableName,
@@ -998,10 +1027,13 @@ export class DynamoFinanceRepository implements FinanceRepository {
       this.doc.send(
         new GetCommand({
           TableName: this.tableName,
-          Key: { PK: pk, SK: METRICS_SK },
+          Key: { PK: pk, SK: metricsSk(normalized) },
         }),
       ),
+      this.listAccounts(userId),
+      this.listTransactionFiles(userId),
     ]);
+    const currencyForFile = buildFileCurrencyLookup(accounts, files);
 
     const net_worth =
       profile.Item?.entity_type === 'PROFILE'
@@ -1022,6 +1054,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
         if (e instanceof StoredDashboardMetricsParseError) {
           dbLog('error', 'metrics.snapshot.stored_parse_failed', {
             userIdLen: userId.length,
+            currency: normalized,
             path: e.path,
             message: e.message,
           });
@@ -1033,9 +1066,11 @@ export class DynamoFinanceRepository implements FinanceRepository {
     if (stored) {
       return this.buildMetricsSnapshotFromStored(
         userId,
+        normalized,
         rawMetrics,
         stored,
         net_worth,
+        currencyForFile,
       );
     }
 
@@ -1045,6 +1080,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
     );
     dbLog('warn', 'metrics.snapshot.fallback_compute', {
       userIdLen: userId.length,
+      currency: normalized,
       reason: fallbackReason,
       sawEntityType:
         rawMetrics && typeof rawMetrics === 'object'
@@ -1053,32 +1089,60 @@ export class DynamoFinanceRepository implements FinanceRepository {
     });
 
     const txns = await this.listTransactions(userId);
-    const computed = computeDashboardMetrics(txns, Date.now());
+    const computed = computeDashboardMetrics(
+      txns,
+      Date.now(),
+      normalized,
+      currencyForFile,
+    );
     return {
+      currency: normalized,
       ...computed,
       net_worth,
     };
   }
 
   async refreshStoredDashboardMetrics(userId: string): Promise<void> {
-    const txns = await this.listTransactions(userId);
-    const body = computeDashboardMetrics(txns, Date.now());
-    await this.putDashboardMetricsItem(userId, body, txns.length);
+    const [txns, accounts, files] = await Promise.all([
+      this.listTransactions(userId),
+      this.listAccounts(userId),
+      this.listTransactionFiles(userId),
+    ]);
+    const currencyForFile = buildFileCurrencyLookup(accounts, files);
+    const currencies = [
+      ...new Set(accounts.map((a) => a.currency.trim().toUpperCase())),
+    ];
+    const now = Date.now();
+    for (const currency of currencies) {
+      const body = computeDashboardMetrics(txns, now, currency, currencyForFile);
+      await this.putDashboardMetricsItem(
+        userId,
+        currency,
+        body,
+        body.transaction_count,
+      );
+    }
   }
 
   private async putDashboardMetricsItem(
     userId: string,
+    currency: string,
     body: DashboardMetricsStored,
     txnCount: number,
   ): Promise<void> {
+    const normalized = normalizeIso4217Currency(currency);
+    if (!normalized) {
+      throw new Error('Invalid metrics currency');
+    }
     const validated = parseStoredDashboardMetrics(body);
     const pk = userPk(userId);
     const updatedAt = Date.now();
     const item: Record<string, unknown> = {
       PK: pk,
-      SK: METRICS_SK,
+      SK: metricsSk(normalized),
       entity_type: 'METRICS',
       user_id: userId,
+      currency: normalized,
       metrics_updated_at: updatedAt,
       transaction_count: validated.transaction_count,
       monthly_cashflow: validated.monthly_cashflow,
@@ -1098,23 +1162,11 @@ export class DynamoFinanceRepository implements FinanceRepository {
 
     dbLog('info', 'metrics.snapshot.persisted', {
       userIdLen: userId.length,
+      currency: normalized,
       txnCount,
       metrics_updated_at: updatedAt,
       monthly_cashflow: validated.monthly_cashflow,
     });
-  }
-
-  async getDefaultCurrencyCode(userId: string): Promise<string> {
-    const profile = await this.doc.send(
-      new GetCommand({
-        TableName: this.tableName,
-        Key: { PK: userPk(userId), SK: PROFILE_SK },
-      }),
-    );
-    if (profile.Item?.entity_type !== 'PROFILE') return 'USD';
-    const c = profile.Item.default_currency;
-    if (c != null && c !== '' && typeof c === 'string') return c.toUpperCase();
-    return 'USD';
   }
 
   async listPendingClusters(userId: string): Promise<PendingClusterRecord[]> {
@@ -1199,7 +1251,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
     userId: string,
     rows: ImportTransactionInput[],
     transactionFileId: string,
-    _fileCurrency?: string,
+    fileCurrency: string,
   ): Promise<ImportIngestResult> {
     if (rows.length === 0) {
       return {
@@ -1228,7 +1280,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
       if (r.known_merchant) knownMerchants += 1;
       else unknownMerchants += 1;
       txnItems.push(
-        importTransactionToDynamoItem(r, pk, userId, transactionFileId),
+        importTransactionToDynamoItem(r, pk, userId, transactionFileId, fileCurrency),
       );
     }
 
@@ -1321,19 +1373,20 @@ export class DynamoFinanceRepository implements FinanceRepository {
         }),
       );
       for (const row of res.Items ?? []) {
+        const item = row as Record<string, unknown>;
         members.push({
-          raw_merchant: String(row.raw_merchant ?? ''),
-          amount: Number(row.amount ?? 0),
-          category: String(row.category ?? ''),
-          status: String(row.status ?? 'PENDING_REVIEW') as TransactionStatus,
+          raw_merchant: wireString(item.raw_merchant, ''),
+          canonicalAmount: readCanonicalAmountFromRow(item),
+          category: wireString(item.category, ''),
+          status: wireString(item.status, 'PENDING_REVIEW') as TransactionStatus,
           suggested_category:
-            row.suggested_category === undefined
+            item.suggested_category === undefined
               ? undefined
-              : (row.suggested_category as string | null),
+              : (item.suggested_category as string | null),
           category_confidence:
-            row.category_confidence === undefined
+            item.category_confidence === undefined
               ? undefined
-              : Number(row.category_confidence),
+              : Number(item.category_confidence),
         });
       }
       startKey = res.LastEvaluatedKey as Record<string, unknown> | undefined;
@@ -1393,118 +1446,6 @@ export class DynamoFinanceRepository implements FinanceRepository {
         ConditionExpression: 'entity_type = :et',
       }),
     );
-  }
-
-  async patchTransactionFileCurrency(
-    userId: string,
-    importFileId: string,
-    currency: string,
-    opts?: { setProfileDefault?: boolean },
-  ): Promise<{
-    currency: string;
-    transactions_updated: number;
-    clusters_rebuilt: number;
-    profile_default_updated: boolean;
-  }> {
-    const normalized = normalizeIso4217Currency(currency);
-    if (!normalized) {
-      throw new Error('Invalid ISO 4217 currency code');
-    }
-
-    const pk = userPk(userId);
-    const fileKey = { PK: pk, SK: fileSk(importFileId) };
-    const fileGot = await this.doc.send(
-      new GetCommand({
-        TableName: this.tableName,
-        Key: fileKey,
-      }),
-    );
-    if (fileGot.Item?.entity_type !== 'TRANSACTION_FILE') {
-      throw new Error(`Unknown transaction file ${importFileId}`);
-    }
-
-    await this.doc.send(
-      new UpdateCommand({
-        TableName: this.tableName,
-        Key: fileKey,
-        UpdateExpression:
-          'SET #format.#currency = :c, #format.#currencyChoice = :choice',
-        ExpressionAttributeNames: {
-          '#format': 'format',
-          '#currency': 'currency',
-          '#currencyChoice': 'currencyChoice',
-        },
-        ExpressionAttributeValues: {
-          ':c': normalized,
-          ':choice': 'user_override',
-          ':et': 'TRANSACTION_FILE',
-        },
-        ConditionExpression: 'entity_type = :et',
-      }),
-    );
-
-    const gsi2pk = fileTxnGsi2Pk(userId, importFileId);
-    const txnItems: Record<string, unknown>[] = [];
-    const clusterIds = new Set<string>();
-    let startKey: Record<string, unknown> | undefined;
-
-    do {
-      const res = await this.doc.send(
-        new QueryCommand({
-          TableName: this.tableName,
-          IndexName: GSI2,
-          KeyConditionExpression: 'GSI2PK = :pk',
-          ExpressionAttributeValues: { ':pk': gsi2pk },
-          ExclusiveStartKey: startKey,
-        }),
-      );
-      for (const item of res.Items ?? []) {
-        const row = item as Record<string, unknown>;
-        if (row.entity_type !== 'TRANSACTION') continue;
-        const cid = wireString(row.cluster_id, '');
-        if (cid) clusterIds.add(cid);
-        txnItems.push({ ...row, currency: normalized });
-      }
-      startKey = res.LastEvaluatedKey as Record<string, unknown> | undefined;
-    } while (startKey);
-
-    if (txnItems.length > 0) {
-      await batchWriteAll(this.doc, this.tableName, txnItems);
-    }
-
-    const clusterIdList = [...clusterIds];
-    if (clusterIdList.length > 0) {
-      await this.rebuildClusterAggregatesAfterImport(
-        userId,
-        clusterIdList,
-        normalized,
-      );
-    }
-
-    let profile_default_updated = false;
-    if (opts?.setProfileDefault) {
-      await this.ensureProfile(userId);
-      await this.doc.send(
-        new UpdateCommand({
-          TableName: this.tableName,
-          Key: { PK: pk, SK: PROFILE_SK },
-          UpdateExpression: 'SET default_currency = :c',
-          ExpressionAttributeValues: {
-            ':c': normalized,
-            ':et': 'PROFILE',
-          },
-          ConditionExpression: 'entity_type = :et',
-        }),
-      );
-      profile_default_updated = true;
-    }
-
-    return {
-      currency: normalized,
-      transactions_updated: txnItems.length,
-      clusters_rebuilt: clusterIdList.length,
-      profile_default_updated,
-    };
   }
 
   async findDuplicateBlobImport(
@@ -1598,10 +1539,12 @@ export class DynamoFinanceRepository implements FinanceRepository {
       for (const item of res.Items ?? []) {
         if (item.entity_type !== 'ACCOUNT') continue;
         const row = item as Record<string, unknown>;
+        const storedCurrency = readStoredAccountCurrency(row);
         out.push({
           user_id: wireString(row.user_id, userId),
           id: wireString(row.id, ''),
           name: wireString(row.name, ''),
+          currency: storedCurrency ?? 'USD',
           created_at: Number(row.created_at ?? 0),
         });
       }
@@ -1625,18 +1568,81 @@ export class DynamoFinanceRepository implements FinanceRepository {
     );
     if (got.Item?.entity_type !== 'ACCOUNT') return null;
     const row = got.Item as Record<string, unknown>;
+    const storedCurrency = readStoredAccountCurrency(row);
     return {
       user_id: wireString(row.user_id, userId),
       id: wireString(row.id, ''),
       name: wireString(row.name, ''),
+      currency: storedCurrency ?? 'USD',
       created_at: Number(row.created_at ?? 0),
     };
   }
 
-  async createAccount(userId: string, name: string): Promise<AccountRecord> {
+  async getAccountStoredCurrency(
+    userId: string,
+    accountId: string,
+  ): Promise<string | undefined> {
+    const pk = userPk(userId);
+    const got = await this.doc.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: { PK: pk, SK: accountSk(accountId) },
+      }),
+    );
+    if (got.Item?.entity_type !== 'ACCOUNT') return undefined;
+    return readStoredAccountCurrency(got.Item as Record<string, unknown>);
+  }
+
+  async ensureAccountCurrencyIfUnset(
+    userId: string,
+    accountId: string,
+    currency: string,
+  ): Promise<void> {
+    const normalized = normalizeIso4217Currency(currency);
+    if (!normalized) {
+      throw new Error('Invalid account currency');
+    }
+    const pk = userPk(userId);
+    const sk = accountSk(accountId);
+    try {
+      await this.doc.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: { PK: pk, SK: sk },
+          UpdateExpression: 'SET #currency = :currency',
+          ConditionExpression:
+            'attribute_not_exists(#currency) OR #currency = :empty',
+          ExpressionAttributeNames: { '#currency': 'currency' },
+          ExpressionAttributeValues: {
+            ':currency': normalized,
+            ':empty': '',
+          },
+        }),
+      );
+    } catch (err: unknown) {
+      if (
+        err instanceof Error &&
+        'name' in err &&
+        (err as { name: string }).name === 'ConditionalCheckFailedException'
+      ) {
+        return;
+      }
+      throw err;
+    }
+  }
+
+  async createAccount(
+    userId: string,
+    name: string,
+    currency: string,
+  ): Promise<AccountRecord> {
     const trimmed = name.trim();
     if (!trimmed) {
       throw new Error('Account name is required');
+    }
+    const normalizedCurrency = normalizeIso4217Currency(currency);
+    if (!normalizedCurrency) {
+      throw new Error('Invalid account currency');
     }
     const id = randomUUID();
     const created_at = Date.now();
@@ -1644,6 +1650,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
       user_id: userId,
       id,
       name: trimmed,
+      currency: normalizedCurrency,
       created_at,
     };
     const pk = userPk(userId);
@@ -1657,6 +1664,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
           user_id: userId,
           id,
           name: trimmed,
+          currency: normalizedCurrency,
           created_at,
         },
       }),
@@ -1712,7 +1720,10 @@ export class DynamoFinanceRepository implements FinanceRepository {
         }),
       );
       for (const item of res.Items ?? []) {
-        keys.push({ PK: String(item.PK), SK: String(item.SK) });
+        keys.push({
+          PK: wireString(item.PK, ''),
+          SK: wireString(item.SK, ''),
+        });
       }
       startKey = res.LastEvaluatedKey as Record<string, unknown> | undefined;
     } while (startKey);
@@ -1760,7 +1771,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
             cluster_id: clusterId,
             sample_merchants: [],
             total_transactions: updated,
-            total_amount: 0,
+            total_amount_minor: 0,
             suggested_category: assignedCategory,
             assigned_category: assignedCategory,
             pending_review: false,
@@ -1789,7 +1800,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
       clusters: [],
       transaction_files: [],
       profile: null,
-      metrics: null,
+      metrics: [],
     };
 
     for (const item of items) {
@@ -1808,7 +1819,7 @@ export class DynamoFinanceRepository implements FinanceRepository {
       fileCount: acc.transaction_files.length,
       accountCount: acc.accounts.length,
       hasProfile: acc.profile !== null,
-      hasMetrics: acc.metrics !== null,
+      hasMetrics: acc.metrics.length > 0,
     });
 
     return {

@@ -1,5 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { money } = require('@housef4/money');
 
 const {
   computeIngestTransferPairings,
@@ -10,6 +11,8 @@ const {
 function utc(y, m0, d) {
   return Date.UTC(y, m0, d);
 }
+
+const M = (major) => Math.round(major * 100);
 
 test('existingTxnTouchesImportDateWindow respects |Δt| ≤ W × 86_400_000 ms hull', () => {
   const imp = [utc(2024, 0, 1)];
@@ -37,7 +40,7 @@ test('computeIngestTransferPairings ignores existing rows outside import date hu
         id: 'far',
         date: utc(2024, 0, 1),
         raw_merchant: 'y',
-        amount: 50,
+        canonicalAmount: money(M(50)),
         category: 'Uncategorized',
         status: 'CLASSIFIED',
         is_recurring: false,
@@ -48,7 +51,7 @@ test('computeIngestTransferPairings ignores existing rows outside import date hu
         id: 'near',
         date: utc(2024, 5, 2),
         raw_merchant: 'z',
-        amount: 50,
+        canonicalAmount: money(M(50)),
         category: 'Uncategorized',
         status: 'CLASSIFIED',
         is_recurring: false,
@@ -57,7 +60,7 @@ test('computeIngestTransferPairings ignores existing rows outside import date hu
     ],
     fileIdToAccountId: new Map([['file_sv', 'acc_sv']]),
     windowDays: INGEST_TRANSFER_PAIR_WINDOW_DAYS,
-    epsilon: 0,
+    epsilonAmount: money(0),
   });
 
   assert.ok(pairing.txn_new);
@@ -84,7 +87,7 @@ test('computeIngestTransferPairings does not reuse an existing row that already 
         id: 'near_already_paired',
         date: utc(2024, 5, 2),
         raw_merchant: 'z',
-        amount: 50,
+        canonicalAmount: money(M(50)),
         category: 'Uncategorized',
         status: 'CLASSIFIED',
         is_recurring: false,
@@ -95,7 +98,7 @@ test('computeIngestTransferPairings does not reuse an existing row that already 
     ],
     fileIdToAccountId: new Map([['file_sv', 'acc_sv']]),
     windowDays: INGEST_TRANSFER_PAIR_WINDOW_DAYS,
-    epsilon: 0,
+    epsilonAmount: money(0),
   });
 
   assert.equal(pairing.txn_new, undefined);

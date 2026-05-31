@@ -57,6 +57,17 @@ test('unknown protected route with userId returns 404', async () => {
   assert.equal(res.statusCode, 404);
 });
 
+test('GET /api/metrics without currency returns 400', async () => {
+  const res = await dispatch({
+    method: 'GET',
+    path: '/api/metrics',
+    headers: {},
+    rawBody: '',
+    userId: 'user-1',
+  });
+  assert.equal(res.statusCode, 400);
+});
+
 test('GET /api/metrics with userId without DYNAMODB_TABLE_NAME returns 500', async () => {
   const prev = process.env.DYNAMODB_TABLE_NAME;
   delete process.env.DYNAMODB_TABLE_NAME;
@@ -64,6 +75,7 @@ test('GET /api/metrics with userId without DYNAMODB_TABLE_NAME returns 500', asy
     const res = await dispatch({
       method: 'GET',
       path: '/api/metrics',
+      query: { currency: 'USD' },
       headers: {},
       rawBody: '',
       userId: 'user-1',

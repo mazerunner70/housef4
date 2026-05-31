@@ -15,6 +15,7 @@ import { theme } from '@/lib/theme'
 type CategorySpendBreakdownProps = {
   categories: SpendingCategoryRow[]
   periodLabel: string
+  currency: string
   onClearMonthFilter?: () => void
   className?: string
 }
@@ -71,6 +72,7 @@ function shortLabel(full: string): string {
 export function CategorySpendBreakdown({
   categories,
   periodLabel,
+  currency,
   onClearMonthFilter,
   className,
 }: CategorySpendBreakdownProps) {
@@ -116,6 +118,11 @@ export function CategorySpendBreakdown({
         <p className="mt-1 text-sm text-zinc-500">{periodLabel}</p>
       </header>
       <ul className="flex flex-1 flex-col gap-5">
+        {rows.length === 0 ? (
+          <li className="flex flex-1 items-center text-sm text-zinc-500">
+            No spending recorded for this period yet.
+          </li>
+        ) : null}
         {rows.map(({ row, rowTheme, pct, label }) => {
           const Icon = rowTheme.icon
           const glow = theme.categoryGlow[rowTheme.glowIndex]
@@ -144,7 +151,7 @@ export function CategorySpendBreakdown({
                     <span className="shrink-0 tabular-nums text-zinc-400">
                       {row.amount.toLocaleString(undefined, {
                         style: 'currency',
-                        currency: 'USD',
+                        currency,
                         maximumFractionDigits: 0,
                       })}
                       {hasBudget ? (
@@ -153,7 +160,7 @@ export function CategorySpendBreakdown({
                           <span className="text-zinc-600">/</span>{' '}
                           {budget.toLocaleString(undefined, {
                             style: 'currency',
-                            currency: 'USD',
+                            currency,
                             maximumFractionDigits: 0,
                           })}
                         </>

@@ -3,6 +3,8 @@
  * and persisted record layout in `docs/03_detailed_design/database/data_model.md`.
  */
 
+import type { Money } from '@housef4/money';
+
 export type TransactionStatus = 'CLASSIFIED' | 'PENDING_REVIEW';
 
 export interface TransactionRecord {
@@ -16,14 +18,10 @@ export interface TransactionRecord {
    * Omitted on legacy rows until backfill; API may derive from `raw_merchant`.
    */
   cleaned_merchant?: string;
-  /**
-   * Canonical amount: spending / outflows negative, income positive (HOU-25 / `data_model.md`).
-   */
-  amount: number;
-  /**
-   * File-signed amount from the import parser before optional batch negation; omitted on legacy rows.
-   */
-  file_amount?: number;
+  /** Canonical signed amount: outflows negative, income positive. */
+  canonicalAmount: Money;
+  /** Parser-signed amount before optional import negation. */
+  fileAmount?: Money;
   /** Absent on legacy or unclustered rows when backfilled. */
   cluster_id?: string;
   category: string;
@@ -42,8 +40,6 @@ export interface TransactionRecord {
   pairing_confidence?: string;
   /** Import file id for the `TRANSACTION_FILE` row that created this transaction (same id as in `FILE#…` / `importFileId`). */
   transaction_file_id: string;
-  /** ISO 4217 from the import file batch; denormalized from `TRANSACTION_FILE.format.currency`. */
-  currency?: string;
 }
 
 /** Partial update applied to existing transactions after a re-clustering import. */
@@ -66,12 +62,14 @@ export interface PendingClusterRecord {
   cluster_id: string;
   sample_merchants: string[];
   total_transactions: number;
-  total_amount: number;
+  /** Sum of abs(member canonical amounts) for this cluster. */
+  totalAmount: Money;
+  amount_scale?: number;
   suggested_category: string | null;
   /** §7 unanimous prior category hint when set on the CLUSTER aggregate. */
   previous_category_id?: string | null;
-  /** Denormalized from the import batch(es); UI prefers this, then profile default, then USD. */
-  currency?: string;
+  /** ISO 4217 for this cluster aggregate. */
+  currency: string;
 }
 
 /** User-defined label for a bank / card account; imports attach a transaction file to one account. */
@@ -79,11 +77,14 @@ export interface AccountRecord {
   user_id: string;
   id: string;
   name: string;
+  /** ISO 4217 — immutable after create. */
+  currency: string;
   created_at: number;
 }
 
 export interface MetricsSnapshot {
-  /** Number of transaction rows the metrics are based on. */
+  /** ISO 4217 for this metrics snapshot. */
+  currency: string;
   transaction_count: number;
   monthly_cashflow: {
     income: number;
@@ -146,10 +147,9 @@ export interface ImportTransactionInput {
   raw_merchant: string;
   /** Same semantics as `TransactionRecord.cleaned_merchant`; persisted on ingest. */
   cleaned_merchant: string;
-  /** Canonical amount (same sign semantics as `TransactionRecord.amount`). */
-  amount: number;
-  /** Parser output before import negation; persisted when imports record `file_amount`. */
-  file_amount: number;
+  /** Same semantics as `TransactionRecord.canonicalAmount`. */
+  canonicalAmount: Money;
+  fileAmount: Money;
   cluster_id: string;
   category: string;
   status: TransactionStatus;
@@ -163,8 +163,6 @@ export interface ImportTransactionInput {
   pairing_id?: string;
   pairing_source?: string;
   pairing_confidence?: string;
-  /** ISO 4217 from the import file batch (`format.currency`). */
-  currency?: string;
 }
 
 export interface ImportIngestResult {
@@ -184,33 +182,10 @@ export interface TransactionFileSource {
   content_type?: string;
 }
 
-/** How `format.currency` was chosen for this import batch (provenance). */
-export type TransactionFileCurrencyChoice =
-  | 'file_hint'
-  | 'prior_account_file'
-  | 'profile_default'
-  | 'user_override';
-
-/**
- * §2 — How the file is classified for parsing (`parseImportBuffer` / sniffing).
- * Filled after format detection, before or alongside row parse.
- */
 export interface TransactionFileFormat {
   source_format?: string;
-  /**
-   * ISO 4217 for this import batch. Set at ingest via `resolveImportCurrency`
-   * (file hint → prior file for account → profile default).
-   */
+  /** ISO 4217 — always equals parent account currency. */
   currency?: string;
-  /**
-   * Provenance for `currency`: file metadata hint, prior account file,
-   * profile default, or user PATCH override. Omitted on legacy rows.
-   */
-  currencyChoice?: TransactionFileCurrencyChoice;
-  /**
-   * When true, import applied `-file_amount` into stored canonical `amount` for this run.
-   * Canonical sign: negative = money from the account, positive = into the account (`import_field_mapping.md` §8).
-   */
   amount_negated?: boolean;
 }
 
@@ -288,7 +263,7 @@ export interface BackupSnapshotV1 {
   app_user_id: string;
   accounts: Record<string, unknown>[];
   profile: Record<string, unknown> | null;
-  metrics: Record<string, unknown> | null;
+  metrics: Record<string, unknown>[] | null;
   transactions: Record<string, unknown>[];
   clusters: Record<string, unknown>[];
   transaction_files: Record<string, unknown>[];

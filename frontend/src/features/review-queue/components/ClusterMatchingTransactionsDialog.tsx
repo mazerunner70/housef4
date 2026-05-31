@@ -35,10 +35,7 @@ export function ClusterMatchingTransactionsDialog({
         const fileCurrency = filesQuery.data?.transaction_files.find(
           (f) => f.id === t.transaction_file_id,
         )?.format.currency
-        const code = resolveCurrencyCode(
-          t.currency ?? fileCurrency,
-          currencyCode,
-        )
+        const code = resolveCurrencyCode(t.currency ?? fileCurrency ?? currencyCode)
         return {
           id: t.id,
           dateLabel: formatTransactionDate(t.date),

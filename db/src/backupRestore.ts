@@ -1,6 +1,8 @@
 import { BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 
+import { money } from '@housef4/money';
+
 import {
   parseStoredDashboardMetrics,
   StoredDashboardMetricsParseError,
@@ -16,6 +18,8 @@ import {
   fileTxnGsi2Pk,
   fileTxnGsi2Sk,
   METRICS_SK,
+  METRICS_SK_PREFIX,
+  metricsSk,
   PROFILE_SK,
   txnSk,
   userPk,
@@ -27,6 +31,8 @@ import {
   type TransactionRecord,
   type TransactionStatus,
 } from './types';
+import { applyStoredAmountToRecord, recordToStoredAmountFields } from './storedAmount';
+import { normalizeIso4217Currency } from './importCurrency';
 import {
   acquireRestoreLock,
   deleteRestoreLockIfPresent,
@@ -157,9 +163,8 @@ function transactionWireToRecord(
     throw new BackupRestoreClientError(400, 'Invalid backup: transaction missing id');
   }
   const date = Number(row.date);
-  const amount = Number(row.amount);
-  if (!Number.isFinite(date) || !Number.isFinite(amount)) {
-    throw new BackupRestoreClientError(400, 'Invalid backup: transaction date/amount');
+  if (!Number.isFinite(date)) {
+    throw new BackupRestoreClientError(400, 'Invalid backup: transaction date');
   }
   assertWireUserIdMatchesLoggedInUser(row, userId, 'transaction');
   const rec: TransactionRecord = {
@@ -167,7 +172,7 @@ function transactionWireToRecord(
     id,
     date,
     raw_merchant: wireString(row.raw_merchant, ''),
-    amount,
+    canonicalAmount: money(0),
     category: wireString(row.category, ''),
     status,
     is_recurring: Boolean(row.is_recurring),
@@ -200,9 +205,12 @@ function transactionWireToRecord(
   if (pairingConf !== undefined && pairingConf !== null) {
     rec.pairing_confidence = wireString(pairingConf, '');
   }
-  if (row.file_amount !== undefined && row.file_amount !== null) {
-    const fa = Number(row.file_amount);
-    if (Number.isFinite(fa)) rec.file_amount = fa;
+  try {
+    const txnCurrency =
+      normalizeIso4217Currency(wireString(row.currency, '')) ?? 'USD';
+    applyStoredAmountToRecord(row, rec, txnCurrency);
+  } catch {
+    throw new BackupRestoreClientError(400, 'Invalid backup: transaction date/amount');
   }
   return rec;
 }
@@ -210,6 +218,7 @@ function transactionWireToRecord(
 function transactionRecordToDynamoItem(
   rec: TransactionRecord,
   pk: string,
+  currency: string,
 ): Record<string, unknown> {
   const clusterId = rec.cluster_id ?? '';
   const gsi1pk = clusterTxnGsi1Pk(rec.user_id, clusterId);
@@ -225,7 +234,7 @@ function transactionRecordToDynamoItem(
     date: rec.date,
     raw_merchant: rec.raw_merchant,
     cleaned_merchant: rec.cleaned_merchant,
-    amount: rec.amount,
+    ...recordToStoredAmountFields(rec),
     cluster_id: rec.cluster_id,
     category: rec.category,
     status: rec.status,
@@ -255,8 +264,9 @@ function transactionRecordToDynamoItem(
   if (rec.pairing_confidence !== undefined) {
     item.pairing_confidence = rec.pairing_confidence;
   }
-  if (rec.file_amount !== undefined) {
-    item.file_amount = rec.file_amount;
+  const normalized = normalizeIso4217Currency(currency);
+  if (normalized) {
+    item.currency = normalized;
   }
   return item;
 }
@@ -359,9 +369,19 @@ function parseBackupSnapshotRoot(userId: string, raw: unknown): BackupSnapshotV1
   if (root.profile !== null && (typeof root.profile !== 'object' || Array.isArray(root.profile))) {
     throw new BackupRestoreClientError(400, 'Invalid backup: profile must be object or null');
   }
-  if (root.metrics !== null && (typeof root.metrics !== 'object' || Array.isArray(root.metrics))) {
-    throw new BackupRestoreClientError(400, 'Invalid backup: metrics must be object or null');
+  if (root.metrics !== null) {
+    if (Array.isArray(root.metrics)) {
+      for (const row of root.metrics) {
+        if (typeof row !== 'object' || row === null || Array.isArray(row)) {
+          throw new BackupRestoreClientError(400, 'Invalid backup: metrics row shape');
+        }
+      }
+    } else if (typeof root.metrics !== 'object') {
+      throw new BackupRestoreClientError(400, 'Invalid backup: metrics must be array or null');
+    }
   }
+
+  const metricsRows = normalizeBackupMetrics(root.metrics);
 
   return {
     backup_schema_version: BACKUP_SCHEMA_VERSION_V1,
@@ -369,11 +389,24 @@ function parseBackupSnapshotRoot(userId: string, raw: unknown): BackupSnapshotV1
     app_user_id,
     accounts: root.accounts as Record<string, unknown>[],
     profile: root.profile as Record<string, unknown> | null,
-    metrics: root.metrics as Record<string, unknown> | null,
+    metrics: metricsRows,
     transactions: root.transactions as Record<string, unknown>[],
     clusters: root.clusters as Record<string, unknown>[],
     transaction_files: root.transaction_files as Record<string, unknown>[],
   };
+}
+
+function normalizeBackupMetrics(
+  metrics: unknown,
+): Record<string, unknown>[] | null {
+  if (metrics === null || metrics === undefined) return null;
+  if (Array.isArray(metrics)) {
+    return metrics as Record<string, unknown>[];
+  }
+  if (typeof metrics === 'object') {
+    return [metrics as Record<string, unknown>];
+  }
+  return null;
 }
 
 function validateBackupAccountRows(
@@ -502,17 +535,19 @@ function validateBackupProfileAndMetrics(
   }
 
   if (snapshot.metrics !== null) {
-    if (wireString(snapshot.metrics.entity_type, '') !== 'METRICS') {
-      throw new BackupRestoreClientError(400, 'Invalid backup: metrics entity_type');
-    }
-    assertWireUserIdMatchesLoggedInUser(snapshot.metrics, userId, 'metrics');
-    try {
-      parseStoredDashboardMetrics(snapshot.metrics);
-    } catch (e) {
-      if (e instanceof StoredDashboardMetricsParseError) {
-        throw new BackupRestoreClientError(400, `Invalid backup: metrics ${e.message}`);
+    for (const row of snapshot.metrics) {
+      if (wireString(row.entity_type, '') !== 'METRICS') {
+        throw new BackupRestoreClientError(400, 'Invalid backup: metrics entity_type');
       }
-      throw e;
+      assertWireUserIdMatchesLoggedInUser(row, userId, 'metrics');
+      try {
+        parseStoredDashboardMetrics(row);
+      } catch (e) {
+        if (e instanceof StoredDashboardMetricsParseError) {
+          throw new BackupRestoreClientError(400, `Invalid backup: metrics ${e.message}`);
+        }
+        throw e;
+      }
     }
   }
 }
@@ -566,6 +601,7 @@ function materializeBackupItems(
       user_id: userId,
       id,
       name: wireString(r.name, ''),
+      currency: wireString(r.currency, 'USD'),
       created_at: Number(r.created_at ?? 0),
     });
   }
@@ -608,7 +644,8 @@ function materializeBackupItems(
 
   for (const row of snapshot.transactions) {
     const rec = transactionWireToRecord(row, userId);
-    addItem(transactionRecordToDynamoItem(rec, pk));
+    const currency = wireString(row.currency, 'USD');
+    addItem(transactionRecordToDynamoItem(rec, pk, currency));
   }
 
   if (snapshot.profile !== null) {
@@ -622,14 +659,23 @@ function materializeBackupItems(
   }
 
   if (snapshot.metrics !== null) {
-    const r = stripReservedWireKeys(snapshot.metrics);
-    addItem({
-      ...r,
-      PK: pk,
-      SK: METRICS_SK,
-      entity_type: 'METRICS',
-      user_id: userId,
-    });
+    for (const row of snapshot.metrics) {
+      const r = stripReservedWireKeys(row);
+      const currency =
+        wireString(r.currency, '') ||
+        wireString(r.SK, '').replace(METRICS_SK_PREFIX, '');
+      const sk =
+        currency && /^[A-Z]{3}$/.test(currency)
+          ? metricsSk(currency)
+          : METRICS_SK;
+      addItem({
+        ...r,
+        PK: pk,
+        SK: sk,
+        entity_type: 'METRICS',
+        user_id: userId,
+      });
+    }
   }
 
   return items;
@@ -663,7 +709,7 @@ function validateMaterializedStaging(
   expect('CLUSTER', snapshot.clusters.length);
   expect('TRANSACTION_FILE', snapshot.transaction_files.length);
   expect('PROFILE', snapshot.profile === null ? 0 : 1);
-  expect('METRICS', snapshot.metrics === null ? 0 : 1);
+  expect('METRICS', snapshot.metrics === null ? 0 : snapshot.metrics.length);
 
   const sampleTxn = items.find((i) => i.entity_type === 'TRANSACTION');
   if (sampleTxn) {

@@ -1,3 +1,5 @@
+import { add, money, toMajor, type Money } from '@housef4/money';
+
 import { dbLog } from './structuredLog';
 import type { TransactionRecord } from './types';
 import type { DashboardMetricsStored } from './dashboardMetricsSchema';
@@ -8,6 +10,23 @@ export {
   StoredDashboardMetricsParseError,
   type DashboardMetricsStored,
 } from './dashboardMetricsSchema';
+
+const METRICS_DISPLAY_SCALE = 2;
+
+function amountToMetricMajor(amount: Money, currency: string): number {
+  return toMajor(amount, currency);
+}
+
+function filterTransactionsByCurrency(
+  txns: TransactionRecord[],
+  currency: string,
+  currencyForFile: (fileId: string) => string | undefined,
+): TransactionRecord[] {
+  const code = currency.trim().toUpperCase();
+  return txns.filter(
+    (t) => currencyForFile(t.transaction_file_id)?.trim().toUpperCase() === code,
+  );
+}
 
 function utcMonthStartMs(year: number, month0: number): number {
   return Date.UTC(year, month0, 1, 0, 0, 0, 0);
@@ -65,20 +84,29 @@ function aggregateForRange(
   txns: TransactionRecord[],
   start: number,
   end: number,
-): { income: number; expenses: number; categoryTotals: Map<string, number> } {
-  let income = 0;
-  let expenses = 0;
-  const categoryTotals = new Map<string, number>();
+  currency: string,
+): {
+  incomeAmount: Money;
+  expensesAmount: Money;
+  categoryTotalsAmount: Map<string, Money>;
+} {
+  let incomeAmount = money(0);
+  let expensesAmount = money(0);
+  const categoryTotalsAmount = new Map<string, Money>();
   for (const t of txns) {
     if (t.date < start || t.date > end) continue;
-    if (t.amount > 0) income += t.amount;
-    else expenses += -t.amount;
-    if (t.amount < 0) {
+    const amt = t.canonicalAmount;
+    if (amt.units > 0) {
+      incomeAmount = add(incomeAmount, amt, currency);
+    } else if (amt.units < 0) {
+      const outflow = money(-amt.units);
+      expensesAmount = add(expensesAmount, outflow, currency);
       const cat = t.category || 'Uncategorized';
-      categoryTotals.set(cat, (categoryTotals.get(cat) ?? 0) + -t.amount);
+      const prev = categoryTotalsAmount.get(cat) ?? money(0);
+      categoryTotalsAmount.set(cat, add(prev, outflow, currency));
     }
   }
-  return { income, expenses, categoryTotals };
+  return { incomeAmount, expensesAmount, categoryTotalsAmount };
 }
 
 /** True when every month in the snapshot has no inflow/outflow (e.g. stale cache from pre-anchor bug). */
@@ -112,7 +140,10 @@ function netWorthChangePctFromHistory(
   return (curNet - prevNet) / denom;
 }
 
-function scanTransactionsForDiagnostics(txns: TransactionRecord[]): {
+function scanTransactionsForDiagnostics(
+  txns: TransactionRecord[],
+  currency: string,
+): {
   txnMinDate: number;
   txnMaxDate: number;
   countPositive: number;
@@ -131,12 +162,12 @@ function scanTransactionsForDiagnostics(txns: TransactionRecord[]): {
   for (const t of txns) {
     if (t.date < txnMinDate) txnMinDate = t.date;
     if (t.date > txnMaxDate) txnMaxDate = t.date;
-    if (t.amount > 0) {
+    if (t.canonicalAmount.units > 0) {
       countPositive += 1;
-      sumPositiveAmounts += t.amount;
-    } else if (t.amount < 0) {
+      sumPositiveAmounts += amountToMetricMajor(t.canonicalAmount, currency);
+    } else if (t.canonicalAmount.units < 0) {
       countNegative += 1;
-      sumNegativeAmounts += t.amount;
+      sumNegativeAmounts += amountToMetricMajor(t.canonicalAmount, currency);
     } else {
       countZero += 1;
     }
@@ -159,13 +190,16 @@ function scanTransactionsForDiagnostics(txns: TransactionRecord[]): {
 export function computeDashboardMetrics(
   txns: TransactionRecord[],
   clockNowMs: number,
+  currency: string,
+  currencyForFile: (fileId: string) => string | undefined,
 ): DashboardMetricsStored {
-  const scan = scanTransactionsForDiagnostics(txns);
+  const scoped = filterTransactionsByCurrency(txns, currency, currencyForFile);
+  const scan = scanTransactionsForDiagnostics(scoped, currency);
   const [todayY, todayM] = utcYearMonthFromMs(clockNowMs);
 
   let spanStartY = todayY;
   let spanStartM = todayM;
-  if (txns.length > 0 && Number.isFinite(scan.txnMinDate)) {
+  if (scoped.length > 0 && Number.isFinite(scan.txnMinDate)) {
     const [ey, em] = utcYearMonthFromMs(scan.txnMinDate);
     spanStartY = ey;
     spanStartM = em;
@@ -191,12 +225,17 @@ export function computeDashboardMetrics(
   )) {
     const start = utcMonthStartMs(y, m);
     const end = utcMonthEndMs(y, m);
-    const { income, expenses } = aggregateForRange(txns, start, end);
+    const { incomeAmount, expensesAmount } = aggregateForRange(
+      scoped,
+      start,
+      end,
+      currency,
+    );
     cashflow_history.push({
       label: monthLabelUtc(y, m),
       month_start_ms: start,
-      income,
-      expenses,
+      income: amountToMetricMajor(incomeAmount, currency),
+      expenses: amountToMetricMajor(expensesAmount, currency),
     });
   }
 
@@ -205,15 +244,20 @@ export function computeDashboardMetrics(
   const curStart = utcMonthStartMs(cy, cm);
   const curEnd = utcMonthEndMs(cy, cm);
   const {
-    income: curIncome,
-    expenses: curExpenses,
-    categoryTotals,
-  } = aggregateForRange(txns, curStart, curEnd);
+    incomeAmount: curIncomeAmount,
+    expensesAmount: curExpensesAmount,
+    categoryTotalsAmount,
+  } = aggregateForRange(scoped, curStart, curEnd, currency);
 
-  const spending_by_category = [...categoryTotals.entries()]
-    .map(([category, amount]) => ({ category, amount }))
+  const spending_by_category = [...categoryTotalsAmount.entries()]
+    .map(([category, categoryAmount]) => ({
+      category,
+      amount: amountToMetricMajor(categoryAmount, currency),
+    }))
     .sort((a, b) => b.amount - a.amount);
 
+  const curIncome = amountToMetricMajor(curIncomeAmount, currency);
+  const curExpenses = amountToMetricMajor(curExpensesAmount, currency);
   const net = curIncome - curExpenses;
 
   const firstLabel = cashflow_history[0]?.label ?? '';
@@ -226,7 +270,7 @@ export function computeDashboardMetrics(
   const net_worth_change_pct = netWorthChangePctFromHistory(cashflow_history);
 
   const out: DashboardMetricsStored = {
-    transaction_count: txns.length,
+    transaction_count: scoped.length,
     monthly_cashflow: {
       income: curIncome,
       expenses: curExpenses,
