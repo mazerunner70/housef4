@@ -223,6 +223,7 @@ test('executeImportOrchestration — zero-row CSV commits persist stages in §4.
   assert.equal(repo.lastTransactionFile.account_id, 'acc-1');
   assert.equal(repo.lastTransactionFile.id, result.importFileId);
   assert.equal(repo.lastTransactionFile.format.currency, 'USD');
+  assert.equal(repo.lastTransactionFile.format.currencyChoice, 'profile_default');
   assert.equal(repo.lastIngest.fileCurrency, 'USD');
   assert.equal(repo.lastIngest.transactionFileId, result.importFileId);
   assert.deepEqual(repo.lastPatches, []);

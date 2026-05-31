@@ -131,7 +131,7 @@ After a successful import, subsequent **`GET /api/metrics`**, **`GET /api/transa
 
 ### Post-import currency (`PATCH /api/transaction-files/:importFileId`)
 
-Updates **`TRANSACTION_FILE.format.currency`**, stamps **`currency`** on all transactions created in that import (**GSI2**), rebuilds affected **`CLUSTER#…`** aggregates, and optionally sets profile **`default_currency`** for future imports.
+Updates **`TRANSACTION_FILE.format.currency`**, sets **`format.currencyChoice`** to **`user_override`**, stamps **`currency`** on all transactions created in that import (**GSI2**), rebuilds affected **`CLUSTER#…`** aggregates, and optionally sets profile **`default_currency`** for future imports.
 
 **Request** — JSON body:
 
@@ -214,6 +214,8 @@ Returns recorded uploads (one item per successful `POST /api/imports` that wrote
       },
       "format": {
         "source_format": "qfx",
+        "currency": "USD",
+        "currencyChoice": "file_hint",
         "amount_negated": false
       },
       "timing": {
@@ -234,7 +236,7 @@ Returns recorded uploads (one item per successful `POST /api/imports` that wrote
 
 | Field | Type | Notes |
 |--------|------|--------|
-| `transaction_files` | array | Each item matches **`TransactionFileRecord`** in [`db/src/types.ts`](../../../db/src/types.ts). **`user_id`**, **`id`**, **`account_id`** (string; empty for legacy files before accounts), **`source`** (upload: `name`, `size_bytes`, optional `content_type`), **`format`** (optional `source_format`, `currency`, **`amount_negated`** when recorded — import sign normalization), **`timing`** (`started_at` / `completed_at`, epoch **ms** UTC), **`result`** (**camelCase** — same shape as `POST /api/imports` batch summary: `ImportIngestResult`). Optional **`blob`** when raw archival succeeded ([`import_file_blob_storage.md`](./import_file_blob_storage.md)); omitted after a **non-fatal** blob **`Put`** failure on import (**`200`** still returned — see §1 **Raw file archival**). Newest first by `timing.completed_at`. |
+| `transaction_files` | array | Each item matches **`TransactionFileRecord`** in [`db/src/types.ts`](../../../db/src/types.ts). **`user_id`**, **`id`**, **`account_id`** (string; empty for legacy files before accounts), **`source`** (upload: `name`, `size_bytes`, optional `content_type`), **`format`** (optional `source_format`, `currency`, optional **`currencyChoice`** — `file_hint`, `prior_account_file`, `profile_default`, or `user_override`; omitted on legacy rows, **`amount_negated`** when recorded — import sign normalization), **`timing`** (`started_at` / `completed_at`, epoch **ms** UTC), **`result`** (**camelCase** — same shape as `POST /api/imports` batch summary: `ImportIngestResult`). Optional **`blob`** when raw archival succeeded ([`import_file_blob_storage.md`](./import_file_blob_storage.md)); omitted after a **non-fatal** blob **`Put`** failure on import (**`200`** still returned — see §1 **Raw file archival**). Newest first by `timing.completed_at`. |
 
 ## 2. Metrics Baseline Endpoint
 

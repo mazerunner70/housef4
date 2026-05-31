@@ -4,7 +4,7 @@
  * `docs/03_detailed_design/import_transaction_files.md`.
  */
 
-import type { FinanceRepository } from '@housef4/db';
+import type { FinanceRepository, TransactionFileCurrencyChoice } from '@housef4/db';
 
 import { HttpError } from '../../httpError';
 import {
@@ -225,6 +225,7 @@ export function buildTransactionFileInput(params: {
   parsed: ParsedImportUpload;
   /** Resolved at import (file hint → prior account file → profile default). */
   importCurrency: string;
+  currencyChoice: TransactionFileCurrencyChoice;
   amountNegated: boolean;
   importStartedAt: number;
   importCompletedAt: number;
@@ -237,6 +238,7 @@ export function buildTransactionFileInput(params: {
     extracted,
     parsed,
     importCurrency,
+    currencyChoice,
     amountNegated,
     importStartedAt,
     importCompletedAt,
@@ -263,6 +265,7 @@ export function buildTransactionFileInput(params: {
     format: {
       ...(parsed.format === 'unknown' ? {} : { source_format: parsed.format }),
       currency: importCurrency,
+      currencyChoice,
       amount_negated: amountNegated,
     },
     timing: {

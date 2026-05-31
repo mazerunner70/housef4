@@ -43,7 +43,10 @@ import {
   type DashboardMetricsStored,
 } from './dashboardMetrics';
 import { dbLog } from './structuredLog';
-import { normalizeIso4217Currency } from './importCurrency';
+import {
+  normalizeIso4217Currency,
+  normalizeTransactionFileCurrencyChoice,
+} from './importCurrency';
 import {
   buildClusterAggregateItem,
   type ClusterAggregateMember,
@@ -90,6 +93,12 @@ function applyFormatFromRow(
   }
   if (o.currency != null) {
     out.currency = wireString(o.currency);
+  }
+  const currencyChoice = normalizeTransactionFileCurrencyChoice(
+    o.currencyChoice != null ? wireString(o.currencyChoice) : undefined,
+  );
+  if (currencyChoice) {
+    out.currencyChoice = currencyChoice;
   }
   if (o.amount_negated != null) {
     out.amount_negated = o.amount_negated as boolean;
@@ -1418,13 +1427,16 @@ export class DynamoFinanceRepository implements FinanceRepository {
       new UpdateCommand({
         TableName: this.tableName,
         Key: fileKey,
-        UpdateExpression: 'SET #format.#currency = :c',
+        UpdateExpression:
+          'SET #format.#currency = :c, #format.#currencyChoice = :choice',
         ExpressionAttributeNames: {
           '#format': 'format',
           '#currency': 'currency',
+          '#currencyChoice': 'currencyChoice',
         },
         ExpressionAttributeValues: {
           ':c': normalized,
+          ':choice': 'user_override',
           ':et': 'TRANSACTION_FILE',
         },
         ConditionExpression: 'entity_type = :et',

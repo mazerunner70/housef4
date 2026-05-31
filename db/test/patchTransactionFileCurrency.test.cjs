@@ -29,6 +29,9 @@ function mockDoc(itemsByKey) {
         const vals = cmd.input.ExpressionAttributeValues ?? {};
         if (cmd.input.UpdateExpression?.includes('#format.#currency')) {
           item.format = { ...(item.format ?? {}), currency: vals[':c'] };
+          if (vals[':choice']) {
+            item.format.currencyChoice = vals[':choice'];
+          }
         }
         if (cmd.input.UpdateExpression?.includes('default_currency')) {
           item.default_currency = vals[':c'];
@@ -122,6 +125,7 @@ test('patchTransactionFileCurrency — updates file, transactions, profile', asy
   assert.equal(result.transactions_updated, 1);
   assert.equal(result.profile_default_updated, true);
   assert.equal(items.get(`${pk}|${fileSk(fileId)}`).format.currency, 'EUR');
+  assert.equal(items.get(`${pk}|${fileSk(fileId)}`).format.currencyChoice, 'user_override');
   assert.equal(items.get(`${pk}|${txnSk('t1')}`).currency, 'EUR');
   assert.equal(items.get(`${pk}|${PROFILE_SK}`).default_currency, 'EUR');
 });

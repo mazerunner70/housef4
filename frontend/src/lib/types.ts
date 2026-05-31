@@ -142,10 +142,18 @@ export type TransactionFileSource = {
   content_type?: string
 }
 
+export type TransactionFileCurrencyChoice =
+  | 'file_hint'
+  | 'prior_account_file'
+  | 'profile_default'
+  | 'user_override'
+
 export type TransactionFileFormat = {
   source_format?: string
   /** When known from import metadata (e.g. OFX). */
   currency?: string
+  /** How `currency` was chosen for this import batch. */
+  currencyChoice?: TransactionFileCurrencyChoice
   /** True when this run negated parsed values to match canonical sign (negative = from account). */
   amount_negated?: boolean
 }

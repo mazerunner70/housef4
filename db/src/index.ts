@@ -35,7 +35,10 @@ export type {
   BuildClusterAggregateOptions,
   ClusterAggregateMember,
 } from './clusterAggregates';
-export { normalizeIso4217Currency } from './importCurrency';
+export {
+  normalizeIso4217Currency,
+  normalizeTransactionFileCurrencyChoice,
+} from './importCurrency';
 export { getDocumentClient, getImportStagingTableName, requireImportStagingTableName, requireRestoreStagingTableName, requireTableName } from './dynamoClient';
 export {
   HEALTH_CHECK_PK,
